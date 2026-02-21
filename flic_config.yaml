@@ -1,4 +1,8 @@
 global:
+  constants:
+    min_transform_licks_cutoff: 0.00001
+    max_med_duration_cutoff: 13
+    max_events_cutoff: 150
   params:
     # Full parameter list with two-well defaults (Parameters.two_well()).
     baseline_window_minutes: 3

@@ -28,6 +28,7 @@ class Experiment:
     dfms: dict[int, DFM]
     design: ExperimentDesign
     global_config: dict
+    global_constants: dict = field(default_factory=dict)
     config_path: Path | None = None
     data_dir: Path | None = None
     project_dir: Path | None = None
@@ -133,6 +134,15 @@ class Experiment:
                     return None
                 return float(s.min()), float(s.max())
         return None
+
+    def _max_experiment_minutes(self) -> float | None:
+        """Return the actual maximum ``Minutes`` value across all loaded DFMs."""
+        vals = [
+            r[1]
+            for dfm in self.dfms.values()
+            if (r := self._dfm_actual_range_minutes(dfm)) is not None
+        ]
+        return max(vals) if vals else None
 
     def compute_qc_results(
         self,
@@ -245,10 +255,18 @@ class Experiment:
                 bleed["Matrix"].to_csv(out / f"DFM{dfm_id}_bleeding_matrix.csv")
                 bleed["AllData"].to_csv(out / f"DFM{dfm_id}_bleeding_alldata.csv", header=True)
 
-            # Raw data plot
+            # Signal plots
             dfm = self.dfms[dfm_id]
             fig = dfm.plot_raw()
             fig.savefig(out / f"DFM{dfm_id}_raw.png", dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+            fig = dfm.plot_baselined(include_thresholds=True)
+            fig.savefig(out / f"DFM{dfm_id}_baselined.png", dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+            fig = dfm.plot_cumulative_licks(transform_licks=True)
+            fig.savefig(out / f"DFM{dfm_id}_cumulative_licks.png", dpi=150, bbox_inches="tight")
             plt.close(fig)
 
         print(f"  QC complete — {n_total} DFM(s) processed.", flush=True)
@@ -530,36 +548,45 @@ class Experiment:
         *,
         range_minutes: Sequence[float] = (0, 0),
         transform_licks: bool = True,
-        ncols: int = 2,
+        ncols: int | None = None,
         figsize: tuple[float, float] | None = None,
     ) -> Any:
         """
-        Produce dot/box plots of feeding summary metrics grouped by treatment.
+        Produce a faceted jitter+box plot of feeding summary metrics grouped by treatment.
 
-        Each subplot shows one metric with individual chamber data points (jittered dots)
-        overlaid on a box plot, grouped by treatment on the x-axis.
+        Treatments appear on the x-axis; each facet shows one metric with free y scales.
+        Individual chamber values are overlaid as jittered coloured dots on grey box plots.
 
-        For chamber_size=2, includes PI, EventPI, and per-well (A/B) metrics.
-        For chamber_size=1, includes Licks, Events, Duration, TimeBtw, and Interval metrics.
+        For chamber_size=1 (8 metrics) the default grid is 3 columns.
+        For chamber_size=2 (18 metrics) the default grid is 4 columns.
 
-        Returns a matplotlib Figure.
+        Returns a plotnine ggplot object.
         """
         import math
 
-        import matplotlib.pyplot as plt
-        import numpy as np
+        from plotnine import (
+            aes,
+            element_text,
+            facet_wrap,
+            geom_boxplot,
+            geom_jitter,
+            ggplot,
+            theme,
+            theme_bw,
+        )
 
         df = self.feeding_summary(
             range_minutes=range_minutes, transform_licks=transform_licks
         )
         if df.empty:
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.set_title("No feeding summary data")
-            return fig
+            from plotnine import annotate
+            return (
+                ggplot()
+                + annotate("text", x=0, y=0, label="No feeding summary data")
+                + theme_bw()
+            )
 
         chamber_size = next(iter(self.dfms.values())).params.chamber_size
-        treatments = sorted(df["Treatment"].unique().tolist())
-        colors = [plt.cm.tab10(i % 10) for i in range(len(treatments))]
 
         one_well_metrics = [
             ("Licks", "Licks"),
@@ -597,64 +624,62 @@ class Experiment:
         metrics = [(col, lbl) for col, lbl in all_metrics if col in df.columns]
 
         if not metrics:
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.set_title("No matching columns in feeding summary")
-            return fig
+            from plotnine import annotate
+            return (
+                ggplot()
+                + annotate("text", x=0, y=0, label="No matching columns in feeding summary")
+                + theme_bw()
+            )
 
+        id_cols = [c for c in ("Treatment", "DFM", "Chamber") if c in df.columns]
+        metric_cols = [col for col, _ in metrics]
+        label_map = {col: lbl for col, lbl in metrics}
+
+        df_long = df[id_cols + metric_cols].melt(
+            id_vars=id_cols,
+            value_vars=metric_cols,
+            var_name="_MetricCol",
+            value_name="Value",
+        )
+        df_long["Metric"] = df_long["_MetricCol"].map(label_map)
+        df_long["Metric"] = pd.Categorical(
+            df_long["Metric"],
+            categories=[lbl for _, lbl in metrics],
+            ordered=True,
+        )
+        df_long = df_long.drop(columns=["_MetricCol"])
+
+        if ncols is None:
+            ncols = 4 if chamber_size == 2 else 3
         nrows = math.ceil(len(metrics) / ncols)
+
         if figsize is None:
-            figsize = (ncols * 5, nrows * 3.5)
+            figsize = (ncols * 3.5, nrows * 3.2)
 
-        fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
-        axes_flat = np.array(axes).flatten()
+        treatments = sorted(df["Treatment"].unique().tolist())
 
-        rng = np.random.default_rng(42)
-        positions = list(range(len(treatments)))
+        p = (
+            ggplot(df_long, aes(x="Treatment", y="Value"))
+            + geom_boxplot(
+                aes(group="Treatment"),
+                fill="white",
+                color="#666666",
+                alpha=0.5,
+                outlier_alpha=0,
+                width=0.4,
+            )
+            + geom_jitter(aes(color="Treatment"), width=0.15, size=2, alpha=0.8)
+            + facet_wrap("~ Metric", ncol=ncols, scales="free_y")
+            + theme_bw()
+            + theme(
+                axis_text_x=element_text(rotation=30, hjust=1, size=8),
+                strip_text=element_text(size=8),
+                legend_position="none",
+                figure_size=figsize,
+            )
+        )
 
-        for idx, (col, label) in enumerate(metrics):
-            ax = axes_flat[idx]
-            groups = [
-                df.loc[df["Treatment"] == t, col].dropna().to_numpy(dtype=float)
-                for t in treatments
-            ]
-
-            # Boxplot — only pass non-empty groups to avoid matplotlib warnings.
-            nonempty = [(p, g, c) for p, g, c in zip(positions, groups, colors) if len(g) > 0]
-            if nonempty:
-                ne_pos, ne_grp, ne_colors = zip(*nonempty)
-                bp = ax.boxplot(
-                    list(ne_grp),
-                    positions=list(ne_pos),
-                    widths=0.4,
-                    patch_artist=True,
-                    medianprops={"color": "black", "linewidth": 1.5},
-                    whiskerprops={"linewidth": 1.0},
-                    capprops={"linewidth": 1.0},
-                    showfliers=False,
-                )
-                for patch, color in zip(bp["boxes"], ne_colors):
-                    patch.set_facecolor(color)
-                    patch.set_alpha(0.4)
-
-            # Jittered dots overlaid on boxes.
-            for pos, vals, color in zip(positions, groups, colors):
-                if len(vals) == 0:
-                    continue
-                jitter = rng.uniform(-0.15, 0.15, len(vals))
-                ax.scatter(pos + jitter, vals, color=color, s=30, zorder=3, alpha=0.85)
-
-            ax.set_xticks(positions)
-            ax.set_xticklabels(treatments, rotation=30, ha="right", fontsize=8)
-            ax.set_xlim(-0.6, len(treatments) - 0.4)
-            ax.set_ylabel(label, fontsize=9)
-            ax.set_title(col, fontsize=9)
-
-        for idx in range(len(metrics), len(axes_flat)):
-            axes_flat[idx].set_visible(False)
-
-        fig.suptitle("Feeding Summary by Treatment", fontsize=12)
-        fig.tight_layout()
-        return fig
+        return p
 
     def _binned_licks_table_by_treatment(
         self,
@@ -1162,7 +1187,11 @@ class Experiment:
             if a == 0.0 and b == 0.0:
                 stem = "feeding_summary"
             else:
-                stem = f"feeding_summary_{_fmt_min(a)}_{_fmt_min(b)}"
+                actual_max = self._max_experiment_minutes()
+                b_name = b
+                if actual_max is not None and (b == float("inf") or b > actual_max):
+                    b_name = actual_max
+                stem = f"feeding_summary_{_fmt_min(a)}_{_fmt_min(b_name)}"
             path = self.analysis_dir / f"{stem}.csv"
         out = Path(path).expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -1254,7 +1283,7 @@ class Experiment:
         format: str = "png",
         range_minutes: Sequence[float] = (0, 0),
         transform_licks: bool = True,
-        ncols: int = 2,
+        ncols: int | None = None,
         figsize: tuple[float, float] | None = None,
         dpi: int = 150,
     ) -> Path:
@@ -1266,8 +1295,6 @@ class Experiment:
         Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
         *format* may be ``"png"`` (default) or ``"pdf"``.
         """
-        import matplotlib.pyplot as plt
-
         if path is None:
             if self.analysis_dir is None:
                 raise ValueError(
@@ -1277,14 +1304,13 @@ class Experiment:
         out = Path(path).expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
 
-        fig = self.plot_feeding_summary(
+        p = self.plot_feeding_summary(
             range_minutes=range_minutes,
             transform_licks=transform_licks,
             ncols=ncols,
             figsize=figsize,
         )
-        fig.savefig(out, dpi=dpi, bbox_inches="tight")
-        plt.close(fig)
+        p.save(str(out), dpi=dpi)
         return out
 
     def execute_basic_analysis(

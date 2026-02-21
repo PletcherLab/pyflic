@@ -171,6 +171,7 @@ def load_experiment_yaml(
     global_params_node = global_cfg.get("params", global_cfg.get("parameters", None))
     global_overrides = _normalize_param_overrides(global_params_node)
     global_params_present = global_params_node is not None
+    global_constants = dict(global_cfg.get("constants", {}) or {})
 
     data_dir = resolved_project_dir / "data"
 
@@ -284,6 +285,7 @@ def load_experiment_yaml(
         dfms=design.dfms,
         design=design,
         global_config=global_cfg,
+        global_constants=global_constants,
         config_path=path,
         project_dir=resolved_project_dir,
         range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
