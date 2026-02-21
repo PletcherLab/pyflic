@@ -29,6 +29,7 @@ class DFM:
     # Computed
     baseline_df: pd.DataFrame | None = None
     thresholds: dict[str, pd.DataFrame] | None = None
+    lights_df: pd.DataFrame | None = None
     lick_df: pd.DataFrame | None = None
     event_df: pd.DataFrame | None = None
     tasting_df: pd.DataFrame | None = None
@@ -92,6 +93,7 @@ class DFM:
     def recompute_all(self, *, correct_for_dual_feeding: bool = False) -> None:
         self._calculate_baseline()
         self.thresholds = build_thresholds_table(self.baseline_df, self.params)
+        self._calculate_lights()
         self._build_chambers()
         self._calculate_feeding(correct_for_dual_feeding=correct_for_dual_feeding)
         self._calculate_tasting()
@@ -185,6 +187,29 @@ class DFM:
 
         self.baseline_df = df
 
+    def _calculate_lights(self) -> None:
+        raw = self.raw_df
+        wcols = [f"W{i}" for i in range(1, 13)]
+        if "OptoCol1" not in raw.columns:
+            out = pd.DataFrame(0, index=raw.index, columns=wcols)
+            out.insert(0, "Minutes", raw["Minutes"].to_numpy())
+            out["OptoCol1"] = np.nan
+            out["OptoCol2"] = np.nan
+            self.lights_df = out
+            return
+        opto1 = pd.to_numeric(raw["OptoCol1"], errors="coerce").fillna(0).astype(int).to_numpy()
+        opto2 = (
+            pd.to_numeric(raw["OptoCol2"], errors="coerce").fillna(0).astype(int).to_numpy()
+            if "OptoCol2" in raw.columns
+            else np.zeros(len(raw), dtype=int)
+        )
+        lights = np.vstack([np.array([(v & (1 << i)) > 0 for i in range(12)], dtype=bool) for v in opto1])
+        out = pd.DataFrame(lights, columns=wcols)
+        out.insert(0, "Minutes", raw["Minutes"].to_numpy())
+        out["OptoCol1"] = opto1
+        out["OptoCol2"] = opto2
+        self.lights_df = out
+
     def _calculate_feeding(self, *, correct_for_dual_feeding: bool) -> None:
         if self.chambers is None:
             self._build_chambers()
@@ -267,6 +292,56 @@ class DFM:
         )
 
     # ---- Accessors ----
+    def _resolve_well(self, chamber: int, well: str | None) -> int:
+        """
+        Return the 1-based well number for a given chamber index and well label.
+
+        For one-well designs, `well` is ignored.
+        For two-well designs, `well` must be "a" or "b".
+        """
+        ch = self.chambers[chamber - 1]
+        if isinstance(ch, OneWellChamber):
+            return ch.well
+        # TwoWellChamber — well is required
+        if well is None:
+            raise ValueError("well must be specified ('a' or 'b') for two-well designs")
+        w = well.lower()
+        if w == "a":
+            return ch.well_a
+        if w == "b":
+            return ch.well_b
+        raise ValueError(f"well must be 'a' or 'b', got {well!r}")
+
+    def licks_for(self, chamber: int, well: str | None = None) -> pd.Series:
+        """Lick boolean series for the given chamber (and well 'a'/'b' for two-well designs)."""
+        col = f"W{self._resolve_well(chamber, well)}"
+        return self.lick_df[col]
+
+    def events_for(self, chamber: int, well: str | None = None) -> pd.Series:
+        """Event integer series for the given chamber (and well 'a'/'b' for two-well designs)."""
+        col = f"W{self._resolve_well(chamber, well)}"
+        return self.event_df[col]
+
+    def baseline_for(self, chamber: int, well: str | None = None) -> pd.Series:
+        """Baselined signal series for the given chamber (and well 'a'/'b' for two-well designs)."""
+        col = f"W{self._resolve_well(chamber, well)}"
+        return self.baseline_df[col]
+
+    def durations_for(self, chamber: int, well: str | None = None) -> pd.DataFrame:
+        """Bout duration DataFrame for the given chamber (and well 'a'/'b' for two-well designs)."""
+        col = f"W{self._resolve_well(chamber, well)}"
+        return self.durations[col]
+
+    def intervals_for(self, chamber: int, well: str | None = None) -> pd.DataFrame:
+        """Inter-bout interval DataFrame for the given chamber (and well 'a'/'b' for two-well designs)."""
+        col = f"W{self._resolve_well(chamber, well)}"
+        return self.intervals[col]
+
+    def lights_for(self, chamber: int, well: str | None = None) -> pd.Series:
+        """Boolean lights-on series for the given chamber (and well 'a'/'b' for two-well designs)."""
+        col = f"W{self._resolve_well(chamber, well)}"
+        return self.lights_df[col]
+
     def raw(self, *, range_minutes: Sequence[float] = (0, 0)) -> pd.DataFrame:
         if not range_is_specified(range_minutes):
             return self.raw_df
@@ -524,10 +599,7 @@ class DFM:
         range_minutes: Sequence[float] = (0, 0),
         transform_licks: bool = True,
     ) -> pd.DataFrame:
-        from .lights import get_lights_info
-
-        raw_r = self._apply_range(self.raw_df, range_minutes)
-        lights = get_lights_info(raw_r)
+        lights = self._apply_range(self.lights_df, range_minutes)
 
         if self.params.chamber_size == 1:
             lights_sec = lights[[f"W{i}" for i in range(1, 13)]].sum(axis=0).to_numpy() / float(self.params.samples_per_second) if "W1" in lights.columns else np.zeros(12, dtype=float)
@@ -1025,6 +1097,92 @@ class DFM:
         for ax in axes[-1]:
             ax.set_xlabel("Minutes")
         fig.suptitle(f"DFM {self.id} cumulative licks")
+        fig.tight_layout()
+        return fig
+
+    def plot_cumulative_licks_chamber(
+        self,
+        chamber: int,
+        *,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+        single_plot: bool = True,
+        treatment: str | None = None,
+    ):
+        """
+        Plot cumulative licks for a single chamber.
+
+        One-well chambers: one line.
+        Two-well chambers: both wells on one axes when single_plot=True (default),
+        or stacked subplots when single_plot=False.
+
+        Every sample where the light for that well is on is marked with a
+        gold diamond symbol overlaid on the cumulative licks line.
+        If *treatment* is provided it is included in the plot title.
+        """
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        ch = self.chambers[chamber - 1]
+        baseline_r = self._apply_range(self.baseline_df, range_minutes)
+        lights_r = self._apply_range(self.lights_df, range_minutes)
+        first_min = float(baseline_r["Minutes"].iloc[0]) if len(baseline_r) else 0.0
+        last_min = float(baseline_r["Minutes"].iloc[-1]) if len(baseline_r) else 0.0
+
+        light_minutes = lights_r["Minutes"].to_numpy(dtype=float)
+
+        trt_str = f"  [{treatment}]" if treatment else ""
+        title = f"DFM {self.id}  Chamber {chamber}{trt_str}  Cumulative Licks"
+
+        def cumulative_for_well(well: int) -> tuple[np.ndarray, np.ndarray]:
+            d = self.durations.get(f"W{well}", 0)
+            if not isinstance(d, pd.DataFrame) or d.empty:
+                return np.array([first_min, last_min], dtype=float), np.array([0.0, 0.0], dtype=float)
+            d_r = self._apply_range(d, range_minutes) if range_is_specified(range_minutes) else d
+            if d_r.empty:
+                return np.array([first_min, last_min], dtype=float), np.array([0.0, 0.0], dtype=float)
+            x = d_r["Minutes"].to_numpy(dtype=float)
+            y = np.cumsum(d_r["Licks"].to_numpy(dtype=float))
+            if transform_licks:
+                y = np.power(y, 0.25)
+            return x, y
+
+        def light_on_times(well: int) -> np.ndarray:
+            col = f"W{well}"
+            if col not in lights_r.columns or len(light_minutes) == 0:
+                return np.array([], dtype=float)
+            mask = lights_r[col].to_numpy(dtype=bool)
+            return light_minutes[mask]
+
+        def plot_well(ax, well: int, label: str, color: str) -> None:
+            x, y = cumulative_for_well(well)
+            ax.plot(x, y, linewidth=1.2, color=color, label=label)
+            lx = light_on_times(well)
+            if len(lx) > 0 and len(x) >= 2:
+                ly = np.interp(lx, x, y, left=y[0], right=y[-1])
+                ax.scatter(lx, ly, s=30, marker="D", color="gold",
+                           edgecolors="darkorange", linewidths=0.5, zorder=3, label="Light on")
+            ax.set_ylabel("Transformed Cum. Licks" if transform_licks else "Cum. Licks")
+            ax.legend(fontsize=8)
+
+        if isinstance(ch, OneWellChamber):
+            fig, ax = plt.subplots(figsize=(10, 4))
+            plot_well(ax, ch.well, f"W{ch.well}", "steelblue")
+            ax.set_xlabel("Minutes")
+            ax.set_title(title)
+        elif single_plot:
+            fig, ax = plt.subplots(figsize=(10, 4))
+            plot_well(ax, ch.well_a, f"WellA (W{ch.well_a})", "steelblue")
+            plot_well(ax, ch.well_b, f"WellB (W{ch.well_b})", "tomato")
+            ax.set_xlabel("Minutes")
+            ax.set_title(title)
+        else:
+            fig, axes = plt.subplots(2, 1, sharex=True, figsize=(10, 6))
+            plot_well(axes[0], ch.well_a, f"WellA (W{ch.well_a})", "steelblue")
+            plot_well(axes[1], ch.well_b, f"WellB (W{ch.well_b})", "tomato")
+            axes[0].set_title(title)
+            axes[-1].set_xlabel("Minutes")
+
         fig.tight_layout()
         return fig
 

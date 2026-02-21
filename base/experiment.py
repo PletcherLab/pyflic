@@ -197,13 +197,19 @@ class Experiment:
         out = Path(out_dir).expanduser().resolve()
         out.mkdir(parents=True, exist_ok=True)
 
+        n_total = len(self.dfms)
+        print(f"  Computing QC for {n_total} DFM(s)...", flush=True)
         qc = self.compute_qc_results(
             data_breaks_multiplier=data_breaks_multiplier,
             bleeding_cutoff=bleeding_cutoff,
             include_integrity_text=True,
         )
+        print(f"  Writing QC files to {out}", flush=True)
 
-        for dfm_id, r in qc.items():
+        import matplotlib.pyplot as plt
+        for n, (dfm_id, r) in enumerate(qc.items(), 1):
+            print(f"  DFM {dfm_id}  ({n}/{n_total})...", flush=True)
+
             integrity = r["integrity"]
             pd.DataFrame([integrity]).to_csv(out / f"DFM{dfm_id}_integrity_report.csv", index=False)
             if r.get("integrity_text"):
@@ -215,7 +221,7 @@ class Experiment:
             breaks_head = r.get("data_breaks_head")
             breaks_count = int(r.get("data_breaks_count", 0))
             if breaks_count > 0 and isinstance(breaks_head, pd.DataFrame):
-                # Recompute full breaks for saving (head may be truncated).
+                print(f"    {breaks_count} data break(s) found — saving CSV", flush=True)
                 dfm = self.dfms[dfm_id]
                 breaks = dfm.data_breaks(multiplier=float(data_breaks_multiplier))
                 if breaks is not None:
@@ -231,6 +237,13 @@ class Experiment:
                 bleed["Matrix"].to_csv(out / f"DFM{dfm_id}_bleeding_matrix.csv")
                 bleed["AllData"].to_csv(out / f"DFM{dfm_id}_bleeding_alldata.csv", header=True)
 
+            # Raw data plot
+            dfm = self.dfms[dfm_id]
+            fig = dfm.plot_raw()
+            fig.savefig(out / f"DFM{dfm_id}_raw.png", dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+        print(f"  QC complete — {n_total} DFM(s) processed.", flush=True)
         self.qc_report_dir = out
         return out
 
@@ -386,6 +399,29 @@ class Experiment:
                 buf.write("\n")
 
         return buf.getvalue()
+
+    def plot_cumulative_licks_chamber(
+        self,
+        dfm_id: int,
+        chamber: int,
+        *,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+        single_plot: bool = True,
+    ):
+        """
+        Plot cumulative licks for a single DFM chamber, with the treatment name
+        in the title if that chamber is assigned to one.
+        """
+        dfm = self.dfms[int(dfm_id)]
+        treatment = self.design.treatment_for(dfm_id, chamber)
+        return dfm.plot_cumulative_licks_chamber(
+            chamber,
+            range_minutes=range_minutes,
+            transform_licks=transform_licks,
+            single_plot=single_plot,
+            treatment=treatment,
+        )
 
     def plot_feeding_summary(
         self,
@@ -854,6 +890,46 @@ class Experiment:
             figsize=figsize,
         )
 
+    def feeding_summary(
+        self,
+        *,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Return the feeding summary for all treatment-assigned DFM chambers as a single DataFrame.
+        """
+        return self.design.feeding_summary(
+            range_minutes=range_minutes,
+            transform_licks=transform_licks,
+        )
+
+    def write_feeding_summary(
+        self,
+        path: str | Path | None = None,
+        *,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+    ) -> Path:
+        """
+        Save the feeding summary CSV to disk and return the resolved output path.
+
+        If *path* is not given, defaults to ``project_dir/analysis/feeding_summary.csv``.
+        Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
+        Only includes DFM chambers assigned to a treatment.
+        """
+        if path is None:
+            if self.analysis_dir is None:
+                raise ValueError(
+                    "path must be provided when no project_dir is set on the Experiment."
+                )
+            path = self.analysis_dir / "feeding_summary.csv"
+        out = Path(path).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        df = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
+        df.to_csv(out, index=False)
+        return out
+
     def write_summary(
         self,
         path: str | Path | None = None,
@@ -886,4 +962,116 @@ class Experiment:
             encoding="utf-8",
         )
         return out
+
+    def write_feeding_summary_plot(
+        self,
+        path: str | Path | None = None,
+        *,
+        format: str = "png",
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+        ncols: int = 2,
+        figsize: tuple[float, float] | None = None,
+        dpi: int = 150,
+    ) -> Path:
+        """
+        Save the feeding summary plot to disk and return the resolved output path.
+
+        If *path* is not given, defaults to
+        ``project_dir/analysis/feeding_summary.{format}``.
+        Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
+        *format* may be ``"png"`` (default) or ``"pdf"``.
+        """
+        import matplotlib.pyplot as plt
+
+        if path is None:
+            if self.analysis_dir is None:
+                raise ValueError(
+                    "path must be provided when no project_dir is set on the Experiment."
+                )
+            path = self.analysis_dir / f"feeding_summary.{format}"
+        out = Path(path).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        fig = self.plot_feeding_summary(
+            range_minutes=range_minutes,
+            transform_licks=transform_licks,
+            ncols=ncols,
+            figsize=figsize,
+        )
+        fig.savefig(out, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+        return out
+
+    def execute_basic_analysis(
+        self,
+        *,
+        data_breaks_multiplier: float = 4.0,
+        bleeding_cutoff: float = 50.0,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+        plot_format: str = "png",
+        dpi: int = 150,
+    ) -> dict[str, Path]:
+        """
+        Run the standard analysis pipeline and write all outputs to disk.
+
+        Calls, in order:
+          1. ``write_qc_reports()``           → ``project_dir/qc/``
+          2. ``write_summary()``              → ``project_dir/analysis/summary.txt``
+          3. ``write_feeding_summary()``      → ``project_dir/analysis/feeding_summary.csv``
+          4. ``write_feeding_summary_plot()`` → ``project_dir/analysis/feeding_summary.{plot_format}``
+
+        Returns a dict with keys ``"qc_dir"``, ``"summary"``,
+        ``"feeding_summary"`` and ``"feeding_summary_plot"`` pointing to the
+        written paths.
+        """
+        n_dfms = len(self.dfms)
+        print("=" * 50, flush=True)
+        print("FLIC Basic Analysis", flush=True)
+        print(f"  Project : {self.project_dir}", flush=True)
+        print(f"  DFMs    : {sorted(self.dfms.keys())}", flush=True)
+        print("=" * 50, flush=True)
+
+        print("\n[1/4] QC reports...", flush=True)
+        qc_dir = self.write_qc_reports(
+            data_breaks_multiplier=data_breaks_multiplier,
+            bleeding_cutoff=bleeding_cutoff,
+        )
+        print(f"  Done — {n_dfms} DFM(s) → {qc_dir}", flush=True)
+
+        print("\n[2/4] Experiment summary...", flush=True)
+        summary_path = self.write_summary(
+            include_qc=True,
+            qc_data_breaks_multiplier=data_breaks_multiplier,
+            qc_bleeding_cutoff=bleeding_cutoff,
+        )
+        print(f"  Done → {summary_path}", flush=True)
+
+        print("\n[3/4] Feeding summary CSV...", flush=True)
+        feeding_csv_path = self.write_feeding_summary(
+            range_minutes=range_minutes,
+            transform_licks=transform_licks,
+        )
+        print(f"  Done → {feeding_csv_path}", flush=True)
+
+        print("\n[4/4] Feeding summary plot...", flush=True)
+        plot_path = self.write_feeding_summary_plot(
+            format=plot_format,
+            range_minutes=range_minutes,
+            transform_licks=transform_licks,
+            dpi=dpi,
+        )
+        print(f"  Done → {plot_path}", flush=True)
+
+        print("\n" + "=" * 50, flush=True)
+        print("Analysis complete.", flush=True)
+        print("=" * 50, flush=True)
+
+        return {
+            "qc_dir": qc_dir,
+            "summary": summary_path,
+            "feeding_summary": feeding_csv_path,
+            "feeding_summary_plot": plot_path,
+        }
 

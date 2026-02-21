@@ -49,6 +49,14 @@ class ExperimentDesign:
                 rows.append({"DFM": tc.dfm_id, "Chamber": tc.chamber_index, "Treatment": name})
         return pd.DataFrame(rows)
 
+    def treatment_for(self, dfm_id: int, chamber_index: int) -> str | None:
+        """Return the treatment name for a given DFM/chamber, or None if unassigned."""
+        for name, trt in self.treatments.items():
+            for tc in trt.chambers:
+                if tc.dfm_id == int(dfm_id) and tc.chamber_index == int(chamber_index):
+                    return name
+        return None
+
     def feeding_summary(
         self, *, range_minutes: Sequence[float] = (0, 0), transform_licks: bool = True
     ) -> pd.DataFrame:
