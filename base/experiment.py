@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -10,6 +10,13 @@ import pandas as pd
 
 from .dfm import DFM
 from .experiment_design import ExperimentDesign
+
+
+def _fmt_min(v: float) -> str:
+    """Format a minute value for use in a filename.  ``inf`` → ``'end'``."""
+    if v == float("inf"):
+        return "end"
+    return str(int(v)) if v == int(v) else str(v)
 
 
 @dataclass(slots=True)
@@ -30,6 +37,7 @@ class Experiment:
     max_workers: int | None = None
     qc_report_dir: Path | None = None
     qc_results: dict[int, dict[str, Any]] | None = None
+    _feeding_summary_cache: dict = field(default_factory=dict)
 
     def get_dfm(self, dfm_id: int) -> DFM | None:
         """Return the DFM with the given id, or None if it does not exist."""
@@ -423,93 +431,6 @@ class Experiment:
             treatment=treatment,
         )
 
-    def facet_plot_well_durations(
-        self,
-        *,
-        metric: str = "MedDuration",
-        range_minutes: Sequence[float] = (0, 0),
-        transform_licks: bool = True,
-        title: str = "",
-        y_label: str | None = None,
-        ylim: tuple[float, float] | None = None,
-        x_labels: dict[str, str] | None = None,
-        annotation: str | None = None,
-        annotation_x: float = 1.0,
-        annotation_y: float = 0.0,
-        jitter_width: float = 0.25,
-        point_size: float = 3.0,
-        base_font_size: float = 20.0,
-    ):
-        """
-        Jitter + mean + SE plot comparing WellA vs WellB durations faceted by treatment.
-
-        Pulls the feeding summary from the experiment, melts WellA/WellB into a
-        single ``Well`` column, and facets by treatment level.
-
-        Parameters
-        ----------
-        metric : str
-            Duration column prefix.  The function looks for ``{metric}A`` and
-            ``{metric}B`` in the feeding summary.  Defaults to ``"MedDuration"``,
-            giving columns ``MedDurationA`` and ``MedDurationB``.
-            Use ``"MeanDuration"`` for mean instead of median.
-        x_labels : dict[str, str] | None
-            Optional mapping from well key to display label, e.g.
-            ``{"WellA": "Sucrose", "WellB": "Yeast"}``.  Keys are
-            case-insensitive (``"wella"`` and ``"WellA"`` both work).
-            When omitted the tick labels default to ``"WellA"`` / ``"WellB"``.
-        """
-        col_a = f"{metric}A"
-        col_b = f"{metric}B"
-
-        fs = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
-
-        if col_a not in fs.columns or col_b not in fs.columns:
-            raise ValueError(
-                f"Feeding summary does not contain '{col_a}' and '{col_b}'. "
-                f"Available columns: {list(fs.columns)}"
-            )
-
-        keep = [c for c in ("DFM", "Chamber", "Treatment") if c in fs.columns]
-        df_a = fs[keep + [col_a]].copy()
-        df_a["Well"] = "WellA"
-        df_a = df_a.rename(columns={col_a: metric})
-
-        df_b = fs[keep + [col_b]].copy()
-        df_b["Well"] = "WellB"
-        df_b = df_b.rename(columns={col_b: metric})
-
-        df_long = pd.concat([df_a, df_b], ignore_index=True)
-
-        # Normalise x_labels keys to title-case so "wella"/"WELLA"/"WellA" all work.
-        norm_labels: dict[str, str] | None = None
-        if x_labels is not None:
-            norm_labels = {k.lower().replace(" ", ""): v for k, v in x_labels.items()}
-            norm_labels = {
-                "WellA": norm_labels.get("wella", "WellA"),
-                "WellB": norm_labels.get("wellb", "WellB"),
-            }
-
-        return self.plot_jitter_summary(
-            df_long,
-            x_col="Well",
-            y_col=metric,
-            facet_col="Treatment",
-            title=title,
-            x_label="Well",
-            y_label=y_label or metric,
-            ylim=ylim,
-            x_order=["WellA", "WellB"],
-            x_labels=norm_labels,
-            colors={"WellA": "steelblue", "WellB": "tomato"},
-            annotation=annotation,
-            annotation_x=annotation_x,
-            annotation_y=annotation_y,
-            jitter_width=jitter_width,
-            point_size=point_size,
-            base_font_size=base_font_size,
-        )
-
     def plot_jitter_summary(
         self,
         df: pd.DataFrame,
@@ -628,7 +549,7 @@ class Experiment:
         import matplotlib.pyplot as plt
         import numpy as np
 
-        df = self.design.feeding_summary(
+        df = self.feeding_summary(
             range_minutes=range_minutes, transform_licks=transform_licks
         )
         if df.empty:
@@ -1079,11 +1000,141 @@ class Experiment:
     ) -> pd.DataFrame:
         """
         Return the feeding summary for all treatment-assigned DFM chambers as a single DataFrame.
+
+        Results are cached by ``(range_minutes, transform_licks)`` so repeated
+        calls with identical arguments do not recompute the summary.  The full-
+        range summary ``(0, 0)`` is pre-computed when the experiment is first
+        loaded.
         """
-        return self.design.feeding_summary(
-            range_minutes=range_minutes,
-            transform_licks=transform_licks,
-        )
+        key = (float(range_minutes[0]), float(range_minutes[1])), bool(transform_licks)
+        if key not in self._feeding_summary_cache:
+            self._feeding_summary_cache[key] = self.design.feeding_summary(
+                range_minutes=range_minutes,
+                transform_licks=transform_licks,
+            )
+        return self._feeding_summary_cache[key]
+
+    def binned_feeding_summary(
+        self,
+        *,
+        bins: Sequence[float] | None = None,
+        binsize_min: float | None = None,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+        path: str | Path | None = None,
+        save: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Return a stacked feeding summary across time bins with an ``Interval``
+        and ``Minutes`` (bin midpoint) column prepended to each row.
+
+        By default the result is also saved to
+        ``project_dir/analysis/binned_feeding_summary.csv`` (or *path* if
+        provided).  Pass ``save=False`` to suppress file output.
+
+        Bins can be specified in one of two mutually exclusive ways:
+
+        **Explicit bin edges** — pass a sequence of at least two monotonically
+        increasing minute values as *bins*.  Each consecutive pair defines one
+        bin::
+
+            exp.binned_feeding_summary(bins=(0, 10, 50, 100, 200))
+            # → bins (0,10], (10,50], (50,100], (100,200]
+
+        **Regular bin size** — pass *binsize_min* and optionally *range_minutes*
+        to divide a time range into equal-width windows::
+
+            exp.binned_feeding_summary(binsize_min=30, range_minutes=(0, 120))
+            # → bins (0,30], (30,60], (60,90], (90,120]
+
+        When ``range_minutes=(0, 0)`` (the default) with *binsize_min*, the
+        upper bound is taken from the maximum ``Minutes`` value across all
+        loaded DFMs.
+
+        Parameters
+        ----------
+        bins:
+            Explicit, strictly increasing bin edges (at least 2 values).
+            Mutually exclusive with *binsize_min*.
+        binsize_min:
+            Width of each bin in minutes.  Mutually exclusive with *bins*.
+        range_minutes:
+            ``(start, end)`` window used only with *binsize_min*.
+            ``(0, 0)`` means from 0 to the end of the experiment.
+        transform_licks:
+            Whether to apply the 0.25-power lick transformation (default
+            ``True``).
+        path:
+            Explicit output path for the CSV.  When ``None`` (the default)
+            the file is written to
+            ``project_dir/analysis/binned_feeding_summary.csv``.
+            Ignored when ``save=False``.
+        save:
+            Write the result to a CSV file (default ``True``).  Set to
+            ``False`` to return the DataFrame without touching the filesystem.
+        """
+        import numpy as np
+
+        if bins is not None and binsize_min is not None:
+            raise ValueError("Specify either 'bins' or 'binsize_min', not both.")
+        if bins is None and binsize_min is None:
+            raise ValueError("Specify either 'bins' or 'binsize_min'.")
+
+        if bins is not None:
+            edges = [float(v) for v in bins]
+            if len(edges) < 2:
+                raise ValueError("'bins' must contain at least two values.")
+            if edges != sorted(edges) or len(edges) != len(set(edges)):
+                raise ValueError("'bins' must be strictly increasing.")
+            bin_pairs = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+        else:
+            bsize = float(binsize_min)
+            if bsize <= 0:
+                raise ValueError("'binsize_min' must be positive.")
+            if float(range_minutes[0]) == 0.0 and float(range_minutes[1]) == 0.0:
+                m_min = 0.0
+                m_max = max(
+                    float(dfm.raw_df["Minutes"].max()) for dfm in self.dfms.values()
+                )
+            else:
+                m_min, m_max = float(range_minutes[0]), float(range_minutes[1])
+            if m_min >= m_max:
+                raise ValueError(
+                    f"range_minutes start ({m_min}) must be less than end ({m_max})."
+                )
+            y = np.arange(m_min, m_max + 1e-9, bsize, dtype=float)
+            if y.size == 0 or y[-1] < m_max:
+                y = np.append(y, m_max)
+            bin_pairs = [(float(y[i]), float(y[i + 1])) for i in range(len(y) - 1)]
+
+        parts: list[pd.DataFrame] = []
+        for a, b in bin_pairs:
+            label = f"({_fmt_min(a)},{_fmt_min(b)}]"
+            midpoint = (a + b) / 2.0
+            summ = self.feeding_summary(
+                range_minutes=(a, b), transform_licks=transform_licks
+            )
+            if summ.empty:
+                continue
+            summ = summ.copy()
+            summ.insert(0, "Minutes", midpoint)
+            summ.insert(0, "Interval", label)
+            parts.append(summ)
+
+        df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+        if save:
+            if path is None:
+                if self.analysis_dir is None:
+                    raise ValueError(
+                        "path must be provided when no project_dir is set on the Experiment."
+                    )
+                path = self.analysis_dir / "binned_feeding_summary.csv"
+            out = Path(path).expanduser().resolve()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(out, index=False)
+
+        return df
 
     def write_feeding_summary(
         self,
@@ -1095,7 +1146,10 @@ class Experiment:
         """
         Save the feeding summary CSV to disk and return the resolved output path.
 
-        If *path* is not given, defaults to ``project_dir/analysis/feeding_summary.csv``.
+        If *path* is not given, defaults to
+        ``project_dir/analysis/feeding_summary.csv`` for the full range, or
+        ``project_dir/analysis/feeding_summary_{a}_{b}.csv`` when
+        ``range_minutes=(a, b)`` is specified.
         Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
         Only includes DFM chambers assigned to a treatment.
         """
@@ -1104,12 +1158,61 @@ class Experiment:
                 raise ValueError(
                     "path must be provided when no project_dir is set on the Experiment."
                 )
-            path = self.analysis_dir / "feeding_summary.csv"
+            a, b = float(range_minutes[0]), float(range_minutes[1])
+            if a == 0.0 and b == 0.0:
+                stem = "feeding_summary"
+            else:
+                stem = f"feeding_summary_{_fmt_min(a)}_{_fmt_min(b)}"
+            path = self.analysis_dir / f"{stem}.csv"
         out = Path(path).expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
         df = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
         df.to_csv(out, index=False)
         return out
+
+    def write_parsed_feeding_summary(
+        self,
+        breakpoints: Sequence[float],
+        *,
+        transform_licks: bool = True,
+    ) -> list[Path]:
+        """
+        Write one feeding-summary CSV per time segment defined by *breakpoints*.
+
+        *breakpoints* is a sorted sequence of minute values that partition the
+        experiment into consecutive, non-overlapping windows.  For example::
+
+            exp.write_parsed_feeding_summary((100, 400, 1000))
+
+        produces four files:
+
+        * ``feeding_summary_0_100.csv``   — minutes   0 → 100
+        * ``feeding_summary_100_400.csv`` — minutes 100 → 400
+        * ``feeding_summary_400_1000.csv``— minutes 400 → 1000
+        * ``feeding_summary_1000_end.csv``— minutes 1000 → end of experiment
+
+        All files are written to ``project_dir/analysis/`` using the same
+        naming convention as :meth:`write_feeding_summary`.  Raises
+        :class:`ValueError` if *breakpoints* is empty, contains non-positive
+        values, or is not strictly increasing.
+
+        Returns a list of the written file paths in segment order.
+        """
+        bps = [float(v) for v in breakpoints]
+        if not bps:
+            raise ValueError("breakpoints must contain at least one value.")
+        if any(v <= 0 for v in bps):
+            raise ValueError("All breakpoints must be positive (greater than 0).")
+        if bps != sorted(bps) or len(bps) != len(set(bps)):
+            raise ValueError("breakpoints must be strictly increasing.")
+
+        edges = [0.0, *bps, float("inf")]
+        ranges = [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+
+        paths: list[Path] = []
+        for rng in ranges:
+            paths.append(self.write_feeding_summary(range_minutes=rng, transform_licks=transform_licks))
+        return paths
 
     def write_summary(
         self,

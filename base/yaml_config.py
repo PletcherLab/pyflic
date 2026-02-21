@@ -280,7 +280,7 @@ def load_experiment_yaml(
             design.treatments[treatment_name].add_chamber(dfm, chamber_index)
 
     # Keep `Experiment.dfms` as a convenience alias to the same dict.
-    return Experiment(
+    exp = Experiment(
         dfms=design.dfms,
         design=design,
         global_config=global_cfg,
@@ -291,4 +291,10 @@ def load_experiment_yaml(
         executor=executor,
         max_workers=max_workers,
     )
+
+    # Pre-warm the full-range feeding summary cache so the first call is free.
+    print("Pre-computing feeding summary...", flush=True)
+    exp.feeding_summary()
+    print("Ready.", flush=True)
+    return exp
 
