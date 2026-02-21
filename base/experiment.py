@@ -423,6 +423,187 @@ class Experiment:
             treatment=treatment,
         )
 
+    def facet_plot_well_durations(
+        self,
+        *,
+        metric: str = "MedDuration",
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+        title: str = "",
+        y_label: str | None = None,
+        ylim: tuple[float, float] | None = None,
+        x_labels: dict[str, str] | None = None,
+        annotation: str | None = None,
+        annotation_x: float = 1.0,
+        annotation_y: float = 0.0,
+        jitter_width: float = 0.25,
+        point_size: float = 3.0,
+        base_font_size: float = 20.0,
+    ):
+        """
+        Jitter + mean + SE plot comparing WellA vs WellB durations faceted by treatment.
+
+        Pulls the feeding summary from the experiment, melts WellA/WellB into a
+        single ``Well`` column, and facets by treatment level.
+
+        Parameters
+        ----------
+        metric : str
+            Duration column prefix.  The function looks for ``{metric}A`` and
+            ``{metric}B`` in the feeding summary.  Defaults to ``"MedDuration"``,
+            giving columns ``MedDurationA`` and ``MedDurationB``.
+            Use ``"MeanDuration"`` for mean instead of median.
+        x_labels : dict[str, str] | None
+            Optional mapping from well key to display label, e.g.
+            ``{"WellA": "Sucrose", "WellB": "Yeast"}``.  Keys are
+            case-insensitive (``"wella"`` and ``"WellA"`` both work).
+            When omitted the tick labels default to ``"WellA"`` / ``"WellB"``.
+        """
+        col_a = f"{metric}A"
+        col_b = f"{metric}B"
+
+        fs = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
+
+        if col_a not in fs.columns or col_b not in fs.columns:
+            raise ValueError(
+                f"Feeding summary does not contain '{col_a}' and '{col_b}'. "
+                f"Available columns: {list(fs.columns)}"
+            )
+
+        keep = [c for c in ("DFM", "Chamber", "Treatment") if c in fs.columns]
+        df_a = fs[keep + [col_a]].copy()
+        df_a["Well"] = "WellA"
+        df_a = df_a.rename(columns={col_a: metric})
+
+        df_b = fs[keep + [col_b]].copy()
+        df_b["Well"] = "WellB"
+        df_b = df_b.rename(columns={col_b: metric})
+
+        df_long = pd.concat([df_a, df_b], ignore_index=True)
+
+        # Normalise x_labels keys to title-case so "wella"/"WELLA"/"WellA" all work.
+        norm_labels: dict[str, str] | None = None
+        if x_labels is not None:
+            norm_labels = {k.lower().replace(" ", ""): v for k, v in x_labels.items()}
+            norm_labels = {
+                "WellA": norm_labels.get("wella", "WellA"),
+                "WellB": norm_labels.get("wellb", "WellB"),
+            }
+
+        return self.plot_jitter_summary(
+            df_long,
+            x_col="Well",
+            y_col=metric,
+            facet_col="Treatment",
+            title=title,
+            x_label="Well",
+            y_label=y_label or metric,
+            ylim=ylim,
+            x_order=["WellA", "WellB"],
+            x_labels=norm_labels,
+            colors={"WellA": "steelblue", "WellB": "tomato"},
+            annotation=annotation,
+            annotation_x=annotation_x,
+            annotation_y=annotation_y,
+            jitter_width=jitter_width,
+            point_size=point_size,
+            base_font_size=base_font_size,
+        )
+
+    def plot_jitter_summary(
+        self,
+        df: pd.DataFrame,
+        *,
+        x_col: str,
+        y_col: str,
+        facet_col: str = "Treatment",
+        title: str = "",
+        x_label: str | None = None,
+        y_label: str | None = None,
+        ylim: tuple[float, float] | None = None,
+        x_order: list[str] | None = None,
+        x_labels: dict[str, str] | None = None,
+        colors: dict[str, str] | None = None,
+        annotation: str | None = None,
+        annotation_x: float = 1.0,
+        annotation_y: float = 0.0,
+        jitter_width: float = 0.25,
+        point_size: float = 3.0,
+        base_font_size: float = 20.0,
+    ):
+        """
+        Jitter + mean + SE error bar plot faceted by a grouping column.
+
+        Mirrors the R pattern::
+
+            ggplot(df, aes(x_col, y_col, color=x_col))
+              + geom_jitter(width=0.25, size=3)
+              + stat_summary(fun=mean)
+              + stat_summary(fun.data=mean_se, geom="errorbar")
+              + scale_color_brewer(palette="RdGy")
+              + facet_wrap(facet_col)
+              + theme_bw(base_size=20)
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Feeding summary (or any DataFrame) with the relevant columns.
+            Pass ``exp.feeding_summary()`` or a version augmented with
+            extra metadata columns (e.g. a "Sucrose" concentration column).
+        x_col : str
+            Column for the x-axis grouping (e.g. ``"Sucrose"``).
+        y_col : str
+            Column for the y-axis metric (e.g. ``"MedDurationA"``).
+        facet_col : str
+            Column to facet by (default ``"Treatment"``).
+        x_order : list[str] | None
+            Explicit ordering of x-axis categories.
+        annotation : str | None
+            Optional text label to draw on every facet panel.
+        annotation_x / annotation_y
+            Data coordinates for the annotation.
+        """
+        from plotnine import (
+            ggplot, aes, geom_jitter, stat_summary,
+            scale_color_brewer, scale_color_manual, scale_x_discrete, coord_cartesian,
+            facet_wrap, theme_bw, labs, annotate as p9_annotate,
+        )
+        import numpy as np
+
+        p = (
+            ggplot(df, aes(x=x_col, y=y_col, color=x_col))
+            + geom_jitter(width=jitter_width, size=point_size)
+            + stat_summary(fun_y=np.mean, geom="point", color="#333333", shape="x", size=4)
+            + stat_summary(
+                fun_ymin=lambda x: x.mean() - x.sem(),
+                fun_ymax=lambda x: x.mean() + x.sem(),
+                geom="errorbar",
+                color="#333333",
+                size=0.35,
+            )
+            + facet_wrap(f"~ {facet_col}")
+            + theme_bw(base_size=base_font_size)
+            + labs(title=title, x=x_label or x_col, y=y_label or y_col)
+        )
+
+        if colors is not None:
+            p = p + scale_color_manual(values=colors)
+        else:
+            p = p + scale_color_brewer(type="div", palette="RdGy")
+
+        if x_order is not None or x_labels is not None:
+            limits = x_order  # may be None, scale_x_discrete handles that
+            labels = ([x_labels.get(v, v) for v in x_order] if (x_labels and x_order) else None)
+            p = p + scale_x_discrete(limits=limits, labels=labels)
+
+        if ylim is not None:
+            p = p + coord_cartesian(ylim=ylim)
+
+        if annotation is not None:
+            p = p + p9_annotate("text", x=annotation_x, y=annotation_y, label=annotation)
+
+        return p
+
     def plot_feeding_summary(
         self,
         *,
@@ -735,7 +916,7 @@ class Experiment:
         if show_individual_chambers:
             for i, trt in enumerate(treatments):
                 tmp = df[df["Treatment"] == trt]
-                for (dfm_id, ch), g in tmp.groupby(["DFM", "Chamber"]):
+                for (_, _), g in tmp.groupby(["DFM", "Chamber"]):
                     g = g.sort_values("Minutes")
                     ax.plot(
                         g["Minutes"],
