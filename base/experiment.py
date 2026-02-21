@@ -31,12 +31,23 @@ class Experiment:
     qc_report_dir: Path | None = None
     qc_results: dict[int, dict[str, Any]] | None = None
 
+    def get_dfm(self, dfm_id: int) -> DFM | None:
+        """Return the DFM with the given id, or None if it does not exist."""
+        return self.dfms.get(int(dfm_id))
+
     @property
     def analysis_dir(self) -> Path | None:
-        """Return the analysis output directory (project_dir/analysis), or None if no project_dir set."""
+        """Return ``project_dir/analysis``, or ``None`` if no ``project_dir`` is set."""
         if self.project_dir is None:
             return None
         return self.project_dir / "analysis"
+
+    @property
+    def qc_dir(self) -> Path | None:
+        """Return ``project_dir/qc``, or ``None`` if no ``project_dir`` is set."""
+        if self.project_dir is None:
+            return None
+        return self.project_dir / "qc"
 
     def _auto_save_fig(self, fig: Any, default_name: str) -> None:
         """Save fig to analysis_dir/default_name when project_dir is set."""
@@ -48,42 +59,45 @@ class Experiment:
     @classmethod
     def load(
         cls,
-        config_path: str | Path | None = None,
+        project_dir: str | Path,
         *,
-        project_dir: str | Path | None = None,
-        data_dir: str | Path | None = None,
         range_minutes: Sequence[float] = (0, 0),
         parallel: bool = True,
         max_workers: int | None = None,
         executor: Literal["threads", "processes"] = "threads",
     ) -> Experiment:
         """
-        Load an experiment from a YAML config.
+        Load an experiment from a project directory.
 
-        If `project_dir` is given:
-        - `config_path` defaults to `project_dir/flic_config.yaml`
-        - `data_dir` defaults to `project_dir` (unless set in the YAML or passed explicitly)
-        - All output (plots, QC reports, summaries) goes to `project_dir/analysis/`
+        ``project_dir`` is the single required argument and is the root of the
+        project layout::
 
-        If neither `project_dir` nor `config_path` is given, `config_path` defaults to
-        `flic_config.yaml` relative to the current working directory.
+            project_dir/
+              flic_config.yaml   ← required; loaded automatically
+              data/              ← DFM CSV files
+              qc/                ← QC report output (write_qc_reports)
+              analysis/          ← figure and summary output (_auto_save_fig,
+                                    write_summary)
+
+        Parameters
+        ----------
+        project_dir:
+            Root directory for the experiment project.  Must contain
+            ``flic_config.yaml``.  Data is always read from ``project_dir/data``.
+        range_minutes:
+            ``(start, end)`` time window in minutes.  ``(0, 0)`` means load all.
+        parallel:
+            Whether to load DFMs in parallel.
+        max_workers:
+            Maximum number of parallel workers; ``None`` for the default.
+        executor:
+            ``"threads"`` (default) or ``"processes"``.
         """
 
         from .yaml_config import load_experiment_yaml
 
-        resolved_project_dir: Path | None = None
-        if project_dir is not None:
-            resolved_project_dir = Path(project_dir).expanduser().resolve()
-            if config_path is None:
-                config_path = resolved_project_dir / "flic_config.yaml"
-
-        if config_path is None:
-            config_path = "flic_config.yaml"
-
         return load_experiment_yaml(
-            config_path,
-            project_dir=resolved_project_dir,
-            data_dir=data_dir,
+            project_dir,
             range_minutes=range_minutes,
             parallel=parallel,
             max_workers=max_workers,
@@ -162,15 +176,24 @@ class Experiment:
 
     def write_qc_reports(
         self,
-        out_dir: str | Path,
+        out_dir: str | Path | None = None,
         *,
         data_breaks_multiplier: float = 4.0,
         bleeding_cutoff: float = 50.0,
     ) -> Path:
         """
-        Write per-DFM QC reports (CSV/TXT) to `out_dir` and return the resolved directory path.
+        Write per-DFM QC reports (CSV/TXT) to *out_dir* and return the resolved directory path.
+
+        If *out_dir* is not given, defaults to ``project_dir/qc``.  Raises
+        ``ValueError`` if neither *out_dir* nor ``project_dir`` is set.
         """
 
+        if out_dir is None:
+            if self.qc_dir is None:
+                raise ValueError(
+                    "out_dir must be provided when no project_dir is set on the Experiment."
+                )
+            out_dir = self.qc_dir
         out = Path(out_dir).expanduser().resolve()
         out.mkdir(parents=True, exist_ok=True)
 
@@ -833,16 +856,25 @@ class Experiment:
 
     def write_summary(
         self,
-        path: str | Path,
+        path: str | Path | None = None,
         *,
         include_qc: bool = True,
         qc_data_breaks_multiplier: float = 4.0,
         qc_bleeding_cutoff: float = 50.0,
     ) -> Path:
         """
-        Write `summary_text()` to disk and return the resolved output path.
+        Write ``summary_text()`` to disk and return the resolved output path.
+
+        If *path* is not given, defaults to ``project_dir/analysis/summary.txt``.
+        Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
         """
 
+        if path is None:
+            if self.analysis_dir is None:
+                raise ValueError(
+                    "path must be provided when no project_dir is set on the Experiment."
+                )
+            path = self.analysis_dir / "summary.txt"
         out = Path(path).expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(

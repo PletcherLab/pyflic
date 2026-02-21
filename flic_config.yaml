@@ -14,9 +14,6 @@ global:
     correct_for_dual_feeding: false
     pi_direction: left
 
-# Directory containing DFM CSV files for the experiment.
-data_dir: ./
-
 dfms:
   1:
     params:      

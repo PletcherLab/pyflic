@@ -1,23 +1,24 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
-from flic import load_experiment_yaml
+from pyflic import Experiment
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run an experiment defined by a YAML configuration file.")
-    parser.add_argument("config", help="Path to YAML config.")
-    parser.add_argument(
-        "--out-dir",
-        default="",
-        help="Optional directory to write outputs (design table + summaries).",
+    parser = argparse.ArgumentParser(
+        description=(
+            "Load a FLIC experiment from a project directory and write outputs. "
+            "The directory must contain flic_config.yaml; data is read from "
+            "<project_dir>/data and outputs are written to <project_dir>/qc "
+            "and <project_dir>/analysis."
+        )
     )
+    parser.add_argument("project_dir", help="Path to the project directory.")
     parser.add_argument(
         "--no-parallel",
         action="store_true",
-        help="Disable parallel DFM loading/calculation.",
+        help="Disable parallel DFM loading.",
     )
     parser.add_argument(
         "--executor",
@@ -33,33 +34,33 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    exp = load_experiment_yaml(
-        args.config,
+    exp = Experiment.load(
+        args.project_dir,
         parallel=not args.no_parallel,
         executor=args.executor,
         max_workers=None if args.max_workers == 0 else args.max_workers,
     )
+
     design = exp.design.design_table()
     summary = exp.design.feeding_summary()
 
-    if args.out_dir:
-        out = Path(args.out_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        design.to_csv(out / "experiment_design.csv", index=False)
-        summary.to_csv(out / "feeding_summary.csv", index=False)
-        print(f"Wrote {len(design)} design rows and {len(summary)} summary rows to {out}")
-    else:
-        print("=== Experiment design ===")
-        print(design.sort_values(["Treatment", "DFM", "Chamber"]).to_string(index=False))
-        print("\n=== Feeding summary (first 20 rows) ===")
-        if summary.empty:
-            print("(empty)")
-        else:
-            print(summary.head(20).to_string(index=False))
+    # Write design table and feeding summary to analysis dir.
+    analysis = exp.analysis_dir
+    analysis.mkdir(parents=True, exist_ok=True)
+    design.to_csv(analysis / "experiment_design.csv", index=False)
+    summary.to_csv(analysis / "feeding_summary.csv", index=False)
+    print(f"Wrote experiment_design.csv and feeding_summary.csv to {analysis}")
+
+    # Write QC reports to qc dir.
+    qc_out = exp.write_qc_reports()
+    print(f"Wrote QC reports to {qc_out}")
+
+    # Write summary text to analysis dir.
+    summary_path = exp.write_summary()
+    print(f"Wrote summary to {summary_path}")
 
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

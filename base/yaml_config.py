@@ -115,41 +115,54 @@ def _load_dfm_for_config(
 
 
 def load_experiment_yaml(
-    path: str | Path,
+    project_dir: str | Path,
     *,
-    data_dir: str | Path | None = None,
     range_minutes: Sequence[float] = (0, 0),
     parallel: bool = True,
     max_workers: int | None = None,
     executor: Literal["threads", "processes"] = "threads",
 ) -> Experiment:
     """
-    Load an experiment from a YAML configuration file.
+    Load an experiment from a project directory.
 
-    Expected YAML structure:
+    Reads ``project_dir/flic_config.yaml`` and loads DFM data from
+    ``project_dir/data``.
 
-    ```yaml
-    global:
-      params:
-        chamber_size: 2
-    data_dir: flic
-    dfms:
-      - id: 1
-        params: { feeding_threshold: 20 }
-        chambers:
-          1: DrugA
-          2: Vehicle
-      - id: 5
-        params: {}
-        chambers:
-          - index: 1
-            treatment: DrugA
-    ```
+    Parameters
+    ----------
+    project_dir:
+        Project root directory.  Must contain ``flic_config.yaml``.
+        Data is read from *project_dir/data*.  The returned ``Experiment``
+        stores this so that downstream helpers (``write_qc_reports``,
+        ``write_summary``, ``_auto_save_fig``) write to ``project_dir/qc``
+        and ``project_dir/analysis`` automatically.
+
+    Expected YAML structure::
+
+        global:
+          params:
+            chamber_size: 2
+        dfms:
+          - id: 1
+            params: { feeding_threshold: 20 }
+            chambers:
+              1: DrugA
+              2: Vehicle
+          - id: 5
+            params: {}
+            chambers:
+              - index: 1
+                treatment: DrugA
     """
 
     from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-    path = Path(path)
+    resolved_project_dir = Path(project_dir).expanduser().resolve()
+    path = resolved_project_dir / "flic_config.yaml"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"flic_config.yaml not found in project directory: {resolved_project_dir}"
+        )
     cfg = yaml.safe_load(path.read_text())
     if not isinstance(cfg, Mapping):
         raise ValueError("YAML root must be a mapping/object.")
@@ -158,10 +171,8 @@ def load_experiment_yaml(
     global_params_node = global_cfg.get("params", global_cfg.get("parameters", None))
     global_overrides = _normalize_param_overrides(global_params_node)
     global_params_present = global_params_node is not None
-    default_data_dir = cfg.get("data_dir", None)
-    if data_dir is None:
-        data_dir = default_data_dir if default_data_dir is not None else "."
-    data_dir = Path(data_dir)
+
+    data_dir = resolved_project_dir / "data"
 
     dfm_nodes = cfg.get("dfms", cfg.get("DFMs", None))
     if dfm_nodes is None:
@@ -217,6 +228,10 @@ def load_experiment_yaml(
         chamber_assignments = _parse_chamber_assignments(node.get("chambers", node.get("Chambers")))
         dfm_specs.append((dfm_id, params, chamber_assignments))
 
+    n_total = len(dfm_specs)
+    dfm_ids_str = ", ".join(str(s[0]) for s in dfm_specs)
+    print(f"Loading {n_total} DFM(s) [{dfm_ids_str}] from {data_dir}", flush=True)
+
     loaded: dict[int, DFM] = {}
     if parallel and len(dfm_specs) > 1:
         if executor not in ("threads", "processes"):
@@ -229,10 +244,13 @@ def load_experiment_yaml(
             }
             first_error: RuntimeError | None = None
             first_exc: BaseException | None = None
+            n_done = 0
             for fut in as_completed(futs):
                 dfm_id = futs[fut]
                 try:
                     loaded[dfm_id] = fut.result()
+                    n_done += 1
+                    print(f"  DFM {dfm_id} done  ({n_done}/{n_total})", flush=True)
                 except Exception as e:  # noqa: BLE001
                     first_error = RuntimeError(f"Failed to load DFM {dfm_id} from YAML config.")
                     first_exc = e
@@ -245,8 +263,12 @@ def load_experiment_yaml(
                 raise first_error from first_exc
             raise first_error
     else:
-        for dfm_id, params, _ in dfm_specs:
+        for n_done, (dfm_id, params, _) in enumerate(dfm_specs, 1):
+            print(f"  Loading DFM {dfm_id}  ({n_done}/{n_total}) ...", flush=True)
             loaded[dfm_id] = _load_dfm_for_config(dfm_id, params, data_dir, range_minutes)
+            print(f"  DFM {dfm_id} done", flush=True)
+
+    print(f"All {n_total} DFM(s) loaded.", flush=True)
 
     # Store DFMs and assign chambers to treatments.
     for dfm_id, _, chamber_assignments in dfm_specs:
@@ -262,8 +284,8 @@ def load_experiment_yaml(
         dfms=design.dfms,
         design=design,
         global_config=global_cfg,
-        config_path=path.resolve(),
-        data_dir=Path(data_dir).resolve(),
+        config_path=path,
+        project_dir=resolved_project_dir,
         range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
         parallel=bool(parallel),
         executor=executor,

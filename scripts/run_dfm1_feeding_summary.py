@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from flic import DFM, Parameters
+from pyflic import DFM, Parameters
 
 
 def main() -> int:

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from flic import DFM, Parameters
+from pyflic import DFM, Parameters
 
 
 def _repo_root() -> Path:

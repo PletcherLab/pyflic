@@ -29,10 +29,10 @@ LicksB / EventsB / MedDurationB refer to the alternative food (e.g. yeast).
 
 Usage:
     cd /path/to/experiment/data
-    python -m flic.scripts.prog_assay_two_choice --config flic_config.yaml
+    python -m pyflic.scripts.prog_assay_two_choice --config flic_config.yaml
 
     # Or from anywhere, pointing at a config:
-    python -m flic.scripts.prog_assay_two_choice \\
+    python -m pyflic.scripts.prog_assay_two_choice \\
         --config /data/exp/flic_config.yaml \\
         --out-dir /data/exp/results
 """
@@ -48,8 +48,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from flic import Experiment
-from flic.plots import plot_raw, plot_binned_licks
+from pyflic import Experiment
 
 # ─── Colour palette (mirrors R script scale_color_manual) ────────────────────
 _PALETTE = ["#C62121", "#292836", "#52A08D", "#C1CEDA", "#494856"]
@@ -455,7 +454,7 @@ def main() -> int:
     print("Generating raw data plots...")
     for dfm_id in sorted(exp.dfms.keys()):
         dfm = exp.dfms[dfm_id]
-        fig = plot_raw(dfm)
+        fig = dfm.plot_raw()
         fn = out_dir / f"RawDataPlot_DFM{dfm_id}.png"
         fig.savefig(fn, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -468,7 +467,7 @@ def main() -> int:
     print("Generating per-DFM binned lick plots...")
     for dfm_id in sorted(exp.dfms.keys()):
         dfm = exp.dfms[dfm_id]
-        fig = plot_binned_licks(dfm, binsize_min=args.binsize_min, transform_licks=False)
+        fig = dfm.plot_binned_licks(binsize_min=args.binsize_min, transform_licks=False)
         fn = out_dir / f"Rplot_DFM{dfm_id}_LicksNoTF.png"
         fig.savefig(fn, dpi=150, bbox_inches="tight")
         plt.close(fig)

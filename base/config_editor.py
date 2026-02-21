@@ -5,11 +5,11 @@ PyQt6 GUI for creating and editing ``flic_config.yaml`` experiment configuration
 
 Usage (command line)::
 
-    python -m flic.config_editor
+    python -m pyflic
 
 Usage (Python)::
 
-    from flic.config_editor import launch
+    from pyflic.base.config_editor import launch
     launch()
 """
 from __future__ import annotations

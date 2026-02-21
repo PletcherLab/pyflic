@@ -1,4 +1,4 @@
-"""Entry point for ``python -m flic`` — launches the config editor GUI."""
-from flic.config_editor import launch
+"""Entry point for ``python -m pyflic`` — launches the config editor GUI."""
+from pyflic.base.config_editor import launch
 
 launch()

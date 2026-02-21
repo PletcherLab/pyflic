@@ -1,6 +1,6 @@
 import numpy as np
 
-from flic.algorithms.events import (
+from pyflic.base.algorithms.events import (
     expand_events,
     get_events,
     get_intervals,

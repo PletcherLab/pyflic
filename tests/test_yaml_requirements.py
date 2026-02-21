@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from flic import load_experiment_yaml
+from pyflic import load_experiment_yaml
 
 
 def _write(tmp_path: Path, name: str, text: str) -> Path:
