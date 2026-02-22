@@ -1,17 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "pyflic"
 version = "0.1.0"
-description = "Add your description here"
+description = "FLIC (Fly Liquid-food Interaction Counter) data analysis toolkit"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "ipykernel>=7.2.0",
     "matplotlib>=3.10.8",
     "numpy>=2.4.2",
     "pandas>=3.0.1",
     "plotnine>=0.15.3",
     "pyqt6>=6.10.2",
-    "pytest>=9.0.2",
     "pyyaml>=6.0.3",
     "statsmodels>=0.14.6",
+]
+
+[project.scripts]
+pyflic = "pyflic.__main__:launch"
+pyflic-qc = "pyflic.base.qc_viewer:main"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "pytest>=9.0.2",
 ]
