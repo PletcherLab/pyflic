@@ -21,7 +21,7 @@ from typing import Any
 
 import yaml
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -125,7 +125,6 @@ def _make_param_widget(key: str, default: Any) -> QWidget:
         w = QCheckBox()
         w.setChecked(bool(default))
         return w
-    # All numeric parameters use integer spinboxes.
     w = QSpinBox()
     w.setFixedWidth(75)
     if key == "samples_per_second":
@@ -141,7 +140,6 @@ def _make_param_widget(key: str, default: Any) -> QWidget:
 
 
 def _get_param_value(widget: QWidget) -> Any:
-    """Read the current value from a parameter input widget."""
     if isinstance(widget, QComboBox):
         return widget.currentText()
     if isinstance(widget, QCheckBox):
@@ -152,7 +150,6 @@ def _get_param_value(widget: QWidget) -> Any:
 
 
 def _set_param_value(widget: QWidget, value: Any) -> None:
-    """Set the value of a parameter input widget."""
     if isinstance(widget, QComboBox):
         idx = widget.findText(str(value))
         if idx >= 0:
@@ -194,7 +191,6 @@ class ParamsForm(QWidget):
 
         defaults = _PARAM_DEFAULTS.get(chamber_size, _PARAM_DEFAULTS[2])
 
-        # Split parameters evenly into three columns (4 + 4 + 3 for 11 params).
         n = len(_PARAM_ORDER)
         s1 = (n + 2) // 3
         columns = [_PARAM_ORDER[:s1], _PARAM_ORDER[s1 : 2 * s1], _PARAM_ORDER[2 * s1 :]]
@@ -240,14 +236,7 @@ class ParamsForm(QWidget):
 
         self.set_chamber_size(chamber_size)
 
-    # ------------------------------------------------------------------
-
     def get_values(self, *, include_disabled: bool = False) -> dict[str, Any]:
-        """
-        Return a dict of param_name -> value.
-
-        In override mode, unchecked rows are omitted unless ``include_disabled=True``.
-        """
         out: dict[str, Any] = {}
         for key, w in self._input_widgets.items():
             if self._override_mode and not include_disabled:
@@ -258,11 +247,6 @@ class ParamsForm(QWidget):
         return out
 
     def load_values(self, values: dict[str, Any], chamber_size: int = 2) -> None:
-        """
-        Populate the form from a dict.  Keys present in *values* are set and
-        (in override mode) their checkboxes are enabled.  Missing keys are
-        reset to defaults and unchecked.
-        """
         defaults = _PARAM_DEFAULTS.get(chamber_size, _PARAM_DEFAULTS[2])
         for key in _PARAM_ORDER:
             w = self._input_widgets.get(key)
@@ -281,7 +265,6 @@ class ParamsForm(QWidget):
                     w.setEnabled(False)
 
     def reset_defaults(self, chamber_size: int) -> None:
-        """Reset all inputs to the factory defaults for *chamber_size*."""
         defaults = _PARAM_DEFAULTS.get(chamber_size, _PARAM_DEFAULTS[2])
         for key in _PARAM_ORDER:
             w = self._input_widgets.get(key)
@@ -293,15 +276,119 @@ class ParamsForm(QWidget):
                 w.setEnabled(False)
 
     def set_chamber_size(self, chamber_size: int) -> None:
-        """Show or hide rows that are only meaningful for two-well chambers."""
         show = chamber_size == 2
         for form, row_idx in self._two_well_rows:
             form.setRowVisible(row_idx, show)
 
 
 # ---------------------------------------------------------------------------
+# FactorsWidget
+# ---------------------------------------------------------------------------
+
+
+class FactorsWidget(QWidget):
+    """Editable table for defining experimental design factors and their levels."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(4)
+
+        self._table = QTableWidget(0, 2)
+        self._table.setHorizontalHeaderLabels(["Factor Name", "Levels (comma-separated)"])
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setMinimumHeight(80)
+        layout.addWidget(self._table, stretch=1)
+
+        btn_row = QWidget()
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(6)
+        add_btn = QPushButton("+ Factor")
+        add_btn.setMaximumWidth(90)
+        add_btn.clicked.connect(self._add_row)
+        remove_btn = QPushButton("− Remove")
+        remove_btn.setMaximumWidth(90)
+        remove_btn.clicked.connect(self._remove_row)
+        btn_layout.addWidget(add_btn)
+        btn_layout.addWidget(remove_btn)
+        btn_layout.addStretch()
+        layout.addWidget(btn_row)
+
+    def _add_row(self) -> None:
+        r = self._table.rowCount()
+        self._table.setRowCount(r + 1)
+        self._table.setItem(r, 0, QTableWidgetItem(""))
+        self._table.setItem(r, 1, QTableWidgetItem(""))
+        self._table.editItem(self._table.item(r, 0))
+
+    def _remove_row(self) -> None:
+        row = self._table.currentRow()
+        if row >= 0:
+            self._table.removeRow(row)
+
+    def get_factors(self) -> dict[str, list[str]]:
+        """Return {factor_name: [level, ...]} for all non-empty rows."""
+        result: dict[str, list[str]] = {}
+        for r in range(self._table.rowCount()):
+            name_item = self._table.item(r, 0)
+            levels_item = self._table.item(r, 1)
+            name = name_item.text().strip() if name_item else ""
+            levels_raw = levels_item.text().strip() if levels_item else ""
+            if name:
+                result[name] = [lv.strip() for lv in levels_raw.split(",") if lv.strip()]
+        return result
+
+    def get_factor_names(self) -> list[str]:
+        return list(self.get_factors().keys())
+
+    def load_factors(self, factors: dict) -> None:
+        self._table.setRowCount(0)
+        for name, levels in factors.items():
+            r = self._table.rowCount()
+            self._table.setRowCount(r + 1)
+            self._table.setItem(r, 0, QTableWidgetItem(str(name)))
+            if isinstance(levels, list):
+                self._table.setItem(r, 1, QTableWidgetItem(", ".join(str(lv) for lv in levels)))
+            else:
+                self._table.setItem(r, 1, QTableWidgetItem(str(levels)))
+
+
+# ---------------------------------------------------------------------------
 # DFMWidget
 # ---------------------------------------------------------------------------
+
+
+def _sanitize_treatment(text: str) -> str:
+    """Spaces → underscores; strip everything that isn't alphanumeric or underscore."""
+    return re.sub(r"[^A-Za-z0-9_]", "", text.replace(" ", "_"))
+
+
+def _chamber_table_min_height(n_chambers: int) -> int:
+    return n_chambers * 26 + 32
+
+
+def _build_chamber_table(n_chambers: int) -> QTableWidget:
+    """Build a bare chamber table (Chamber + Treatment columns, no factor logic)."""
+    table = QTableWidget(n_chambers, 2)
+    table.setHorizontalHeaderLabels(["Chamber", "Treatment"])
+    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+    table.verticalHeader().setVisible(False)
+    table.setAlternatingRowColors(True)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setMinimumHeight(_chamber_table_min_height(n_chambers))
+    for i in range(n_chambers):
+        ch_item = QTableWidgetItem(str(i + 1))
+        ch_item.setFlags(ch_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        table.setItem(i, 0, ch_item)
+        table.setItem(i, 1, QTableWidgetItem(""))
+    return table
 
 
 class DFMWidget(QWidget):
@@ -315,6 +402,7 @@ class DFMWidget(QWidget):
     ) -> None:
         super().__init__(parent)
         self._chamber_size = chamber_size
+        self._factor_levels: dict[str, list[str]] = {}
 
         outer = QVBoxLayout(self)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -331,18 +419,19 @@ class DFMWidget(QWidget):
         id_layout.addStretch()
         outer.addWidget(id_group)
 
-        # -- Chamber → Treatment table -------------------------------------
+        # -- Chamber table -------------------------------------------------
         n_chambers = 12 if chamber_size == 1 else 6
-        ch_group = QGroupBox("Chamber → Treatment Assignments")
-        ch_layout = QVBoxLayout(ch_group)
-        hint = QLabel(
+        self._ch_group = QGroupBox("Chamber → Treatment Assignments")
+        ch_layout = QVBoxLayout(self._ch_group)
+        self._ch_hint = QLabel(
             "Leave a Treatment cell blank to omit that chamber from the config."
         )
-        hint.setStyleSheet("color: gray; font-size: 11px;")
-        ch_layout.addWidget(hint)
+        self._ch_hint.setStyleSheet("color: gray; font-size: 11px;")
+        ch_layout.addWidget(self._ch_hint)
         self._chamber_table = _build_chamber_table(n_chambers)
+        self._chamber_table.itemChanged.connect(self._on_chamber_cell_changed)
         ch_layout.addWidget(self._chamber_table)
-        outer.addWidget(ch_group)
+        outer.addWidget(self._ch_group)
 
         # -- Parameter overrides -------------------------------------------
         over_group = QGroupBox(
@@ -355,18 +444,50 @@ class DFMWidget(QWidget):
 
     # ------------------------------------------------------------------
 
+    def _on_chamber_cell_changed(self, item: QTableWidgetItem) -> None:
+        col = item.column()
+        if col == 0:
+            return
+        raw = item.text()
+        clean = _sanitize_treatment(raw)
+        if clean != raw:
+            self._chamber_table.blockSignals(True)
+            item.setText(clean)
+            self._chamber_table.blockSignals(False)
+            raw = clean
+        self._validate_chamber_item(item, col)
+
+    def _validate_chamber_item(self, item: QTableWidgetItem, col: int) -> None:
+        """Validate a factor-column cell against its factor's allowed levels."""
+        factor_names = list(self._factor_levels.keys())
+        factor_col = col - 1  # 0-based factor index
+        if factor_names and 0 <= factor_col < len(factor_names):
+            fname = factor_names[factor_col]
+            allowed = self._factor_levels.get(fname, [])
+            text = item.text().strip()
+            if text and allowed and text not in allowed:
+                item.setBackground(QColor("#ffcccc"))
+                item.setToolTip(f"'{text}' is not a valid level for '{fname}'. Allowed: {allowed}")
+                return
+        item.setData(Qt.ItemDataRole.BackgroundRole, None)
+        item.setToolTip("")
+
     def update_chamber_size(self, chamber_size: int) -> None:
-        """Resize the chamber table for a new chamber_size, preserving treatment text."""
         self._chamber_size = chamber_size
         n_new = 12 if chamber_size == 1 else 6
         n_old = self._chamber_table.rowCount()
+        n_cols = self._chamber_table.columnCount()
 
-        # Preserve existing treatment strings
-        old_treatments: dict[int, str] = {}
+        # Preserve existing row data across all factor columns
+        old_data: dict[int, list[str]] = {}
         for i in range(n_old):
-            item = self._chamber_table.item(i, 1)
-            old_treatments[i + 1] = item.text() if item else ""
+            row = []
+            for c in range(1, n_cols):
+                it = self._chamber_table.item(i, c)
+                row.append(it.text() if it else "")
+            old_data[i + 1] = row
 
+        self._chamber_table.blockSignals(True)
         self._chamber_table.setRowCount(n_new)
         self._chamber_table.setMinimumHeight(_chamber_table_min_height(n_new))
         for i in range(n_new):
@@ -374,91 +495,121 @@ class DFMWidget(QWidget):
             ch_item = QTableWidgetItem(str(ch_num))
             ch_item.setFlags(ch_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._chamber_table.setItem(i, 0, ch_item)
-            trt = old_treatments.get(ch_num, "")
-            self._chamber_table.setItem(i, 1, QTableWidgetItem(trt))
+            saved = old_data.get(ch_num, [""] * (n_cols - 1))
+            for c in range(1, n_cols):
+                v = saved[c - 1] if c - 1 < len(saved) else ""
+                self._chamber_table.setItem(i, c, QTableWidgetItem(v))
+        self._chamber_table.blockSignals(False)
 
         self._params_form.set_chamber_size(chamber_size)
 
+    def update_factors(self, factor_levels: dict[str, list[str]]) -> None:
+        """Restructure the chamber table to show one column per factor."""
+        self._factor_levels = factor_levels
+        factor_names = list(factor_levels.keys())
+        n_factors = len(factor_names)
+
+        # Snapshot existing data: join all current factor cols into a list per row
+        n_old_cols = self._chamber_table.columnCount()
+        old_data: dict[int, list[str]] = {}
+        for i in range(self._chamber_table.rowCount()):
+            parts = []
+            for c in range(1, n_old_cols):
+                it = self._chamber_table.item(i, c)
+                parts.append(it.text().strip() if it else "")
+            old_data[i] = parts  # list of per-factor values (may be shorter/longer than new)
+
+        # Determine new layout
+        n_new_cols = 1 + max(1, n_factors)  # Chamber col + factor cols (or Treatment)
+
+        self._chamber_table.blockSignals(True)
+        self._chamber_table.setColumnCount(n_new_cols)
+
+        if factor_names:
+            headers = ["Chamber"] + factor_names
+            self._ch_group.setTitle("Chamber → Factor Level Assignments")
+            self._ch_hint.setText(
+                f"Enter one level per column in the order: {', '.join(factor_names)}.  Leave blank to omit."
+            )
+        else:
+            headers = ["Chamber", "Treatment"]
+            self._ch_group.setTitle("Chamber → Treatment Assignments")
+            self._ch_hint.setText("Leave a Treatment cell blank to omit that chamber from the config.")
+
+        self._chamber_table.setHorizontalHeaderLabels(headers)
+        self._chamber_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for c in range(1, n_new_cols):
+            self._chamber_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Stretch)
+
+        # Re-populate rows, distributing old values into new columns
+        for i in range(self._chamber_table.rowCount()):
+            ch_item = QTableWidgetItem(str(i + 1))
+            ch_item.setFlags(ch_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._chamber_table.setItem(i, 0, ch_item)
+            prev = old_data.get(i, [])
+            for c in range(1, n_new_cols):
+                val = prev[c - 1] if c - 1 < len(prev) else ""
+                self._chamber_table.setItem(i, c, QTableWidgetItem(val))
+
+        self._chamber_table.blockSignals(False)
+
+        # Revalidate all data cells
+        for i in range(self._chamber_table.rowCount()):
+            for c in range(1, n_new_cols):
+                it = self._chamber_table.item(i, c)
+                if it is not None:
+                    self._validate_chamber_item(it, c)
+
     def get_dict(self) -> dict[str, Any]:
-        """Return a YAML-ready dict for this DFM."""
         result: dict[str, Any] = {"id": self._id_spin.value()}
 
         overrides = self._params_form.get_values()
         if overrides:
             result["params"] = overrides
 
+        n_cols = self._chamber_table.columnCount()
         chambers: dict[int, str] = {}
         for i in range(self._chamber_table.rowCount()):
-            item = self._chamber_table.item(i, 1)
-            trt = item.text().strip() if item else ""
-            if trt:
-                chambers[i + 1] = trt
+            if n_cols == 2:
+                it = self._chamber_table.item(i, 1)
+                val = it.text().strip() if it else ""
+            else:
+                parts = []
+                for c in range(1, n_cols):
+                    it = self._chamber_table.item(i, c)
+                    parts.append(it.text().strip() if it else "")
+                val = ", ".join(p for p in parts if p)
+            if val:
+                chambers[i + 1] = val
         if chambers:
             result["chambers"] = chambers
 
         return result
 
     def load_dict(self, data: dict[str, Any], chamber_size: int) -> None:
-        """Populate from a DFM node dict (as parsed from YAML)."""
         self._id_spin.setValue(int(data.get("id", self._id_spin.value())))
 
         params_raw = data.get("params", data.get("parameters", {})) or {}
         self._params_form.load_values(dict(params_raw), chamber_size)
 
-        # Chamber assignments
         chambers_raw = data.get("chambers", data.get("Chambers", {})) or {}
         if isinstance(chambers_raw, dict):
             assignments = {int(k): str(v) for k, v in chambers_raw.items()}
         elif isinstance(chambers_raw, list):
-            assignments = {int(it["index"]): str(it["treatment"]) for it in chambers_raw}
+            assignments = {int(it["index"]): str(it.get("treatment", it.get("levels", ""))) for it in chambers_raw}
         else:
             assignments = {}
 
+        n_cols = self._chamber_table.columnCount()
         for i in range(self._chamber_table.rowCount()):
-            trt = assignments.get(i + 1, "")
-            self._chamber_table.setItem(i, 1, QTableWidgetItem(trt))
-
-
-def _sanitize_treatment(text: str) -> str:
-    """Spaces → underscores; strip everything that isn't alphanumeric or underscore."""
-    return re.sub(r"[^A-Za-z0-9_]", "", text.replace(" ", "_"))
-
-
-def _chamber_table_min_height(n_chambers: int) -> int:
-    """Minimum height (px) to show all rows without a scrollbar."""
-    return n_chambers * 26 + 32  # ~26 px/row + header
-
-
-def _build_chamber_table(n_chambers: int) -> QTableWidget:
-    table = QTableWidget(n_chambers, 2)
-    table.setHorizontalHeaderLabels(["Chamber", "Treatment"])
-    table.horizontalHeader().setSectionResizeMode(
-        0, QHeaderView.ResizeMode.ResizeToContents
-    )
-    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-    table.verticalHeader().setVisible(False)
-    table.setAlternatingRowColors(True)
-    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    table.setMinimumHeight(_chamber_table_min_height(n_chambers))
-    for i in range(n_chambers):
-        ch_item = QTableWidgetItem(str(i + 1))
-        ch_item.setFlags(ch_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        table.setItem(i, 0, ch_item)
-        table.setItem(i, 1, QTableWidgetItem(""))
-
-    def _on_item_changed(item: QTableWidgetItem) -> None:
-        if item.column() != 1:
-            return
-        raw = item.text()
-        clean = _sanitize_treatment(raw)
-        if clean != raw:
-            table.blockSignals(True)
-            item.setText(clean)
-            table.blockSignals(False)
-
-    table.itemChanged.connect(_on_item_changed)
-    return table
+            val = assignments.get(i + 1, "")
+            if n_cols == 2:
+                self._chamber_table.setItem(i, 1, QTableWidgetItem(val))
+            else:
+                parts = [p.strip() for p in val.split(",")]
+                for c in range(1, n_cols):
+                    v = parts[c - 1] if c - 1 < len(parts) else ""
+                    self._chamber_table.setItem(i, c, QTableWidgetItem(v))
 
 
 # ---------------------------------------------------------------------------
@@ -475,10 +626,11 @@ class FLICConfigEditor(QMainWindow):
         self._dfm_widgets: list[DFMWidget] = []
 
         self.setWindowTitle("FLIC Config Editor")
-        self.resize(920, 960)
+        self.resize(960, 1020)
 
         self._build_menu()
         self._build_ui()
+        self._auto_load()
 
     # ------------------------------------------------------------------
     # Menu
@@ -522,11 +674,10 @@ class FLICConfigEditor(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        # Use a vertical splitter so users can drag to give DFM tabs more space.
         splitter = QSplitter(Qt.Orientation.Vertical)
         self.setCentralWidget(splitter)
 
-        # ---- Top pane: Experiment Settings + Global Parameters ----------
+        # ---- Top pane ---------------------------------------------------
         top_widget = QWidget()
         top_layout = QVBoxLayout(top_widget)
         top_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -535,9 +686,9 @@ class FLICConfigEditor(QMainWindow):
 
         # Experiment Settings
         exp_group = QGroupBox("Experiment Settings")
-        exp_form = QFormLayout(exp_group)
-        exp_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        exp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._exp_form = QFormLayout(exp_group)
+        self._exp_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self._exp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         dir_row = QWidget()
         dir_layout = QHBoxLayout(dir_row)
@@ -549,21 +700,33 @@ class FLICConfigEditor(QMainWindow):
         browse_btn.clicked.connect(self._browse_data_dir)
         dir_layout.addWidget(self._data_dir_edit, stretch=1)
         dir_layout.addWidget(browse_btn)
-        exp_form.addRow("Data Directory:", dir_row)
+        self._exp_form.addRow("Data Directory:", dir_row)
 
         self._chamber_size_combo = QComboBox()
         self._chamber_size_combo.addItems(["1  (single-well, 12 chambers)", "2  (two-well, 6 chambers)"])
         self._chamber_size_combo.setCurrentIndex(1)
         self._chamber_size_combo.setMaximumWidth(240)
         self._chamber_size_combo.currentIndexChanged.connect(self._on_chamber_size_changed)
-        exp_form.addRow("Chamber Size:", self._chamber_size_combo)
+        self._exp_form.addRow("Chamber Size:", self._chamber_size_combo)
 
         self._num_dfms_spin = QSpinBox()
         self._num_dfms_spin.setRange(1, 20)
         self._num_dfms_spin.setValue(1)
         self._num_dfms_spin.setMaximumWidth(80)
         self._num_dfms_spin.valueChanged.connect(self._on_num_dfms_changed)
-        exp_form.addRow("Number of DFMs:", self._num_dfms_spin)
+        self._exp_form.addRow("Number of DFMs:", self._num_dfms_spin)
+
+        # Well Names (two-well only) — inline in experiment settings
+        self._well_a_edit = QLineEdit()
+        self._well_a_edit.setPlaceholderText("e.g. Sucrose")
+        self._well_a_edit.setMaximumWidth(200)
+        self._well_b_edit = QLineEdit()
+        self._well_b_edit.setPlaceholderText("e.g. Yeast")
+        self._well_b_edit.setMaximumWidth(200)
+        self._well_a_row = self._exp_form.rowCount()
+        self._exp_form.addRow("Well A:", self._well_a_edit)
+        self._well_b_row = self._exp_form.rowCount()
+        self._exp_form.addRow("Well B:", self._well_b_edit)
 
         top_layout.addWidget(exp_group)
 
@@ -575,6 +738,26 @@ class FLICConfigEditor(QMainWindow):
         global_inner.addWidget(self._global_params)
         top_layout.addWidget(global_group)
 
+        # Experimental Design Factors
+        factors_group = QGroupBox("Experimental Design Factors  (optional)")
+        factors_inner = QVBoxLayout(factors_group)
+        factors_inner.setContentsMargins(8, 4, 8, 8)
+        hint = QLabel(
+            "Define factors here. Chamber assignments will use comma-separated level values "
+            "in the same order as the factors listed below. Leave empty for simple treatment names."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray; font-size: 11px;")
+        factors_inner.addWidget(hint, stretch=1)
+        self._factors_widget = FactorsWidget()
+        factors_inner.addWidget(self._factors_widget, stretch=4)
+        top_layout.addWidget(factors_group)
+
+        # Wire factor table changes → update DFM chamber column headers
+        self._factors_widget._table.itemChanged.connect(self._on_factors_changed)
+        self._factors_widget._table.model().rowsInserted.connect(self._on_factors_changed)
+        self._factors_widget._table.model().rowsRemoved.connect(self._on_factors_changed)
+
         splitter.addWidget(top_widget)
 
         # ---- Bottom pane: DFM Tabs --------------------------------------
@@ -585,20 +768,18 @@ class FLICConfigEditor(QMainWindow):
         dfm_group_layout.addWidget(self._dfm_tabs)
         splitter.addWidget(dfm_group)
 
-        # Initial split: ~300px for settings, rest for DFM tabs.
-        splitter.setSizes([300, 620])
+        splitter.setSizes([440, 580])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
 
-        # Initialise with one DFM tab
         self._sync_dfm_tabs(1, 2)
+        self._update_well_names_visibility()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _chamber_size(self) -> int:
-        """Return the currently selected chamber_size (1 or 2)."""
         return int(self._chamber_size_combo.currentText().split()[0])
 
     def _on_chamber_size_changed(self) -> None:
@@ -607,12 +788,43 @@ class FLICConfigEditor(QMainWindow):
         self._global_params.set_chamber_size(cs)
         for w in self._dfm_widgets:
             w.update_chamber_size(cs)
+        self._update_well_names_visibility()
+
+    def _update_well_names_visibility(self) -> None:
+        show = self._chamber_size() == 2
+        self._exp_form.setRowVisible(self._well_a_row, show)
+        self._exp_form.setRowVisible(self._well_b_row, show)
 
     def _on_num_dfms_changed(self, n: int) -> None:
         self._sync_dfm_tabs(n, self._chamber_size())
 
+    def _on_factors_changed(self, *_args) -> None:
+        factors = self._factors_widget.get_factors()
+        for w in self._dfm_widgets:
+            w.update_factors(factors)
+
+    def _on_dfm_id_changed(self, changed_widget: DFMWidget, new_id: int) -> None:
+        """Update tab label and resolve ID conflicts when a DFM ID spinner changes."""
+        try:
+            changed_idx = self._dfm_widgets.index(changed_widget)
+        except ValueError:
+            return
+        self._dfm_tabs.setTabText(changed_idx, f"DFM {new_id}")
+        # Resolve conflict: if another widget has the same ID, reassign it the
+        # lowest positive integer not currently used by any widget.
+        for i, w in enumerate(self._dfm_widgets):
+            if i == changed_idx:
+                continue
+            if w._id_spin.value() == new_id:
+                used = {ow._id_spin.value() for ow in self._dfm_widgets if ow is not w}
+                free = next(n for n in range(1, 200) if n not in used)
+                w._id_spin.blockSignals(True)
+                w._id_spin.setValue(free)
+                w._id_spin.blockSignals(False)
+                self._dfm_tabs.setTabText(i, f"DFM {free}")
+                break
+
     def _sync_dfm_tabs(self, n: int, chamber_size: int) -> None:
-        """Ensure exactly *n* DFM tabs exist, adding or removing without data loss."""
         current = len(self._dfm_widgets)
         if n < current:
             for _ in range(current - n):
@@ -620,14 +832,32 @@ class FLICConfigEditor(QMainWindow):
                 w = self._dfm_widgets.pop()
                 w.deleteLater()
         elif n > current:
+            factors = self._factors_widget.get_factors() if hasattr(self, "_factors_widget") else {}
             for i in range(current, n):
                 dfm_id = i + 1
                 w = DFMWidget(dfm_id=dfm_id, chamber_size=chamber_size)
+                w.update_factors(factors)
+                w._id_spin.valueChanged.connect(lambda val, _w=w: self._on_dfm_id_changed(_w, val))
                 self._dfm_widgets.append(w)
                 tab_scroll = QScrollArea()
                 tab_scroll.setWidgetResizable(True)
                 tab_scroll.setWidget(w)
                 self._dfm_tabs.addTab(tab_scroll, f"DFM {dfm_id}")
+
+    def _auto_load(self) -> None:
+        """Load flic_config.yaml from the cwd automatically on startup, if present."""
+        for name in ("flic_config.yaml", "flic_config.yml"):
+            candidate = Path.cwd() / name
+            if candidate.exists():
+                try:
+                    cfg = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+                    if isinstance(cfg, dict):
+                        self._current_path = candidate
+                        self.setWindowTitle(f"FLIC Config Editor — {candidate.name}")
+                        self._populate_from_yaml(cfg)
+                except Exception:
+                    pass  # silently ignore; user can open manually
+                break
 
     def _browse_data_dir(self) -> None:
         start = str(Path.cwd())
@@ -640,39 +870,63 @@ class FLICConfigEditor(QMainWindow):
     # ------------------------------------------------------------------
 
     def _collect_yaml(self) -> dict[str, Any]:
-        """Build a YAML-ready dict from the current UI state."""
         cfg: dict[str, Any] = {}
 
         data_dir = self._data_dir_edit.text().strip()
         if data_dir:
             cfg["data_dir"] = data_dir
 
-        # Global params (always include chamber_size)
         global_params = self._global_params.get_values()
         global_params["chamber_size"] = self._chamber_size()
-        cfg["global"] = {"params": global_params}
+        global_section: dict[str, Any] = {"params": global_params}
 
+        # Well names
+        if self._chamber_size() == 2:
+            wa = self._well_a_edit.text().strip()
+            wb = self._well_b_edit.text().strip()
+            if wa or wb:
+                global_section["well_names"] = {
+                    **({"A": wa} if wa else {}),
+                    **({"B": wb} if wb else {}),
+                }
+
+        # Experimental design factors
+        factors = self._factors_widget.get_factors()
+        if factors:
+            global_section["experimental_design_factors"] = factors
+
+        cfg["global"] = global_section
         cfg["dfms"] = [w.get_dict() for w in self._dfm_widgets]
         return cfg
 
     def _populate_from_yaml(self, cfg: dict[str, Any]) -> None:
-        """Populate all widgets from a parsed YAML dict."""
         self._data_dir_edit.setText(str(cfg.get("data_dir", "")))
 
-        # Determine chamber_size from global params
         global_cfg = cfg.get("global", {}) or {}
         global_params_raw = global_cfg.get("params", global_cfg.get("parameters", {})) or {}
         chamber_size = int(global_params_raw.get("chamber_size", 2))
 
-        # Update chamber_size combo without triggering the rebuild signal yet
         idx = 0 if chamber_size == 1 else 1
         self._chamber_size_combo.blockSignals(True)
         self._chamber_size_combo.setCurrentIndex(idx)
         self._chamber_size_combo.blockSignals(False)
+        self._update_well_names_visibility()
 
-        # Global params (exclude chamber_size — it's in the combo)
         params_to_load = {k: v for k, v in global_params_raw.items() if k != "chamber_size"}
         self._global_params.load_values(params_to_load, chamber_size)
+        self._global_params.set_chamber_size(chamber_size)
+
+        # Well names
+        well_names = global_cfg.get("well_names") or {}
+        self._well_a_edit.setText(str(well_names.get("A", "")))
+        self._well_b_edit.setText(str(well_names.get("B", "")))
+
+        # Experimental design factors
+        factors_node = global_cfg.get("experimental_design_factors") or {}
+        self._factors_widget._table.blockSignals(True)
+        self._factors_widget.load_factors(factors_node)
+        self._factors_widget._table.blockSignals(False)
+        factors = self._factors_widget.get_factors()
 
         # DFM nodes
         dfm_nodes = cfg.get("dfms", cfg.get("DFMs", [])) or []
@@ -692,7 +946,10 @@ class FLICConfigEditor(QMainWindow):
 
         for i, node in enumerate(dfm_nodes):
             if i < len(self._dfm_widgets):
+                self._dfm_widgets[i].update_factors(factors)
+                self._dfm_widgets[i]._id_spin.blockSignals(True)
                 self._dfm_widgets[i].load_dict(node, chamber_size)
+                self._dfm_widgets[i]._id_spin.blockSignals(False)
                 dfm_id = int(node.get("id", i + 1))
                 self._dfm_tabs.setTabText(i, f"DFM {dfm_id}")
 
@@ -704,21 +961,27 @@ class FLICConfigEditor(QMainWindow):
         self._current_path = None
         self.setWindowTitle("FLIC Config Editor")
         self._data_dir_edit.clear()
+        self._well_a_edit.clear()
+        self._well_b_edit.clear()
 
         self._chamber_size_combo.blockSignals(True)
         self._num_dfms_spin.blockSignals(True)
-        self._chamber_size_combo.setCurrentIndex(1)  # two-well
+        self._chamber_size_combo.setCurrentIndex(1)
         self._num_dfms_spin.setValue(1)
         self._chamber_size_combo.blockSignals(False)
         self._num_dfms_spin.blockSignals(False)
 
-        # Remove all DFM tabs
+        self._factors_widget._table.blockSignals(True)
+        self._factors_widget._table.setRowCount(0)
+        self._factors_widget._table.blockSignals(False)
+
         self._dfm_tabs.clear()
         for w in self._dfm_widgets:
             w.deleteLater()
         self._dfm_widgets.clear()
 
         self._global_params.reset_defaults(2)
+        self._update_well_names_visibility()
         self._sync_dfm_tabs(1, 2)
 
     def _open(self) -> None:

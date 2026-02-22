@@ -107,6 +107,54 @@ def _parse_chamber_assignments(chambers_node: Any) -> dict[int, str]:
     raise ValueError("chambers must be a mapping or a list of {index,treatment}.")
 
 
+def _parse_chamber_factor_assignments(
+    chambers_node: Any, factor_names: list[str]
+) -> tuple[dict[int, str], dict[int, dict[str, str]]]:
+    """
+    Parse chamber assignments when ``experimental_design_factors`` is defined.
+
+    Chamber values are comma-separated factor levels in the same order as
+    *factor_names*.  The treatment name is the levels joined with ``_``.
+
+    Returns ``(chamber_assignments, chamber_factor_levels)`` where:
+      - ``chamber_assignments``: {chamber_idx: treatment_name}
+      - ``chamber_factor_levels``: {chamber_idx: {factor_name: level}}
+    """
+
+    def _parse_one(idx: int, raw: str) -> tuple[str, dict[str, str]]:
+        levels = [s.strip() for s in str(raw).split(",")]
+        if len(levels) != len(factor_names):
+            raise ValueError(
+                f"Chamber {idx}: expected {len(factor_names)} factor level(s) "
+                f"({', '.join(factor_names)}), got {len(levels)}: {raw!r}"
+            )
+        return "_".join(levels), dict(zip(factor_names, levels))
+
+    assignments: dict[int, str] = {}
+    factor_levels: dict[int, dict[str, str]] = {}
+
+    if chambers_node is None:
+        return assignments, factor_levels
+    if isinstance(chambers_node, Mapping):
+        for k, v in chambers_node.items():
+            idx = int(k)
+            trt, fl = _parse_one(idx, v)
+            assignments[idx] = trt
+            factor_levels[idx] = fl
+    elif isinstance(chambers_node, list):
+        for item in chambers_node:
+            if not isinstance(item, Mapping):
+                raise ValueError("Each chambers[] entry must be a mapping.")
+            idx = int(item.get("index"))
+            raw = item.get("treatment", item.get("levels", ""))
+            trt, fl = _parse_one(idx, raw)
+            assignments[idx] = trt
+            factor_levels[idx] = fl
+    else:
+        raise ValueError("chambers must be a mapping or a list.")
+    return assignments, factor_levels
+
+
 def _load_dfm_for_config(
     dfm_id: int, params: Parameters, data_dir: str | Path, range_minutes: Sequence[float]
 ) -> DFM:
@@ -172,6 +220,11 @@ def load_experiment_yaml(
     global_overrides = _normalize_param_overrides(global_params_node)
     global_params_present = global_params_node is not None
     global_constants = dict(global_cfg.get("constants", {}) or {})
+    factors_node = global_cfg.get("experimental_design_factors") or {}
+    design_factors: list[str] = list(factors_node.keys()) if factors_node else []
+    global_well_names: dict[str, str] = {
+        str(k): str(v) for k, v in (global_cfg.get("well_names") or {}).items()
+    }
 
     data_dir = resolved_project_dir / "data"
 
@@ -197,7 +250,7 @@ def load_experiment_yaml(
     design = ExperimentDesign()
 
     # First pass: compute parameters and capture chamber assignments, but don't load data yet.
-    dfm_specs: list[tuple[int, Parameters, dict[int, str]]] = []
+    dfm_specs: list[tuple[int, Parameters, dict[int, str], dict[str, str], dict[int, dict[str, str]]]] = []
     for node in dfm_nodes:
         if not isinstance(node, Mapping):
             raise ValueError("Each dfms[] entry must be an object/mapping.")
@@ -226,8 +279,22 @@ def load_experiment_yaml(
             raise ValueError(f"DFM {dfm_id}: unsupported chamber_size={base_size} (expected 1 or 2).")
         base = Parameters.single_well() if base_size == 1 else Parameters.two_well()
         params = base.with_updates(**overrides)
-        chamber_assignments = _parse_chamber_assignments(node.get("chambers", node.get("Chambers")))
-        dfm_specs.append((dfm_id, params, chamber_assignments))
+        chambers_raw = node.get("chambers", node.get("Chambers"))
+        if design_factors:
+            chamber_assignments, chamber_factor_levels = _parse_chamber_factor_assignments(
+                chambers_raw, design_factors
+            )
+        else:
+            chamber_assignments = _parse_chamber_assignments(chambers_raw)
+            chamber_factor_levels = {}
+
+        # well_names: DFM entry overrides global
+        dfm_well_names_node = node.get("well_names") or {}
+        well_names: dict[str, str] = {
+            **global_well_names,
+            **{str(k): str(v) for k, v in dfm_well_names_node.items()},
+        }
+        dfm_specs.append((dfm_id, params, chamber_assignments, well_names, chamber_factor_levels))
 
     n_total = len(dfm_specs)
     dfm_ids_str = ", ".join(str(s[0]) for s in dfm_specs)
@@ -241,7 +308,7 @@ def load_experiment_yaml(
         with Exec(max_workers=max_workers) as pool:
             futs = {
                 pool.submit(_load_dfm_for_config, dfm_id, params, data_dir, range_minutes): dfm_id
-                for dfm_id, params, _ in dfm_specs
+                for dfm_id, params, _, _wn, _fl in dfm_specs
             }
             first_error: RuntimeError | None = None
             first_exc: BaseException | None = None
@@ -264,7 +331,7 @@ def load_experiment_yaml(
                 raise first_error from first_exc
             raise first_error
     else:
-        for n_done, (dfm_id, params, _) in enumerate(dfm_specs, 1):
+        for n_done, (dfm_id, params, _, _wn, _fl) in enumerate(dfm_specs, 1):
             print(f"  Loading DFM {dfm_id}  ({n_done}/{n_total}) ...", flush=True)
             loaded[dfm_id] = _load_dfm_for_config(dfm_id, params, data_dir, range_minutes)
             print(f"  DFM {dfm_id} done", flush=True)
@@ -272,13 +339,18 @@ def load_experiment_yaml(
     print(f"All {n_total} DFM(s) loaded.", flush=True)
 
     # Store DFMs and assign chambers to treatments.
-    for dfm_id, _, chamber_assignments in dfm_specs:
+    chamber_factors_map: dict[tuple[int, int], dict[str, str]] = {}
+    for dfm_id, _, chamber_assignments, well_names, chamber_factor_levels in dfm_specs:
         dfm = loaded[dfm_id]
+        if well_names:
+            dfm.well_names = well_names
         design.add_dfm(dfm, overwrite=True)
         for chamber_index, treatment_name in chamber_assignments.items():
             if treatment_name not in design.treatments:
                 design.add_treatment(Treatment(treatment_name))
             design.treatments[treatment_name].add_chamber(dfm, chamber_index)
+        for chamber_index, fl in chamber_factor_levels.items():
+            chamber_factors_map[(int(dfm_id), int(chamber_index))] = fl
 
     # Keep `Experiment.dfms` as a convenience alias to the same dict.
     exp = Experiment(
@@ -286,6 +358,9 @@ def load_experiment_yaml(
         design=design,
         global_config=global_cfg,
         global_constants=global_constants,
+        well_names=global_well_names or None,
+        design_factors=design_factors or None,
+        chamber_factors=chamber_factors_map or None,
         config_path=path,
         project_dir=resolved_project_dir,
         range_minutes=(float(range_minutes[0]), float(range_minutes[1])),

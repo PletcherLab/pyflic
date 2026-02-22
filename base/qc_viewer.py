@@ -152,8 +152,9 @@ class DfmTab(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
 
-        tabs = QtWidgets.QTabWidget()
-        outer.addWidget(tabs)
+        self._tabs = QtWidgets.QTabWidget()
+        outer.addWidget(self._tabs)
+        tabs = self._tabs  # local alias for the rest of _build
 
         prefix = qc_dir / f"DFM{dfm_id}"
 
@@ -302,13 +303,32 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
 
+        self._active_subtab_idx: int = 0
+
         for dfm_id in dfm_ids:
             tab = DfmTab(dfm_id, qc_dir)
             self._dfm_tabs.addTab(tab, f"DFM {dfm_id}")
+            tab._tabs.currentChanged.connect(self._on_subtab_changed)
+
+        self._dfm_tabs.currentChanged.connect(self._on_dfm_tab_changed)
 
         status.showMessage(
             f"Loaded {len(dfm_ids)} DFM(s) from {qc_dir}"
         )
+
+
+    def _on_subtab_changed(self, idx: int) -> None:
+        """Remember the subtab the user just switched to."""
+        self._active_subtab_idx = idx
+
+    def _on_dfm_tab_changed(self, new_idx: int) -> None:
+        """When switching DFM tabs, restore the previously active subtab."""
+        tab = self._dfm_tabs.widget(new_idx)
+        if isinstance(tab, DfmTab):
+            target = min(self._active_subtab_idx, tab._tabs.count() - 1)
+            tab._tabs.blockSignals(True)
+            tab._tabs.setCurrentIndex(target)
+            tab._tabs.blockSignals(False)
 
 
 # ───────────────────────────────────────────────────────────────────────────

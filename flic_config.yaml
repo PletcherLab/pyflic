@@ -17,85 +17,91 @@ global:
     chamber_size: 2  
     correct_for_dual_feeding: false
     pi_direction: left
+  experimental_design_factors:
+    paired: [Paired, Unpaired]
+    genotype: [Chrim, WCS]
+  well_names:
+    A: Sucrose
+    B: Yeast
 
 dfms:
   1:
     params:      
-      pi_direction: left
+      pi_direction: left    
     chambers:
-      1: Paired_WCS
-      2: Unpaired_WCS
-      3: Paired_Chrim
-      4: Unpaired_Chrim
-      5: Paired_Chrim
-      6: Unpaired_Chrim
+      1: Paired,WCS 
+      2: Unpaired,WCS
+      3: Paired,Chrim
+      4: Unpaired,Chrim
+      5: Paired,Chrim
+      6: Unpaired,Chrim
   2:
     params:      
       pi_direction: left
     chambers:
-      1: Unpaired_WCS
-      2: Paired_WCS
-      3: Unpaired_Chrim
-      4: Paired_Chrim
-      5: Unpaired_Chrim
-      6: Paired_Chrim
+      1: Unpaired,WCS
+      2: Paired,WCS
+      3: Unpaired,Chrim
+      4: Paired,Chrim
+      5: Unpaired,Chrim
+      6: Paired,Chrim
   3:
     params:      
       pi_direction: right
     chambers:
-      1: Paired_WCS
-      2: Unpaired_WCS
-      3: Paired_Chrim
-      4: Unpaired_Chrim
-      5: Paired_Chrim
-      6: Unpaired_Chrim
+      1: Paired,WCS
+      2: Unpaired,WCS
+      3: Paired,Chrim
+      4: Unpaired,Chrim
+      5: Paired,Chrim
+      6: Unpaired,Chrim
   4:
     params:      
       pi_direction: right
     chambers:
-      1: Unpaired_WCS
-      2: Paired_WCS
-      3: Unpaired_Chrim
-      4: Paired_Chrim
-      5: Unpaired_Chrim
-      6: Paired_Chrim
+      1: Unpaired,WCS
+      2: Paired,WCS
+      3: Unpaired,Chrim
+      4: Paired,Chrim
+      5: Unpaired,Chrim
+      6: Paired,Chrim
   5 :
     params:      
       pi_direction: left
     chambers:
-      1: Paired_Chrim
-      2: Unpaired_Chrim
-      3: Paired_WCS
-      4: Unpaired_WCS
-      5: Paired_WCS
-      6: Unpaired_WCS
+      1: Paired,Chrim
+      2: Unpaired,Chrim
+      3: Paired,WCS
+      4: Unpaired,WCS
+      5: Paired,WCS
+      6: Unpaired,WCS
   6:
     params:      
       pi_direction: left
     chambers:
-      1: Unpaired_Chrim
-      2: Paired_Chrim
-      3: Unpaired_WCS
-      4: Paired_WCS
-      5: Unpaired_WCS
-      6: Paired_WCS
+      1: Unpaired,Chrim
+      2: Paired,Chrim
+      3: Unpaired,WCS
+      4: Paired,WCS
+      5: Unpaired,WCS
+      6: Paired,WCS
   7:
     params:      
       pi_direction: right
     chambers:
-      1: Paired_Chrim
-      2: Unpaired_Chrim
-      3: Paired_WCS
-      4: Unpaired_WCS
-      5: Paired_WCS
-      6: Unpaired_WCS
+      1: Paired,Chrim
+      2: Unpaired,Chrim
+      3: Paired,WCS
+      4: Unpaired,WCS
+      5: Paired,WCS
+      6: Unpaired,WCS
   8:
     params:      
       pi_direction: right
     chambers:
-      1: Unpaired_Chrim
-      2: Paired_Chrim
-      3: Unpaired_WCS
-      4: Paired_WCS
-      5: Unpaired_WCS
-      6: Paired_WCS
+      1: Unpaired,Chrim
+      2: Paired,Chrim
+      3: Unpaired,WCS
+      4: Paired,WCS
+      5: Unpaired,WCS
+      6: Paired,WCS

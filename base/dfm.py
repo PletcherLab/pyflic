@@ -12,10 +12,73 @@ from .algorithms.feeding import bout_durations_and_intervals
 from .algorithms.tasting import tasting_bout_durations_and_intervals
 from .algorithms.thresholds import build_thresholds_table
 from .chamber import OneWellChamber, TwoWellChamber, compute_feeding_for_well, compute_tasting_for_well
-from .io import load_dfm_csvs
 from .parameters import Parameters
 import re
-from .utils import range_is_specified
+from .utils import natural_sorted, range_is_specified
+
+
+# ── DFM CSV loading (formerly io.py) ────────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class _LoadedDFM:
+    df: pd.DataFrame
+    version: int
+    source_files: list[Path]
+
+
+def _elapsed_seconds_from_date_time(df: pd.DataFrame) -> np.ndarray:
+    dates = df["Date"].astype(str)
+    times = df["Time"].astype(str)
+    ms = pd.to_numeric(df["MSec"], errors="coerce").fillna(0.0).to_numpy()
+    first = times.iloc[0]
+    is_ampm = ("AM" in first) or ("PM" in first) or (first.upper().endswith("M"))
+    if is_ampm:
+        ts = pd.to_datetime(dates + " " + times, format="%m/%d/%Y %I:%M:%S %p", utc=True)
+    else:
+        ts = pd.to_datetime(dates + " " + times, format="%m/%d/%Y %H:%M:%S", utc=True)
+    diffs = (ts - ts.iloc[0]).dt.total_seconds().to_numpy(dtype=float)
+    return diffs + (ms / 1000.0)
+
+
+def _ensure_minutes_seconds(df: pd.DataFrame) -> pd.DataFrame:
+    if "Seconds" in df.columns:
+        seconds = pd.to_numeric(df["Seconds"], errors="coerce").to_numpy(dtype=float)
+        out = df.copy()
+        out.insert(0, "Minutes", seconds / 60.0)
+        return out
+    if all(c in df.columns for c in ("Date", "Time", "MSec")):
+        seconds = _elapsed_seconds_from_date_time(df)
+        out = df.copy()
+        out.insert(0, "Seconds", seconds)
+        out.insert(0, "Minutes", seconds / 60.0)
+        return out
+    raise ValueError("Time information missing from DFM data (need Seconds or Date/Time/MSec).")
+
+
+def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Sequence[float] = (0, 0)) -> _LoadedDFM:
+    data_dir = Path(data_dir)
+    if not data_dir.exists():
+        raise FileNotFoundError(f"data_dir does not exist: {data_dir}")
+    v3 = natural_sorted(data_dir.glob(f"DFM{dfm_id}_*.csv"))
+    if v3:
+        files, version = v3, 3
+    else:
+        v2_single = data_dir / f"DFM_{dfm_id}.csv"
+        if v2_single.exists():
+            files, version = [v2_single], 2
+        else:
+            v2_link = natural_sorted(data_dir.glob(f"DFM_{dfm_id}_*.csv"))
+            if v2_link:
+                files, version = v2_link, 2
+            else:
+                raise FileNotFoundError(f"DFM data file(s) not found for id={dfm_id} in {data_dir}")
+    frames = [pd.read_csv(f) for f in files]
+    df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+    df = _ensure_minutes_seconds(df)
+    if range_is_specified(range_minutes):
+        a, b = float(range_minutes[0]), float(range_minutes[1])
+        df = df[(df["Minutes"] > a) & (df["Minutes"] < b)]
+    return _LoadedDFM(df=df.reset_index(drop=True), version=version, source_files=files)
 
 
 @dataclass(slots=True)
@@ -25,6 +88,8 @@ class DFM:
     raw_df: pd.DataFrame
     version: int = 2
     source_files: list[Path] | None = None
+
+    well_names: dict[str, str] | None = None  # e.g. {"A": "Sucrose", "B": "Yeast"}
 
     # Computed
     baseline_df: pd.DataFrame | None = None
@@ -53,7 +118,7 @@ class DFM:
         range_minutes: Sequence[float] = (0, 0),
         correct_for_dual_feeding: bool | None = None,
     ) -> DFM:
-        loaded = load_dfm_csvs(dfm_id, data_dir=data_dir, range_minutes=range_minutes)
+        loaded = _load_dfm_csvs(dfm_id, data_dir=data_dir, range_minutes=range_minutes)
         df = loaded.df
 
         obj = cls(
@@ -753,6 +818,12 @@ class DFM:
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
     # ---- Plots ----
+    def _well_label(self, side: str) -> str:
+        """Return display name for well 'A' or 'B', falling back to 'WellA'/'WellB'."""
+        if self.well_names and side in self.well_names:
+            return self.well_names[side]
+        return f"Well{side}"
+
     def _apply_range(self, df: pd.DataFrame, range_minutes: Sequence[float]) -> pd.DataFrame:
         if not range_is_specified(range_minutes):
             return df
@@ -1093,7 +1164,7 @@ class DFM:
                 ax = axes[row_idx][col_idx]
                 x, y = cumulative_for_well(well)
                 ax.plot(x, y, linewidth=1.0)
-                ax.set_title(f"Ch{int(ch.index)} {'WellA' if col_idx==0 else 'WellB'} (W{well})", fontsize=9)
+                ax.set_title(f"Ch{int(ch.index)} {self._well_label('A') if col_idx == 0 else self._well_label('B')} (W{well})", fontsize=9)
         for ax in axes[-1]:
             ax.set_xlabel("Minutes")
         fig.suptitle(f"DFM {self.id} cumulative licks")
@@ -1172,14 +1243,14 @@ class DFM:
             ax.set_title(title)
         elif single_plot:
             fig, ax = plt.subplots(figsize=(10, 4))
-            plot_well(ax, ch.well_a, f"WellA (W{ch.well_a})", "steelblue")
-            plot_well(ax, ch.well_b, f"WellB (W{ch.well_b})", "tomato")
+            plot_well(ax, ch.well_a, f"{self._well_label('A')} (W{ch.well_a})", "steelblue")
+            plot_well(ax, ch.well_b, f"{self._well_label('B')} (W{ch.well_b})", "tomato")
             ax.set_xlabel("Minutes")
             ax.set_title(title)
         else:
             fig, axes = plt.subplots(2, 1, sharex=True, figsize=(10, 6))
-            plot_well(axes[0], ch.well_a, f"WellA (W{ch.well_a})", "steelblue")
-            plot_well(axes[1], ch.well_b, f"WellB (W{ch.well_b})", "tomato")
+            plot_well(axes[0], ch.well_a, f"{self._well_label('A')} (W{ch.well_a})", "steelblue")
+            plot_well(axes[1], ch.well_b, f"{self._well_label('B')} (W{ch.well_b})", "tomato")
             axes[0].set_title(title)
             axes[-1].set_xlabel("Minutes")
 

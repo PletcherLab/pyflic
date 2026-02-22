@@ -89,12 +89,10 @@ class HedonicFeedingExperiment(Experiment):
         title: str = "",
         y_label: str | None = None,
         ylim: tuple[float, float] | None = None,
-        x_labels: dict[str, str] | None = None,
         annotation: str | None = None,
         annotation_x: float = 1.0,
         annotation_y: float = 0.0,
         jitter_width: float = 0.25,
-        point_size: float = 3.0,
         base_font_size: float = 20.0,
         save: bool = True,
         path: str | Path | None = None,
@@ -107,13 +105,11 @@ class HedonicFeedingExperiment(Experiment):
         Pulls the feeding summary from the experiment, melts WellA/WellB into a
         single ``Well`` column, and facets by treatment level.
 
+        Well axis labels are taken from ``self.well_names`` (set via ``well_names``
+        in ``flic_config.yaml``), falling back to ``"WellA"`` / ``"WellB"``.
+
         Parameters
         ----------
-        x_labels : dict[str, str] | None
-            Optional mapping from well key to display label, e.g.
-            ``{"WellA": "Sucrose", "WellB": "Yeast"}``.  Keys are
-            case-insensitive (``"wella"`` and ``"WellA"`` both work).
-            When omitted the tick labels default to ``"WellA"`` / ``"WellB"``.
         save : bool
             Save the plot to disk (default ``False``).  When ``True`` and
             *path* is not given, writes to
@@ -139,24 +135,23 @@ class HedonicFeedingExperiment(Experiment):
             )
 
         keep = [c for c in ("DFM", "Chamber", "Treatment") if c in fs.columns]
-        df_a = fs[keep + [col_a]].copy()
+        df_a = fs[keep + [col_a, "EventsA"]].copy() if "EventsA" in fs.columns else fs[keep + [col_a]].copy()
         df_a["Well"] = "WellA"
-        df_a = df_a.rename(columns={col_a: metric})
+        df_a = df_a.rename(columns={col_a: metric, "EventsA": "Events"})
 
-        df_b = fs[keep + [col_b]].copy()
+        df_b = fs[keep + [col_b, "EventsB"]].copy() if "EventsB" in fs.columns else fs[keep + [col_b]].copy()
         df_b["Well"] = "WellB"
-        df_b = df_b.rename(columns={col_b: metric})
+        df_b = df_b.rename(columns={col_b: metric, "EventsB": "Events"})
 
         df_long = pd.concat([df_a, df_b], ignore_index=True)
 
-        # Normalise x_labels keys to title-case so "wella"/"WELLA"/"WellA" all work.
-        norm_labels: dict[str, str] | None = None
-        if x_labels is not None:
-            norm_labels = {k.lower().replace(" ", ""): v for k, v in x_labels.items()}
-            norm_labels = {
-                "WellA": norm_labels.get("wella", "WellA"),
-                "WellB": norm_labels.get("wellb", "WellB"),
-            }
+        wn = self.well_names or {}
+        well_labels = {
+            "WellA": wn.get("A", "WellA"),
+            "WellB": wn.get("B", "WellB"),
+        }
+
+        size_col = "Events" if "Events" in df_long.columns else None
 
         p = self.plot_jitter_summary(
             df_long,
@@ -168,13 +163,13 @@ class HedonicFeedingExperiment(Experiment):
             y_label=y_label or metric,
             ylim=ylim,
             x_order=["WellA", "WellB"],
-            x_labels=norm_labels,
+            x_labels=well_labels,
             colors={"WellA": "steelblue", "WellB": "tomato"},
             annotation=annotation,
             annotation_x=annotation_x,
             annotation_y=annotation_y,
             jitter_width=jitter_width,
-            point_size=point_size,
+            size_col=size_col,
             base_font_size=base_font_size,
         )
 

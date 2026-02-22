@@ -29,6 +29,9 @@ class Experiment:
     design: ExperimentDesign
     global_config: dict
     global_constants: dict = field(default_factory=dict)
+    well_names: dict[str, str] | None = None   # e.g. {"A": "Sucrose", "B": "Yeast"}
+    design_factors: list[str] | None = None    # ordered factor names from experimental_design_factors
+    chamber_factors: dict | None = None         # {(dfm_id, chamber_idx): {factor: level}}
     config_path: Path | None = None
     data_dir: Path | None = None
     project_dir: Path | None = None
@@ -468,6 +471,7 @@ class Experiment:
         annotation_y: float = 0.0,
         jitter_width: float = 0.25,
         point_size: float = 3.0,
+        size_col: str | None = None,
         base_font_size: float = 20.0,
     ):
         """
@@ -509,9 +513,10 @@ class Experiment:
         )
         import numpy as np
 
+        jitter_aes = aes(size=size_col) if size_col is not None else {}
         p = (
             ggplot(df, aes(x=x_col, y=y_col, color=x_col))
-            + geom_jitter(width=jitter_width, size=point_size)
+            + geom_jitter(jitter_aes, width=jitter_width, **({} if size_col else {"size": point_size}))
             + stat_summary(fun_y=np.mean, geom="point", color="#333333", shape="x", size=4)
             + stat_summary(
                 fun_ymin=lambda x: x.mean() - x.sem(),
@@ -599,25 +604,28 @@ class Experiment:
             ("MedianInt", "Median Interval (s)"),
         ]
 
+        wn = self.well_names or {}
+        na = wn.get("A", "A")
+        nb = wn.get("B", "B")
         two_well_metrics = [
             ("PI", "PI"),
             ("EventPI", "Event PI"),
-            ("LicksA", "Licks (Well A)"),
-            ("LicksB", "Licks (Well B)"),
-            ("EventsA", "Events (Well A)"),
-            ("EventsB", "Events (Well B)"),
-            ("MeanDurationA", "Mean Duration A (s)"),
-            ("MeanDurationB", "Mean Duration B (s)"),
-            ("MedDurationA", "Median Duration A (s)"),
-            ("MedDurationB", "Median Duration B (s)"),
-            ("MeanTimeBtwA", "Mean Time Btw A (s)"),
-            ("MeanTimeBtwB", "Mean Time Btw B (s)"),
-            ("MedTimeBtwA", "Median Time Btw A (s)"),
-            ("MedTimeBtwB", "Median Time Btw B (s)"),
-            ("MeanIntA", "Mean Interval A (s)"),
-            ("MeanIntB", "Mean Interval B (s)"),
-            ("MedianIntA", "Median Interval A (s)"),
-            ("MedianIntB", "Median Interval B (s)"),
+            ("LicksA", f"Licks ({na})"),
+            ("LicksB", f"Licks ({nb})"),
+            ("EventsA", f"Events ({na})"),
+            ("EventsB", f"Events ({nb})"),
+            ("MeanDurationA", f"Mean Duration {na} (s)"),
+            ("MeanDurationB", f"Mean Duration {nb} (s)"),
+            ("MedDurationA", f"Median Duration {na} (s)"),
+            ("MedDurationB", f"Median Duration {nb} (s)"),
+            ("MeanTimeBtwA", f"Mean Time Btw {na} (s)"),
+            ("MeanTimeBtwB", f"Mean Time Btw {nb} (s)"),
+            ("MedTimeBtwA", f"Median Time Btw {na} (s)"),
+            ("MedTimeBtwB", f"Median Time Btw {nb} (s)"),
+            ("MeanIntA", f"Mean Interval {na} (s)"),
+            ("MeanIntB", f"Mean Interval {nb} (s)"),
+            ("MedianIntA", f"Median Interval {na} (s)"),
+            ("MedianIntB", f"Median Interval {nb} (s)"),
         ]
 
         all_metrics = two_well_metrics if chamber_size == 2 else one_well_metrics
@@ -1017,6 +1025,28 @@ class Experiment:
             figsize=figsize,
         )
 
+    def _append_factor_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Insert per-factor columns after the Treatment column when design_factors is set."""
+        if not self.design_factors or not self.chamber_factors or df.empty:
+            return df
+        if "DFM" not in df.columns or "Chamber" not in df.columns:
+            return df
+        df = df.copy()
+        for factor in self.design_factors:
+            df[factor] = [
+                self.chamber_factors.get((int(row["DFM"]), int(row["Chamber"])), {}).get(factor, "")
+                for _, row in df.iterrows()
+            ]
+        # Move factor columns to sit immediately after Treatment
+        if "Treatment" in df.columns:
+            cols = list(df.columns)
+            trt_pos = cols.index("Treatment")
+            for i, factor in enumerate(self.design_factors):
+                cols.remove(factor)
+                cols.insert(trt_pos + 1 + i, factor)
+            df = df[cols]
+        return df
+
     def feeding_summary(
         self,
         *,
@@ -1033,9 +1063,11 @@ class Experiment:
         """
         key = (float(range_minutes[0]), float(range_minutes[1])), bool(transform_licks)
         if key not in self._feeding_summary_cache:
-            self._feeding_summary_cache[key] = self.design.feeding_summary(
-                range_minutes=range_minutes,
-                transform_licks=transform_licks,
+            self._feeding_summary_cache[key] = self._append_factor_columns(
+                self.design.feeding_summary(
+                    range_minutes=range_minutes,
+                    transform_licks=transform_licks,
+                )
             )
         return self._feeding_summary_cache[key]
 
