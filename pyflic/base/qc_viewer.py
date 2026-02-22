@@ -336,11 +336,11 @@ class MainWindow(QtWidgets.QMainWindow):
 # ───────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("Usage: python base/qc_viewer.py <project_dir>", file=sys.stderr)
+    if len(sys.argv) > 2:
+        print("Usage: pyflic-qc [project_dir]", file=sys.stderr)
         sys.exit(1)
 
-    project_dir = Path(sys.argv[1]).expanduser().resolve()
+    project_dir = Path(sys.argv[1] if len(sys.argv) == 2 else ".").expanduser().resolve()
     if not project_dir.is_dir():
         print(f"Error: not a directory: {project_dir}", file=sys.stderr)
         sys.exit(1)
