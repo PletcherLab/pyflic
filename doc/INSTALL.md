@@ -69,13 +69,19 @@ pip install pyflic-0.1.0-py3-none-any.whl
 python -c "import pyflic; print('pyflic installed successfully')"
 ```
 
-The config editor GUI can be launched from the command line:
+Running `pyflic` on its own prints a summary of available commands:
 
 ```bash
 pyflic
 ```
 
-The QC viewer can be launched from a project directory:
+Launch the config editor GUI:
+
+```bash
+pyflic-config
+```
+
+Launch the QC viewer from a project directory:
 
 ```bash
 pyflic-qc /path/to/project

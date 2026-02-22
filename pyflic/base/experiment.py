@@ -548,6 +548,84 @@ class Experiment:
 
         return p
 
+    def facet_plot_well_durations(
+        self,
+        *,
+        metric: str = "MedDuration",
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+        title: str = "",
+        y_label: str | None = None,
+        ylim: tuple[float, float] | None = None,
+        x_labels: dict[str, str] | None = None,
+        annotation: str | None = None,
+        jitter_width: float = 0.25,
+        point_size: float = 3.0,
+        base_font_size: float = 20.0,
+    ):
+        """
+        Jitter plot comparing WellA vs WellB for a given feeding metric, faceted by treatment.
+
+        Parameters
+        ----------
+        metric : str
+            Base column name without the A/B suffix (e.g. ``"MedDuration"`` looks for
+            ``"MedDurationA"`` and ``"MedDurationB"`` in the feeding summary).
+        x_labels : dict[str, str] | None
+            Optional mapping from ``"WellA"`` / ``"WellB"`` to descriptive food names,
+            e.g. ``{"WellA": "Sucrose", "WellB": "Yeast"}``.  Keys are case-insensitive.
+        """
+        col_a = f"{metric}A"
+        col_b = f"{metric}B"
+
+        df = self.feeding_summary(
+            range_minutes=range_minutes, transform_licks=transform_licks
+        )
+
+        missing = [c for c in (col_a, col_b) if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"facet_plot_well_durations: columns {missing} not found in feeding summary. "
+                f"Available columns: {list(df.columns)}"
+            )
+
+        id_cols = [c for c in ("Treatment", "DFM", "Chamber") if c in df.columns]
+        df_long = df[id_cols + [col_a, col_b]].melt(
+            id_vars=id_cols,
+            value_vars=[col_a, col_b],
+            var_name="_WellCol",
+            value_name=metric,
+        )
+        df_long["Well"] = df_long["_WellCol"].map({col_a: "WellA", col_b: "WellB"})
+        df_long = df_long.drop(columns=["_WellCol"])
+
+        # Build case-insensitive x_labels keyed by "WellA"/"WellB"
+        normalised_labels: dict[str, str] | None = None
+        if x_labels:
+            normalised_labels = {}
+            for k, v in x_labels.items():
+                key = k.strip().lower().replace(" ", "")
+                if key in ("wella", "a"):
+                    normalised_labels["WellA"] = v
+                elif key in ("wellb", "b"):
+                    normalised_labels["WellB"] = v
+
+        return self.plot_jitter_summary(
+            df_long,
+            x_col="Well",
+            y_col=metric,
+            facet_col="Treatment",
+            title=title,
+            y_label=y_label or metric,
+            ylim=ylim,
+            x_order=["WellA", "WellB"],
+            x_labels=normalised_labels,
+            annotation=annotation,
+            jitter_width=jitter_width,
+            point_size=point_size,
+            base_font_size=base_font_size,
+        )
+
     def plot_feeding_summary(
         self,
         *,

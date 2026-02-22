@@ -19,7 +19,8 @@ dependencies = [
 ]
 
 [project.scripts]
-pyflic = "pyflic.__main__:launch"
+pyflic = "pyflic.__main__:main"
+pyflic-config = "pyflic.base.config_editor:launch"
 pyflic-qc = "pyflic.base.qc_viewer:main"
 
 [dependency-groups]

@@ -5,7 +5,8 @@
       "Bash(uv sync:*)",
       "Bash(uv run python:*)",
       "Bash(uv run pytest:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(uv run:*)"
     ],
     "additionalDirectories": [
       "/home/scott/GithubLocal/pyflic"
