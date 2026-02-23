@@ -128,6 +128,16 @@ class HedonicFeedingExperiment(Experiment):
 
         fs = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
 
+        if fs.empty and len(fs.columns) == 0:
+            n_treatments = len(self.design.treatments)
+            n_chambers = sum(len(t.chambers) for t in self.design.treatments.values())
+            raise ValueError(
+                "Feeding summary is empty — no data was collected. "
+                f"Design has {n_treatments} treatment(s) with {n_chambers} total chamber(s). "
+                "Check that your flic_config.yaml has valid 'chambers:' assignments under each DFM, "
+                "or that filter_flies() has not removed all chambers."
+            )
+
         if col_a not in fs.columns or col_b not in fs.columns:
             raise ValueError(
                 f"Feeding summary does not contain '{col_a}' and '{col_b}'. "

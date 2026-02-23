@@ -728,6 +728,30 @@ class FLICConfigEditor(QMainWindow):
         self._well_b_row = self._exp_form.rowCount()
         self._exp_form.addRow("Well B:", self._well_b_edit)
 
+        # Filter thresholds (two-well / HedonicFeedingExperiment only)
+        filter_header = QLabel("Filter Thresholds  (used by filter_flies)")
+        filter_header.setStyleSheet("color: gray; font-size: 11px; margin-top: 4px;")
+        self._filter_header_row = self._exp_form.rowCount()
+        self._exp_form.addRow(filter_header)
+
+        self._min_licks_edit = QLineEdit()
+        self._min_licks_edit.setPlaceholderText("e.g. 0.00001  (leave blank to skip)")
+        self._min_licks_edit.setMaximumWidth(220)
+        self._min_licks_row = self._exp_form.rowCount()
+        self._exp_form.addRow("Min Transform Licks:", self._min_licks_edit)
+
+        self._max_dur_edit = QLineEdit()
+        self._max_dur_edit.setPlaceholderText("e.g. 13  (leave blank to skip)")
+        self._max_dur_edit.setMaximumWidth(220)
+        self._max_dur_row = self._exp_form.rowCount()
+        self._exp_form.addRow("Max Median Duration:", self._max_dur_edit)
+
+        self._max_events_edit = QLineEdit()
+        self._max_events_edit.setPlaceholderText("e.g. 150  (leave blank to skip)")
+        self._max_events_edit.setMaximumWidth(220)
+        self._max_events_row = self._exp_form.rowCount()
+        self._exp_form.addRow("Max Events:", self._max_events_edit)
+
         top_layout.addWidget(exp_group)
 
         # Global Parameters
@@ -794,6 +818,10 @@ class FLICConfigEditor(QMainWindow):
         show = self._chamber_size() == 2
         self._exp_form.setRowVisible(self._well_a_row, show)
         self._exp_form.setRowVisible(self._well_b_row, show)
+        self._exp_form.setRowVisible(self._filter_header_row, show)
+        self._exp_form.setRowVisible(self._min_licks_row, show)
+        self._exp_form.setRowVisible(self._max_dur_row, show)
+        self._exp_form.setRowVisible(self._max_events_row, show)
 
     def _on_num_dfms_changed(self, n: int) -> None:
         self._sync_dfm_tabs(n, self._chamber_size())
@@ -890,6 +918,23 @@ class FLICConfigEditor(QMainWindow):
                     **({"B": wb} if wb else {}),
                 }
 
+        # Filter thresholds → global.constants
+        if self._chamber_size() == 2:
+            constants: dict[str, Any] = {}
+            for attr, key in (
+                ("_min_licks_edit", "min_transform_licks_cutoff"),
+                ("_max_dur_edit", "max_med_duration_cutoff"),
+                ("_max_events_edit", "max_events_cutoff"),
+            ):
+                text = getattr(self, attr).text().strip()
+                if text:
+                    try:
+                        constants[key] = float(text)
+                    except ValueError:
+                        pass
+            if constants:
+                global_section["constants"] = constants
+
         # Experimental design factors
         factors = self._factors_widget.get_factors()
         if factors:
@@ -920,6 +965,16 @@ class FLICConfigEditor(QMainWindow):
         well_names = global_cfg.get("well_names") or {}
         self._well_a_edit.setText(str(well_names.get("A", "")))
         self._well_b_edit.setText(str(well_names.get("B", "")))
+
+        # Filter thresholds
+        constants = global_cfg.get("constants") or {}
+        for attr, key in (
+            ("_min_licks_edit", "min_transform_licks_cutoff"),
+            ("_max_dur_edit", "max_med_duration_cutoff"),
+            ("_max_events_edit", "max_events_cutoff"),
+        ):
+            val = constants.get(key)
+            getattr(self, attr).setText("" if val is None else str(val))
 
         # Experimental design factors
         factors_node = global_cfg.get("experimental_design_factors") or {}
@@ -963,6 +1018,9 @@ class FLICConfigEditor(QMainWindow):
         self._data_dir_edit.clear()
         self._well_a_edit.clear()
         self._well_b_edit.clear()
+        self._min_licks_edit.clear()
+        self._max_dur_edit.clear()
+        self._max_events_edit.clear()
 
         self._chamber_size_combo.blockSignals(True)
         self._num_dfms_spin.blockSignals(True)
