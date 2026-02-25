@@ -287,9 +287,16 @@ class Experiment:
         Return a human-readable summary of what was loaded and how it was configured.
         """
 
+        try:
+            from importlib.metadata import version as _v
+            _pyflic_version = _v("pyflic")
+        except Exception:
+            _pyflic_version = "unknown"
+
         buf = StringIO()
         buf.write("FLIC experiment summary\n")
-        buf.write("======================\n\n")
+        buf.write("======================\n")
+        buf.write(f"pyflic version: {_pyflic_version}\n\n")
 
         if self.config_path is not None:
             buf.write(f"Config: {self.config_path}\n")

@@ -1,3 +1,10 @@
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+try:
+    __version__: str = _pkg_version("pyflic")
+except PackageNotFoundError:
+    __version__ = "unknown"
+
 from .base.dfm import DFM
 from .base.experiment import Experiment
 from .base.experiment_design import ExperimentDesign
