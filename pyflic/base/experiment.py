@@ -1015,6 +1015,39 @@ class Experiment:
             df = df[cols]
         return df
 
+    def _assemble_from_dfm_summaries(
+        self, dfm_summaries: dict[int, pd.DataFrame]
+    ) -> pd.DataFrame:
+        """
+        Reconstruct the treatment-level feeding summary from pre-computed per-DFM DataFrames.
+
+        Mirrors the logic in ``Treatment.feeding_summary()`` and
+        ``ExperimentDesign.feeding_summary()`` but operates on an already-computed
+        dict so that DFM summaries computed in parallel can be assembled without
+        re-entering the sequential call chain.
+        """
+        frames: list[pd.DataFrame] = []
+        for trt_name, trt in self.design.treatments.items():
+            by_dfm: dict[int, list[int]] = {}
+            for tc in trt.chambers:
+                by_dfm.setdefault(tc.dfm_id, []).append(tc.chamber_index)
+            trt_frames: list[pd.DataFrame] = []
+            for dfm_id, chamber_idxs in by_dfm.items():
+                summ = dfm_summaries.get(dfm_id)
+                if summ is None or summ.empty:
+                    continue
+                if "Chamber" in summ.columns:
+                    summ = summ[summ["Chamber"].astype(int).isin(
+                        {int(x) for x in chamber_idxs}
+                    )]
+                trt_frames.append(summ)
+            if trt_frames:
+                trt_df = pd.concat(trt_frames, ignore_index=True)
+                trt_df.insert(0, "Treatment", trt_name)
+                frames.append(trt_df)
+        result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        return self._append_factor_columns(result)
+
     def feeding_summary(
         self,
         *,
@@ -1030,14 +1063,40 @@ class Experiment:
         loaded.
         """
         key = (float(range_minutes[0]), float(range_minutes[1])), bool(transform_licks)
-        if key not in self._feeding_summary_cache:
-            self._feeding_summary_cache[key] = self._append_factor_columns(
+        if key in self._feeding_summary_cache:
+            return self._feeding_summary_cache[key]
+
+        if self.parallel:
+            from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+            Exec = ProcessPoolExecutor if self.executor == "processes" else ThreadPoolExecutor
+            dfm_ids = sorted({
+                tc.dfm_id
+                for trt in self.design.treatments.values()
+                for tc in trt.chambers
+            })
+            dfm_summaries: dict[int, pd.DataFrame] = {}
+            with Exec(max_workers=self.max_workers) as pool:
+                futs = {
+                    pool.submit(
+                        self.dfms[did].feeding_summary,
+                        range_minutes=range_minutes,
+                        transform_licks=transform_licks,
+                    ): did
+                    for did in dfm_ids
+                }
+                for fut in as_completed(futs):
+                    dfm_summaries[futs[fut]] = fut.result()
+            result = self._assemble_from_dfm_summaries(dfm_summaries)
+        else:
+            result = self._append_factor_columns(
                 self.design.feeding_summary(
                     range_minutes=range_minutes,
                     transform_licks=transform_licks,
                 )
             )
-        return self._feeding_summary_cache[key]
+
+        self._feeding_summary_cache[key] = result
+        return result
 
     def binned_feeding_summary(
         self,
@@ -1133,18 +1192,54 @@ class Experiment:
             bin_pairs = [(float(y[i]), float(y[i + 1])) for i in range(len(y) - 1)]
 
         parts: list[pd.DataFrame] = []
-        for a, b in bin_pairs:
-            label = f"({_fmt_min(a)},{_fmt_min(b)}]"
-            midpoint = (a + b) / 2.0
-            summ = self.feeding_summary(
-                range_minutes=(a, b), transform_licks=transform_licks
-            )
-            if summ.empty:
-                continue
-            summ = summ.copy()
-            summ.insert(0, "Minutes", midpoint)
-            summ.insert(0, "Interval", label)
-            parts.append(summ)
+        if self.parallel and len(bin_pairs) > 1:
+            from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+            Exec = ProcessPoolExecutor if self.executor == "processes" else ThreadPoolExecutor
+            dfm_ids = sorted({
+                tc.dfm_id
+                for trt in self.design.treatments.values()
+                for tc in trt.chambers
+            })
+            # Submit one task per (dfm, bin) combination — n_dfms × n_bins tasks.
+            dfm_bin_results: dict[tuple[int, float, float], pd.DataFrame] = {}
+            with Exec(max_workers=self.max_workers) as pool:
+                futs = {
+                    pool.submit(
+                        self.dfms[did].feeding_summary,
+                        range_minutes=(a, b),
+                        transform_licks=transform_licks,
+                    ): (did, a, b)
+                    for did in dfm_ids
+                    for a, b in bin_pairs
+                }
+                for fut in as_completed(futs):
+                    dfm_bin_results[futs[fut]] = fut.result()
+            for a, b in bin_pairs:
+                label = f"({_fmt_min(a)},{_fmt_min(b)}]"
+                midpoint = (a + b) / 2.0
+                bin_dfm = {did: dfm_bin_results[(did, a, b)] for did in dfm_ids}
+                summ = self._assemble_from_dfm_summaries(bin_dfm)
+                # Cache this per-bin result so subsequent single-bin calls are free.
+                self._feeding_summary_cache[((float(a), float(b)), bool(transform_licks))] = summ
+                if summ.empty:
+                    continue
+                summ = summ.copy()
+                summ.insert(0, "Minutes", midpoint)
+                summ.insert(0, "Interval", label)
+                parts.append(summ)
+        else:
+            for a, b in bin_pairs:
+                label = f"({_fmt_min(a)},{_fmt_min(b)}]"
+                midpoint = (a + b) / 2.0
+                summ = self.feeding_summary(
+                    range_minutes=(a, b), transform_licks=transform_licks
+                )
+                if summ.empty:
+                    continue
+                summ = summ.copy()
+                summ.insert(0, "Minutes", midpoint)
+                summ.insert(0, "Interval", label)
+                parts.append(summ)
 
         df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
