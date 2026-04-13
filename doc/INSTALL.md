@@ -16,49 +16,49 @@ This installs the latest release directly from the GitHub repository.
 From inside your analysis project directory:
 
 ```bash
-uv add git+https://github.com/yourname/pyflic.git
+uv add git+https://github.com/PletcherLab/pyflic.git
 ```
 
 To pin to a specific version tag:
 
 ```bash
-uv add git+https://github.com/yourname/pyflic.git@v0.1.0
+uv add git+https://github.com/PletcherLab/pyflic.git@v0.3.0
 ```
 
 ### Into a standalone uv environment
 
 ```bash
-uv pip install git+https://github.com/yourname/pyflic.git
+uv pip install git+https://github.com/PletcherLab/pyflic.git
 ```
 
 ### Using pip instead
 
 ```bash
-pip install git+https://github.com/yourname/pyflic.git
+pip install git+https://github.com/PletcherLab/pyflic.git
 ```
 
 ---
 
 ## Option 2 — Install from a wheel file
 
-If you have received a `.whl` file (e.g. `pyflic-0.1.0-py3-none-any.whl`):
+If you have received a `.whl` file (e.g. `pyflic-0.3.0-py3-none-any.whl`):
 
 ### Into a uv project
 
 ```bash
-uv add pyflic-0.1.0-py3-none-any.whl
+uv add pyflic-0.3.0-py3-none-any.whl
 ```
 
 ### Into a standalone uv environment
 
 ```bash
-uv pip install pyflic-0.1.0-py3-none-any.whl
+uv pip install pyflic-0.3.0-py3-none-any.whl
 ```
 
 ### Using pip instead
 
 ```bash
-pip install pyflic-0.1.0-py3-none-any.whl
+pip install pyflic-0.3.0-py3-none-any.whl
 ```
 
 ---
@@ -94,7 +94,7 @@ pyflic-qc /path/to/project
 ### From GitHub
 
 ```bash
-uv add git+https://github.com/yourname/pyflic.git --upgrade
+uv add git+https://github.com/PletcherLab/pyflic.git --upgrade
 ```
 
 ### From a new wheel file
