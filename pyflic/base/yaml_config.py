@@ -270,6 +270,7 @@ def load_experiment_yaml(
 
     # First pass: compute parameters and capture chamber assignments, but don't load data yet.
     dfm_specs: list[tuple[int, Parameters, dict[int, str], dict[str, str], dict[int, dict[str, str]]]] = []
+    yaml_excluded_by_dfm: dict[int, list[int]] = {}
     for node in dfm_nodes:
         if not isinstance(node, Mapping):
             raise ValueError("Each dfms[] entry must be an object/mapping.")
@@ -313,6 +314,7 @@ def load_experiment_yaml(
             excluded_set = {int(x) for x in excluded_raw}
             chamber_assignments = {k: v for k, v in chamber_assignments.items() if k not in excluded_set}
             chamber_factor_levels = {k: v for k, v in chamber_factor_levels.items() if k not in excluded_set}
+            yaml_excluded_by_dfm[dfm_id] = sorted(excluded_set)
             print(
                 f"  DFM {dfm_id}: excluding chamber(s) {sorted(excluded_set)} (from excluded_chambers in YAML)",
                 flush=True,
@@ -478,6 +480,9 @@ def load_experiment_yaml(
         executor=executor,
         max_workers=max_workers,
     )
+
+    if yaml_excluded_by_dfm:
+        exp.yaml_excluded_chambers = yaml_excluded_by_dfm
 
     # Pre-warm the full-range feeding summary cache so the first call is free.
     print("Pre-computing feeding summary...", flush=True)

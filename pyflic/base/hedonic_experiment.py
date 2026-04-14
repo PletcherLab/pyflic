@@ -115,7 +115,7 @@ class HedonicFeedingExperiment(TwoWellExperiment):
 
         fs = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
 
-        if fs.empty and len(fs.columns) == 0:
+        if fs.empty or len(fs.columns) == 0:
             n_treatments = len(self.design.treatments)
             n_chambers = sum(len(t.chambers) for t in self.design.treatments.values())
             raise ValueError(
@@ -255,6 +255,20 @@ class HedonicFeedingExperiment(TwoWellExperiment):
                         f"MedDurationA={val:.6g} > max_med_duration_cutoff={max_dur}"
                     )
 
+            if max_dur is not None and "MedDurationB" in row.index:
+                val = row["MedDurationB"]
+                if pd.notna(val) and float(val) > float(max_dur):
+                    reasons.append(
+                        f"MedDurationB={val:.6g} > max_med_duration_cutoff={max_dur}"
+                    )
+
+            if max_events is not None and "EventsA" in row.index:
+                val = row["EventsA"]
+                if pd.notna(val) and float(val) > float(max_events):
+                    reasons.append(
+                        f"EventsA={val:.6g} > max_events_cutoff={max_events}"
+                    )
+
             if max_events is not None and "EventsB" in row.index:
                 val = row["EventsB"]
                 if pd.notna(val) and float(val) > float(max_events):
@@ -311,14 +325,14 @@ class HedonicFeedingExperiment(TwoWellExperiment):
         if max_dur is not None:
             hedonic_lines.append(
                 f"  • max_med_duration_cutoff = {float(max_dur):g}\n"
-                f"    Excluded if MedDurationA > {float(max_dur):g}"
+                f"    Excluded if MedDurationA or MedDurationB > {float(max_dur):g}"
             )
         else:
             hedonic_lines.append("  • max_med_duration_cutoff: not configured.")
         if max_events is not None:
             hedonic_lines.append(
                 f"  • max_events_cutoff = {float(max_events):g}\n"
-                f"    Excluded if EventsB > {float(max_events):g}"
+                f"    Excluded if EventsA or EventsB > {float(max_events):g}"
             )
         else:
             hedonic_lines.append("  • max_events_cutoff: not configured.")

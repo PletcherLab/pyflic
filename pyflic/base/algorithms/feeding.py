@@ -129,9 +129,11 @@ def bout_durations_and_intervals(
             var_int = np.zeros_like(starts, dtype=float)
 
             n = len(data)
+            actual_lengths = np.zeros_like(starts, dtype=int)
             for i, (idx, L) in enumerate(zip(starts, bout_durs, strict=False)):
                 lo = int(idx)
                 hi = min(n, lo + int(L))
+                actual_lengths[i] = hi - lo
                 seg = data[lo:hi]
                 max_int[i] = float(np.max(seg))
                 min_int[i] = float(np.min(seg))
@@ -142,8 +144,8 @@ def bout_durations_and_intervals(
             dur_df = pd.DataFrame(
                 {
                     "Minutes": mins,
-                    "Licks": bout_durs.astype(int),
-                    "Duration": bout_durs.astype(float) / spm,
+                    "Licks": actual_lengths,
+                    "Duration": actual_lengths.astype(float) / spm,
                     "TotalIntensity": sum_int,
                     "AvgIntensity": avg_int,
                     "MinIntensity": min_int,

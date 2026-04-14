@@ -44,6 +44,7 @@ class Experiment:
     _feeding_summary_cache: dict = field(default_factory=dict)
     filtered_chambers: pd.DataFrame | None = None
     filter_criteria_summary: str = field(default="")
+    yaml_excluded_chambers: dict[int, list[int]] = field(default_factory=dict)
 
     def get_dfm(self, dfm_id: int) -> DFM | None:
         """Return the DFM with the given id, or None if it does not exist."""
@@ -513,15 +514,24 @@ class Experiment:
             buf.write(design_df.to_string(index=False))
             buf.write("\n\n")
 
+        if self.yaml_excluded_chambers:
+            buf.write("Chambers excluded in YAML\n")
+            buf.write("-------------------------\n")
+            total = 0
+            for dfm_id, chambers in sorted(self.yaml_excluded_chambers.items()):
+                buf.write(f"  DFM {dfm_id}: chamber(s) {chambers}\n")
+                total += len(chambers)
+            buf.write(f"  Total: {total} chamber(s).\n\n")
+
         if self.filtered_chambers is not None and not self.filtered_chambers.empty:
-            buf.write("Filtered chambers (removed by auto_remove_chambers)\n")
-            buf.write("----------------------------------------------\n")
+            buf.write("Chambers removed by auto_remove_chambers\n")
+            buf.write("----------------------------------------\n")
             for _, row in self.filtered_chambers.iterrows():
                 buf.write(
-                    f"DFM {int(row['DFM'])} Chamber {int(row['Chamber'])}"
-                    f" Treatment={row['Treatment']}: {row['Reason']}\n"
+                    f"  DFM {int(row['DFM'])} Chamber {int(row['Chamber'])}"
+                    f" ({row['Treatment']}): {row['Reason']}\n"
                 )
-            buf.write("\n")
+            buf.write(f"  Total: {len(self.filtered_chambers)} chamber(s).\n\n")
 
         # Per-DFM details
         overall_min: float | None = None
@@ -722,7 +732,7 @@ class Experiment:
         if colors is not None:
             p = p + scale_color_manual(values=colors)
         else:
-            p = p + scale_color_brewer(type="div", palette="RdGy")
+            p = p + scale_color_brewer(type="qual", palette="Set1")
 
         if x_order is not None or x_labels is not None:
             limits = x_order  # may be None, scale_x_discrete handles that
@@ -911,7 +921,8 @@ class Experiment:
                     tmp.insert(tmp.columns.get_loc("Treatment") + 1, "DFM", int(dfm_id))
                 parts.append(tmp)
 
-        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        result = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        return self._append_factor_columns(result)
 
     def _metric_series_from_binned_rows(
         self,
@@ -965,8 +976,10 @@ class Experiment:
                 return b
             if mode == "mean_ab":
                 return (a + b) / 2.0
-            # total
-            return a.fillna(0.0) + b.fillna(0.0)
+            # total — preserve NaN when *both* wells have no data for a bin
+            result = a.fillna(0.0) + b.fillna(0.0)
+            result[a.isna() & b.isna()] = np.nan
+            return result
 
         if col_single in binned_rows.columns:
             return pd.to_numeric(binned_rows[col_single], errors="coerce")
@@ -1024,7 +1037,7 @@ class Experiment:
             .agg(mean="mean", std="std", n="count")
             .rename(columns={"mean": "Mean", "std": "Std", "n": "N"})
         )
-        agg["SEM"] = (agg["Std"] / np.sqrt(agg["N"].clip(lower=1))).fillna(0.0)
+        agg["SEM"] = agg["Std"] / np.sqrt(agg["N"].clip(lower=1))
 
         fig, ax = plt.subplots(figsize=figsize)
         colors = [plt.cm.tab10(i % 10) for i in range(len(treatments))]
@@ -1061,6 +1074,63 @@ class Experiment:
         ax.legend(fontsize=8, ncol=2)
         fig.tight_layout()
         return fig
+
+    def plot_dot_metric_by_treatment(
+        self,
+        *,
+        metric: str = "Licks",
+        two_well_mode: Literal["total", "mean_ab", "A", "B"] = "total",
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+    ) -> Any:
+        """
+        Jitter + mean ± SE dot plot of a single feeding-summary metric by treatment.
+
+        When ``design_factors`` has two factors (e.g. TreatmentNew × Sex), the
+        first factor is placed on the x-axis and the second used as a facet so
+        each factor level gets its own panel.  With one or no factors all
+        treatments appear on a single x-axis with no extra faceting.
+        """
+        from plotnine import annotate, theme_bw
+
+        df = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
+        if df.empty:
+            from plotnine import ggplot
+            return ggplot() + annotate("text", x=0, y=0, label="No data") + theme_bw()
+
+        df = df.copy()
+        df["_MetricValue"] = self._metric_series_from_binned_rows(
+            df, metric=metric, two_well_mode=two_well_mode
+        )
+        df = df.dropna(subset=["_MetricValue"])
+
+        label = metric
+        if metric in ("Licks", "Events") and two_well_mode == "total":
+            label = f"{metric} (total)"
+
+        factors = self.design_factors or []
+        factor_cols = [f for f in factors if f in df.columns]
+
+        if len(factor_cols) >= 2:
+            x_col = factor_cols[0]
+            facet_col = factor_cols[1]
+        elif len(factor_cols) == 1:
+            x_col = factor_cols[0]
+            df["_Facet"] = "All"
+            facet_col = "_Facet"
+        else:
+            df, x_col = self._resolve_group_col(df)
+            df["_Facet"] = "All"
+            facet_col = "_Facet"
+
+        return self.plot_jitter_summary(
+            df,
+            x_col=x_col,
+            y_col="_MetricValue",
+            facet_col=facet_col,
+            title=f"{label} by treatment",
+            y_label=label,
+        )
 
     def plot_binned_metrics_by_treatment(
         self,
@@ -1125,7 +1195,7 @@ class Experiment:
                 .agg(mean="mean", std="std", n="count")
                 .rename(columns={"mean": "Mean", "std": "Std", "n": "N"})
             )
-            agg["SEM"] = (agg["Std"] / np.sqrt(agg["N"].clip(lower=1))).fillna(0.0)
+            agg["SEM"] = agg["Std"] / np.sqrt(agg["N"].clip(lower=1))
 
             if show_individual_chambers:
                 for t_i, trt in enumerate(treatments):
@@ -1209,10 +1279,10 @@ class Experiment:
         if "DFM" not in df.columns or "Chamber" not in df.columns:
             return df
         df = df.copy()
+        keys = list(zip(df["DFM"].astype(int), df["Chamber"].astype(int)))
         for factor in self.design_factors:
             df[factor] = [
-                self.chamber_factors.get((int(row["DFM"]), int(row["Chamber"])), {}).get(factor, "")
-                for _, row in df.iterrows()
+                self.chamber_factors.get(k, {}).get(factor, "") for k in keys
             ]
         # Move factor columns to sit immediately after Treatment
         if "Treatment" in df.columns:
@@ -1630,64 +1700,72 @@ class Experiment:
         transform_licks: bool = True,
         plot_format: str = "png",
         dpi: int = 150,
+        skip_qc: bool = False,
     ) -> dict[str, Path]:
         """
         Run the standard analysis pipeline and write all outputs to disk.
 
         Calls, in order:
-          1. ``write_qc_reports()``           → ``project_dir/qc/``
+          1. ``write_qc_reports()``           → ``project_dir/qc/``  (skipped when skip_qc=True)
           2. ``write_summary()``              → ``project_dir/analysis/summary.txt``
           3. ``write_feeding_summary()``      → ``project_dir/analysis/feeding_summary.csv``
           4. ``write_feeding_summary_plot()`` → ``project_dir/analysis/feeding_summary.{plot_format}``
 
-        Returns a dict with keys ``"qc_dir"``, ``"summary"``,
+        Returns a dict with keys ``"qc_dir"`` (``None`` when skipped), ``"summary"``,
         ``"feeding_summary"`` and ``"feeding_summary_plot"`` pointing to the
         written paths.
         """
         n_dfms = len(self.dfms)
+        n_steps = 3 if skip_qc else 4
         print("=" * 50, flush=True)
         print("FLIC Basic Analysis", flush=True)
         print(f"  Project : {self.project_dir}", flush=True)
         print(f"  DFMs    : {sorted(self.dfms.keys())}", flush=True)
         print("=" * 50, flush=True)
 
-        print("\nExcluded chambers", flush=True)
-        print("-----------------", flush=True)
-        fc = self.filtered_chambers
-        if fc is None or fc.empty:
-            print("  (none)", flush=True)
+        print("\nChambers excluded in YAML", flush=True)
+        print("-------------------------", flush=True)
+        yaml_excl = self.yaml_excluded_chambers
+        if yaml_excl:
+            total = 0
+            for dfm_id, chambers in sorted(yaml_excl.items()):
+                print(f"  DFM {dfm_id}: chamber(s) {chambers}", flush=True)
+                total += len(chambers)
+            print(f"  Total: {total} chamber(s).", flush=True)
         else:
-            for _, row in fc.iterrows():
-                print(
-                    f"  DFM {int(row['DFM'])} Chamber {int(row['Chamber'])}"
-                    f" ({row['Treatment']}): {row['Reason']}",
-                    flush=True,
-                )
-            print(f"  Total: {len(fc)} chamber(s) excluded.", flush=True)
+            print("  (none)", flush=True)
 
-        print("\n[1/4] QC reports...", flush=True)
-        qc_dir = self.write_qc_reports(
-            data_breaks_multiplier=data_breaks_multiplier,
-            bleeding_cutoff=bleeding_cutoff,
-        )
-        print(f"  Done — {n_dfms} DFM(s) → {qc_dir}", flush=True)
+        qc_dir: Path | None = None
+        step = 0
 
-        print("\n[2/4] Experiment summary...", flush=True)
+        if not skip_qc:
+            step += 1
+            print(f"\n[{step}/{n_steps}] QC reports...", flush=True)
+            qc_dir = self.write_qc_reports(
+                data_breaks_multiplier=data_breaks_multiplier,
+                bleeding_cutoff=bleeding_cutoff,
+            )
+            print(f"  Done — {n_dfms} DFM(s) → {qc_dir}", flush=True)
+
+        step += 1
+        print(f"\n[{step}/{n_steps}] Experiment summary...", flush=True)
         summary_path = self.write_summary(
-            include_qc=True,
+            include_qc=not skip_qc,
             qc_data_breaks_multiplier=data_breaks_multiplier,
             qc_bleeding_cutoff=bleeding_cutoff,
         )
         print(f"  Done → {summary_path}", flush=True)
 
-        print("\n[3/4] Feeding summary CSV...", flush=True)
+        step += 1
+        print(f"\n[{step}/{n_steps}] Feeding summary CSV...", flush=True)
         feeding_csv_path = self.write_feeding_summary(
             range_minutes=range_minutes,
             transform_licks=transform_licks,
         )
         print(f"  Done → {feeding_csv_path}", flush=True)
 
-        print("\n[4/4] Feeding summary plot...", flush=True)
+        step += 1
+        print(f"\n[{step}/{n_steps}] Feeding summary plot...", flush=True)
         plot_path = self.write_feeding_summary_plot(
             format=plot_format,
             range_minutes=range_minutes,

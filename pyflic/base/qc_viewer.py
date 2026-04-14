@@ -340,6 +340,13 @@ class _LoadWorker(QtCore.QObject):
                 )
                 print("Writing QC reports...", flush=True)
                 exp.write_qc_reports()
+                # Print integrity report text for each DFM
+                qc = exp.qc_results or {}
+                for dfm_id in sorted(qc.keys()):
+                    text = qc[dfm_id].get("integrity_text")
+                    if text:
+                        print(f"\n--- DFM {dfm_id} integrity report ---", flush=True)
+                        print(text, flush=True)
                 self.finished.emit(exp)
             except Exception as exc:
                 self.errored.emit(str(exc))

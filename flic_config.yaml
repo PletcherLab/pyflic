@@ -1,110 +1,114 @@
+data_dir: C:/Users/raruck/OneDrive - Michigan Medicine/Documents/Scott's Lab/ClancypyFLICTrial/my_experiment
 global:
   params:
     baseline_window_minutes: 3
-    feeding_threshold: 10
+    feeding_threshold: 20
     feeding_minimum: 10
-    tasting_minimum: 0
-    tasting_maximum: 10
+    tasting_minimum: 5
+    tasting_maximum: 20
     feeding_minevents: 1
     tasting_minevents: 1
     samples_per_second: 5
     feeding_event_link_gap: 5
     pi_direction: left
-    correct_for_dual_feeding: false
+    correct_for_dual_feeding: true
     chamber_size: 2
-  experiment_type: two_well
   well_names:
-    A: Sucrose
-    B: Yeast
+    A: S5
+    B: S5Y5
   constants:
     min_untransformed_licks_cutoff: 20
     max_med_duration_cutoff: 13.0
     max_events_cutoff: 150000.0
   experimental_design_factors:
-    paired:
-    - Paired
-    - Unpaired
-    genotype:
-    - Chrim
-    - WCS
+    TreatmentNew:
+    - Ctrl
+    - Exp
+    Sex:
+    - Male
+    - Female
 dfms:
 - id: 1
   params:
     pi_direction: left
   chambers:
-    1: Paired, WCS
-    2: Unpaired, WCS
-    3: Paired, Chrim
-    4: Unpaired, Chrim
-    5: Paired, Chrim
-    6: Unpaired, Chrim
+    1: Ctrl, Male
+    2: Ctrl, Male
+    3: Ctrl, Male
+    4: Exp, Male
+    5: Exp, Male
+    6: Exp, Male
 - id: 2
   params:
     pi_direction: left
   chambers:
-    1: Unpaired, WCS
-    2: Paired, WCS
-    3: Unpaired, Chrim
-    4: Paired, Chrim
-    5: Unpaired, Chrim
-    6: Paired, Chrim
+    1: Ctrl, Male
+    2: Ctrl, Male
+    3: Ctrl, Male
+    4: Exp, Male
+    5: Exp, Male
+    6: Exp, Male
+  excluded_chambers:
+  - 4
+  - 5
+  - 6
 - id: 3
   params:
     pi_direction: right
   chambers:
-    1: Paired, WCS
-    2: Unpaired, WCS
-    3: Paired, Chrim
-    4: Unpaired, Chrim
-    5: Paired, Chrim
-    6: Unpaired, Chrim
+    1: Exp, Male
+    2: Exp, Male
+    3: Exp, Male
+    4: Ctrl, Male
+    5: Ctrl, Male
+    6: Ctrl, Male
 - id: 4
   params:
     pi_direction: right
   chambers:
-    1: Unpaired, WCS
-    2: Paired, WCS
-    3: Unpaired, Chrim
-    4: Paired, Chrim
-    5: Unpaired, Chrim
-    6: Paired, Chrim
+    1: Exp, Male
+    2: Exp, Male
+    3: Exp, Male
+    4: Ctrl, Male
+    5: Ctrl, Male
+    6: Ctrl, Male
 - id: 5
   params:
     pi_direction: left
   chambers:
-    1: Paired, Chrim
-    2: Unpaired, Chrim
-    3: Paired, WCS
-    4: Unpaired, WCS
-    5: Paired, WCS
-    6: Unpaired, WCS
+    1: Ctrl, Female
+    2: Ctrl, Female
+    3: Ctrl, Female
+    4: Exp, Female
+    5: Exp, Female
+    6: Exp, Female
 - id: 6
   params:
     pi_direction: left
   chambers:
-    1: Unpaired, Chrim
-    2: Paired, Chrim
-    3: Unpaired, WCS
-    4: Paired, WCS
-    5: Unpaired, WCS
-    6: Paired, WCS
+    1: Ctrl, Female
+    2: Ctrl, Female
+    3: Ctrl, Female
+    4: Exp, Female
+    5: Exp, Female
+    6: Exp, Female
 - id: 7
   params:
     pi_direction: right
   chambers:
-    1: Paired, Chrim
-    2: Unpaired, Chrim
-    3: Paired, WCS
-    4: Unpaired, WCS
-    5: Paired, WCS
-    6: Unpaired, WCS
+    1: Exp, Female
+    2: Exp, Female
+    3: Exp, Female
+    4: Ctrl, Female
+    5: Ctrl, Female
+    6: Ctrl, Female
 - id: 8
   params:
     pi_direction: right
   chambers:
-    1: Unpaired, Chrim
-    2: Paired, Chrim
-    3: Unpaired, WCS
-    4: Paired, WCS
-    5: Unpaired, WCS
-    6: Paired, WCS
+    1: Exp, Female
+    2: Exp, Female
+    3: Exp, Female
+    4: Ctrl, Female
+    5: Ctrl, Female
+    6: Ctrl, Female

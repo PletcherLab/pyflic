@@ -15,10 +15,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 import yaml
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -30,11 +33,55 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
+# ---------------------------------------------------------------------------
+# Metric definitions for plot controls
+# Each entry: (display label, metric arg, two_well_mode arg)
+# ---------------------------------------------------------------------------
+_TWO_WELL_BINNED: list[tuple[str, str, str]] = [
+    ("Licks (A+B total)",      "Licks",         "total"),
+    ("PI",                     "PI",            "total"),
+    ("Event PI",               "EventPI",       "total"),
+    ("Licks A",                "LicksA",        "A"),
+    ("Licks B",                "LicksB",        "B"),
+    ("Events (A+B total)",     "Events",        "total"),
+    ("Med Duration (A+B avg)", "MedDuration",   "mean_ab"),
+    ("Med Duration A",         "MedDurationA",  "A"),
+    ("Med Duration B",         "MedDurationB",  "B"),
+    ("Mean Duration (A+B avg)","MeanDuration",  "mean_ab"),
+    ("Med Time Btw (A+B avg)", "MedTimeBtw",    "mean_ab"),
+]
+
+_SINGLE_WELL_BINNED: list[tuple[str, str, str]] = [
+    ("Licks",         "Licks",       "total"),
+    ("Events",        "Events",      "total"),
+    ("Med Duration",  "MedDuration", "total"),
+    ("Mean Duration", "MeanDuration","total"),
+    ("Med Time Btw",  "MedTimeBtw",  "total"),
+    ("Mean Int",      "MeanInt",     "total"),
+    ("Median Int",    "MedianInt",   "total"),
+]
+
+# Base metric names for the well A vs B comparison (facet_plot_well_durations)
+_WELL_CMP_METRICS: list[str] = [
+    "MedDuration",
+    "MeanDuration",
+    "Licks",
+    "MedTimeBtw",
+    "MeanTimeBtw",
+    "MeanInt",
+    "MedianInt",
+]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _read_yaml(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
@@ -105,23 +152,59 @@ def _resolve_cli(name: str, module: str) -> list[str]:
     return [sys.executable, "-m", module]
 
 
-def _print_excluded_chambers(removed) -> None:
-    """Print a summary of chambers excluded by auto_remove_chambers()."""
-    import pandas as pd
+def _figure_to_bytes(fig_or_gg, *, dpi: int = 100) -> bytes:
+    """Render a matplotlib Figure or plotnine ggplot to PNG bytes."""
+    import io as _io
 
-    print("Excluded chambers", flush=True)
-    print("-----------------", flush=True)
-    if removed is None or (isinstance(removed, pd.DataFrame) and removed.empty):
-        print("  (none)", flush=True)
-        return
-    for _, row in removed.iterrows():
-        print(
-            f"  DFM {int(row['DFM'])} Chamber {int(row['Chamber'])}"
-            f" ({row['Treatment']}): {row['Reason']}",
-            flush=True,
-        )
-    print(f"  Total: {len(removed)} chamber(s) excluded.", flush=True)
+    import matplotlib.pyplot as _plt
 
+    buf = _io.BytesIO()
+    if hasattr(fig_or_gg, "savefig"):          # matplotlib Figure
+        fig_or_gg.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        _plt.close(fig_or_gg)
+    else:                                       # plotnine ggplot
+        mpl_fig = fig_or_gg.draw()
+        mpl_fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        _plt.close(mpl_fig)
+    buf.seek(0)
+    return buf.read()
+
+
+
+# ---------------------------------------------------------------------------
+# Plot display window
+# ---------------------------------------------------------------------------
+
+class _PlotWindow(QDialog):
+    """Scrollable window for displaying a rendered plot image."""
+
+    def __init__(self, title: str, png_bytes: bytes, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setWindowTitle(title)
+        self.resize(980, 760)
+
+        lay = QVBoxLayout(self)
+
+        scroll = QScrollArea()
+        scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label = QLabel()
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pix = QPixmap()
+        pix.loadFromData(png_bytes)
+        label.setPixmap(pix)
+        scroll.setWidget(label)
+        scroll.setWidgetResizable(False)
+        lay.addWidget(scroll, stretch=1)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        lay.addWidget(close_btn)
+
+
+# ---------------------------------------------------------------------------
+# Background worker
+# ---------------------------------------------------------------------------
 
 class _SignalWriter:
     """File-like object that emits a Qt signal on each line written."""
@@ -144,13 +227,20 @@ class _SignalWriter:
 
 
 class AnalysisWorker(QObject):
-    """Runs a callable in a worker thread; streams stdout/stderr to the log."""
+    """Runs a callable in a worker thread; streams stdout/stderr to the log.
+
+    Task callables may return one of:
+    - ``None``                                      — no figure to display
+    - ``(title: str, png_bytes: bytes)``            — single figure
+    - ``[(title, png_bytes), ...]``                 — multiple figures
+    """
 
     log = pyqtSignal(str)
     failed = pyqtSignal(str)
     finished = pyqtSignal()
+    figure_ready = pyqtSignal(str, bytes)
 
-    def __init__(self, task: Callable[[], None]) -> None:
+    def __init__(self, task: Callable[[], Any]) -> None:
         super().__init__()
         self._task = task
 
@@ -159,18 +249,33 @@ class AnalysisWorker(QObject):
 
         matplotlib.use("Agg")
         writer = _SignalWriter(self.log)
+        result = None
         try:
             from contextlib import redirect_stderr, redirect_stdout
 
             with redirect_stdout(writer), redirect_stderr(writer):
-                self._task()
+                result = self._task()
             writer.flush()
         except Exception as e:  # noqa: BLE001
             writer.flush()
             self.failed.emit(f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
         finally:
+            # Emit any figures returned by the task.
+            figures: list[tuple[str, bytes]] = []
+            if isinstance(result, list):
+                figures = [(str(t), bytes(b)) for t, b in result
+                           if isinstance(b, (bytes, bytearray))]
+            elif (isinstance(result, tuple) and len(result) == 2
+                  and isinstance(result[1], (bytes, bytearray))):
+                figures = [(str(result[0]), bytes(result[1]))]
+            for title, png_bytes in figures:
+                self.figure_ready.emit(title, png_bytes)
             self.finished.emit()
 
+
+# ---------------------------------------------------------------------------
+# Main window
+# ---------------------------------------------------------------------------
 
 class AnalysisHubWindow(QMainWindow):
     def __init__(self, project_dir: str | Path | None = None) -> None:
@@ -184,7 +289,10 @@ class AnalysisHubWindow(QMainWindow):
         self._busy = False
         self._cached_exp: Any = None
         self._cached_exp_key: tuple | None = None
-        self._analysis_buttons: list[QPushButton] = []
+        self._exp_loaded: bool = False
+        self._load_buttons: list[QPushButton] = []   # always enabled when not busy
+        self._data_buttons: list[QPushButton] = []   # enabled only when exp loaded
+        self._plot_windows: list[_PlotWindow] = []
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -233,7 +341,7 @@ class AnalysisHubWindow(QMainWindow):
 
         outer.addWidget(opt_box)
 
-        # ── Three action group boxes (side by side) ───────────────────────
+        # ── Three action group boxes ──────────────────────────────────────
         self._grp_load = QGroupBox("Load")
         QVBoxLayout(self._grp_load)
         self._build_grp_load()
@@ -258,6 +366,8 @@ class AnalysisHubWindow(QMainWindow):
         outer.addWidget(self._log, stretch=1)
 
         self._path_edit.editingFinished.connect(self._refresh_meta)
+        self._spin_start.valueChanged.connect(self._invalidate_exp_cache)
+        self._spin_end.valueChanged.connect(self._invalidate_exp_cache)
 
         start_dir = self._initial_dir or Path.cwd()
         self._path_edit.setText(str(start_dir))
@@ -273,7 +383,7 @@ class AnalysisHubWindow(QMainWindow):
         btn_load = QPushButton("Load experiment")
         btn_load.clicked.connect(self._action_load_experiment)
         lay.addWidget(btn_load)
-        self._analysis_buttons.append(btn_load)
+        self._load_buttons.append(btn_load)
 
         self._btn_config = QPushButton("Edit config (pyflic-config)…")
         self._btn_config.clicked.connect(self._launch_config_editor)
@@ -291,7 +401,6 @@ class AnalysisHubWindow(QMainWindow):
 
     @staticmethod
     def _clear_layout(lay) -> None:
-        """Recursively remove all items from a layout."""
         while lay.count():
             item = lay.takeAt(0)
             w = item.widget()
@@ -327,12 +436,10 @@ class AnalysisHubWindow(QMainWindow):
         self._rebuild_dynamic_groups(et or inf, cs)
 
     def _rebuild_dynamic_groups(self, exp_type: str | None, chamber_size: int | None) -> None:
-        # Preserve the Load-group button in _analysis_buttons; clear the rest.
-        load_btns = [b for b in self._analysis_buttons if b.parent() is self._grp_load]
-        self._analysis_buttons.clear()
-        self._analysis_buttons.extend(load_btns)
+        self._data_buttons.clear()
         self._rebuild_grp_analyze(exp_type, chamber_size)
         self._rebuild_grp_plots(exp_type, chamber_size)
+        self._update_data_buttons()
 
     def _rebuild_grp_analyze(self, exp_type: str | None, chamber_size: int | None) -> None:
         lay = self._grp_analyze.layout()
@@ -341,23 +448,23 @@ class AnalysisHubWindow(QMainWindow):
         b = QPushButton("Run full basic analysis")
         b.clicked.connect(self._action_basic_full)
         lay.addWidget(b)
-        self._analysis_buttons.append(b)
+        self._data_buttons.append(b)
 
         b = QPushButton("Write feeding summary CSV")
         b.clicked.connect(self._action_write_feeding_csv)
         lay.addWidget(b)
-        self._analysis_buttons.append(b)
+        self._data_buttons.append(b)
 
         b = QPushButton("Write binned feeding summary CSV")
         b.clicked.connect(self._action_binned_csv)
         lay.addWidget(b)
-        self._analysis_buttons.append(b)
+        self._data_buttons.append(b)
 
         if exp_type == "hedonic":
             b = QPushButton("Write weighted duration summary")
             b.clicked.connect(self._action_weighted_duration)
             lay.addWidget(b)
-            self._analysis_buttons.append(b)
+            self._data_buttons.append(b)
 
         lay.addStretch()
 
@@ -365,29 +472,64 @@ class AnalysisHubWindow(QMainWindow):
         lay = self._grp_plots.layout()
         self._clear_layout(lay)
 
-        b = QPushButton("Write feeding summary plot")
-        b.clicked.connect(self._action_feeding_plot)
+        # ── Feeding summary ──────────────────────────────────────────────
+        b = QPushButton("Feeding summary")
+        b.clicked.connect(self._action_plot_feeding_summary)
         lay.addWidget(b)
-        self._analysis_buttons.append(b)
+        self._data_buttons.append(b)
 
-        b = QPushButton("Plot binned licks by treatment (mean ± SEM)")
-        b.clicked.connect(self._action_binned_plot)
-        lay.addWidget(b)
-        self._analysis_buttons.append(b)
+        # ── Binned time-course ───────────────────────────────────────────
+        is_two_well = (chamber_size == 2
+                       or exp_type in {"two_well", "hedonic", "progressive_ratio"})
+        metrics = _TWO_WELL_BINNED if is_two_well else _SINGLE_WELL_BINNED
 
-        two_well_types = {"two_well", "hedonic", "progressive_ratio"}
-        if chamber_size == 2 or exp_type in two_well_types:
-            b = QPushButton("Save facet well-duration plot")
-            b.clicked.connect(self._action_facet_durations)
-            lay.addWidget(b)
-            self._analysis_buttons.append(b)
+        binned_row = QHBoxLayout()
+        binned_row.addWidget(QLabel("Binned:"))
+        self._cmb_binned_metric = QComboBox()
+        for label, metric, mode in metrics:
+            self._cmb_binned_metric.addItem(label, userData=(metric, mode))
+        binned_row.addWidget(self._cmb_binned_metric, stretch=1)
+        b_binned = QPushButton("Plot")
+        b_binned.clicked.connect(self._action_plot_binned)
+        binned_row.addWidget(b_binned)
+        lay.addLayout(binned_row)
+        self._data_buttons.append(b_binned)
 
+        # ── Dot plot (same metrics, non-binned) ──────────────────────────
+        dot_row = QHBoxLayout()
+        dot_row.addWidget(QLabel("Dot plot:"))
+        self._cmb_dot_metric = QComboBox()
+        for label, metric, mode in metrics:
+            self._cmb_dot_metric.addItem(label, userData=(metric, mode))
+        dot_row.addWidget(self._cmb_dot_metric, stretch=1)
+        b_dot = QPushButton("Plot")
+        b_dot.clicked.connect(self._action_plot_dot)
+        dot_row.addWidget(b_dot)
+        lay.addLayout(dot_row)
+        self._data_buttons.append(b_dot)
+
+        # ── Well A vs B comparison (two-well only) ───────────────────────
+        if is_two_well:
+            cmp_row = QHBoxLayout()
+            cmp_row.addWidget(QLabel("Well A vs B:"))
+            self._cmb_well_cmp = QComboBox()
+            for m in _WELL_CMP_METRICS:
+                self._cmb_well_cmp.addItem(m)
+            cmp_row.addWidget(self._cmb_well_cmp, stretch=1)
+            b_cmp = QPushButton("Plot")
+            b_cmp.clicked.connect(self._action_plot_well_cmp)
+            cmp_row.addWidget(b_cmp)
+            lay.addLayout(cmp_row)
+            self._data_buttons.append(b_cmp)
+
+        # ── Hedonic-specific ─────────────────────────────────────────────
         if exp_type == "hedonic":
-            b = QPushButton("Save hedonic feeding plot")
-            b.clicked.connect(self._action_hedonic_plot)
+            b = QPushButton("Hedonic feeding plot")
+            b.clicked.connect(self._action_plot_hedonic)
             lay.addWidget(b)
-            self._analysis_buttons.append(b)
+            self._data_buttons.append(b)
 
+        # ── Progressive-ratio breaking-point ────────────────────────────
         if exp_type == "progressive_ratio":
             pr_row = QHBoxLayout()
             pr_row.addWidget(QLabel("BP config:"))
@@ -396,12 +538,11 @@ class AnalysisHubWindow(QMainWindow):
             self._spin_pr_cfg.setValue(1)
             pr_row.addWidget(self._spin_pr_cfg)
             pr_row.addStretch()
+            b_pr = QPushButton("Breaking-point plots")
+            b_pr.clicked.connect(self._action_plot_pr)
+            pr_row.addWidget(b_pr)
             lay.addLayout(pr_row)
-
-            b = QPushButton("Save breaking-point plots (plotnine, all DFMs)")
-            b.clicked.connect(self._action_pr_plots)
-            lay.addWidget(b)
-            self._analysis_buttons.append(b)
+            self._data_buttons.append(b_pr)
 
         lay.addStretch()
 
@@ -411,14 +552,20 @@ class AnalysisHubWindow(QMainWindow):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        for w in self._analysis_buttons:
+        for w in self._load_buttons:
             w.setEnabled(not busy)
+        self._update_data_buttons()
+
+    def _update_data_buttons(self) -> None:
+        enabled = self._exp_loaded and not self._busy
+        for w in self._data_buttons:
+            w.setEnabled(enabled)
 
     def _clear_worker_refs(self) -> None:
         self._thread = None
         self._worker = None
 
-    def _start_worker(self, task: Callable[[], None]) -> None:
+    def _start_worker(self, task: Callable[[], Any]) -> None:
         if self._busy:
             QMessageBox.information(self, "Busy", "An analysis task is already running.")
             return
@@ -440,6 +587,7 @@ class AnalysisHubWindow(QMainWindow):
         self._thread.finished.connect(self._clear_worker_refs)
         self._worker.log.connect(self._append_log)
         self._worker.failed.connect(self._on_failed)
+        self._worker.figure_ready.connect(self._show_figure)
         self._worker.finished.connect(lambda: self._set_busy(False))
 
         self._set_busy(True)
@@ -453,6 +601,15 @@ class AnalysisHubWindow(QMainWindow):
         self._log.appendPlainText(text.rstrip())
         sb = self._log.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _show_figure(self, title: str, png_bytes: bytes) -> None:
+        win = _PlotWindow(title, png_bytes, parent=self)
+        win.show()
+        self._plot_windows.append(win)
+        win.finished.connect(
+            lambda: self._plot_windows.remove(win)
+            if win in self._plot_windows else None
+        )
 
     # ------------------------------------------------------------------
     # Project / experiment helpers
@@ -493,6 +650,8 @@ class AnalysisHubWindow(QMainWindow):
     def _invalidate_exp_cache(self) -> None:
         self._cached_exp = None
         self._cached_exp_key = None
+        self._exp_loaded = False
+        self._update_data_buttons()
 
     def _launch_config_editor(self) -> None:
         p = self._project_dir()
@@ -529,27 +688,46 @@ class AnalysisHubWindow(QMainWindow):
             QMessageBox.critical(self, "Could not start", str(e))
 
     # ------------------------------------------------------------------
-    # Actions
+    # Analyze actions  (return None — no figure display)
     # ------------------------------------------------------------------
 
     def _action_load_experiment(self) -> None:
         def task() -> None:
             exp = self._load_exp()
-            removed = exp.auto_remove_chambers()
-            _print_excluded_chambers(removed)
+
+            yaml_excl = exp.yaml_excluded_chambers
+            print("Chambers excluded in YAML", flush=True)
+            print("-------------------------", flush=True)
+            if yaml_excl:
+                total = 0
+                for dfm_id, chambers in sorted(yaml_excl.items()):
+                    print(f"  DFM {dfm_id}: chamber(s) {chambers}", flush=True)
+                    total += len(chambers)
+                print(f"  Total: {total} chamber(s).", flush=True)
+            else:
+                print("  (none)", flush=True)
+
             print(flush=True)
-            print(exp.summary_text(), flush=True)
+            print(exp.summary_text(include_qc=False), flush=True)
 
         self._start_worker(task)
+        if self._worker is not None:
+            self._worker.finished.connect(self._on_load_finished)
+
+    def _on_load_finished(self) -> None:
+        if self._cached_exp is not None:
+            self._exp_loaded = True
+            self._update_data_buttons()
 
     def _action_basic_full(self) -> None:
         rm = self._range_minutes()
 
         def task() -> None:
             exp = self._load_exp()
-            paths = exp.execute_basic_analysis(range_minutes=rm)
+            paths = exp.execute_basic_analysis(range_minutes=rm, skip_qc=True)
             for k, v in paths.items():
-                print(f"{k}: {v}", flush=True)
+                if v is not None:
+                    print(f"{k}: {v}", flush=True)
 
         self._start_worker(task)
 
@@ -591,54 +769,98 @@ class AnalysisHubWindow(QMainWindow):
 
         self._start_worker(task)
 
-    def _action_feeding_plot(self) -> None:
+    # ------------------------------------------------------------------
+    # Plot actions  (return (title, png_bytes) to trigger figure display)
+    # ------------------------------------------------------------------
+
+    def _action_plot_feeding_summary(self) -> None:
         rm = self._range_minutes()
 
-        def task() -> None:
+        def task() -> tuple[str, bytes]:
             exp = self._load_exp()
-            p = exp.write_feeding_summary_plot(range_minutes=rm)
-            print(f"Wrote: {p}", flush=True)
+            fig = exp.plot_feeding_summary(range_minutes=rm)
+            out = exp.analysis_dir / "feeding_summary.png"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if hasattr(fig, "save"):
+                fig.save(str(out), dpi=150)
+            else:
+                fig.savefig(str(out), dpi=150, bbox_inches="tight")
+            print(f"Wrote: {out}", flush=True)
+            return "Feeding Summary", _figure_to_bytes(fig, dpi=100)
 
         self._start_worker(task)
 
-    def _action_binned_plot(self) -> None:
+    def _action_plot_binned(self) -> None:
         rm = self._range_minutes()
         bs = float(self._spin_binsize.value())
+        metric, mode = self._cmb_binned_metric.currentData()
 
-        def task() -> None:
+        def task() -> tuple[str, bytes]:
             exp = self._load_exp()
-            fig = exp.plot_binned_licks_by_treatment(binsize_min=bs, range_minutes=rm)
-            out = exp.analysis_dir / "binned_licks_by_treatment.png"
+            fig = exp.plot_binned_metric_by_treatment(
+                metric=metric,
+                two_well_mode=mode,
+                binsize_min=bs,
+                range_minutes=rm,
+            )
+            safe = metric.replace("/", "_")
+            out = exp.analysis_dir / f"binned_{safe}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(str(out), dpi=150, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
+            return f"Binned: {metric}", _figure_to_bytes(fig, dpi=100)
 
         self._start_worker(task)
 
-    def _action_facet_durations(self) -> None:
+    def _action_plot_dot(self) -> None:
         rm = self._range_minutes()
+        metric, mode = self._cmb_dot_metric.currentData()
 
-        def task() -> None:
+        def task() -> tuple[str, bytes]:
+            exp = self._load_exp()
+            fig = exp.plot_dot_metric_by_treatment(
+                metric=metric,
+                two_well_mode=mode,
+                range_minutes=rm,
+            )
+            safe = metric.replace("/", "_")
+            out = exp.analysis_dir / f"dot_{safe}.png"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if hasattr(fig, "save"):
+                fig.save(str(out), dpi=150)
+            else:
+                fig.savefig(str(out), dpi=150, bbox_inches="tight")
+            print(f"Wrote: {out}", flush=True)
+            return f"Dot: {metric}", _figure_to_bytes(fig, dpi=100)
+
+        self._start_worker(task)
+
+    def _action_plot_well_cmp(self) -> None:
+        rm = self._range_minutes()
+        metric = self._cmb_well_cmp.currentText()
+
+        def task() -> tuple[str, bytes]:
             from pyflic import TwoWellExperiment
 
             exp = self._load_exp()
             if not isinstance(exp, TwoWellExperiment):
                 raise TypeError(
-                    "This action requires a two-well experiment (chamber_size: 2). "
+                    "Well A vs B comparison requires a two-well experiment. "
                     f"Got {type(exp).__name__}."
                 )
-            p = exp.facet_plot_well_durations(range_minutes=rm)
-            out = exp.analysis_dir / "facet_well_durations.png"
+            fig = exp.facet_plot_well_durations(metric=metric, range_minutes=rm)
+            out = exp.analysis_dir / f"well_comparison_{metric}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
-            p.save(str(out), dpi=150)
+            fig.save(str(out), dpi=150)
             print(f"Wrote: {out}", flush=True)
+            return f"Well A vs B: {metric}", _figure_to_bytes(fig, dpi=100)
 
         self._start_worker(task)
 
-    def _action_hedonic_plot(self) -> None:
+    def _action_plot_hedonic(self) -> None:
         rm = self._range_minutes()
 
-        def task() -> None:
+        def task() -> tuple[str, bytes]:
             from pyflic import HedonicFeedingExperiment
 
             exp = self._load_exp()
@@ -647,15 +869,16 @@ class AnalysisHubWindow(QMainWindow):
                     "Set experiment_type: hedonic in flic_config.yaml. "
                     f"Got {type(exp).__name__}."
                 )
-            exp.hedonic_feeding_plot(save=True, range_minutes=rm)
-            print("Hedonic feeding plot saved.", flush=True)
+            fig = exp.hedonic_feeding_plot(save=True, range_minutes=rm)
+            print("Wrote hedonic feeding plot.", flush=True)
+            return "Hedonic Feeding Plot", _figure_to_bytes(fig, dpi=100)
 
         self._start_worker(task)
 
-    def _action_pr_plots(self) -> None:
+    def _action_plot_pr(self) -> None:
         cfg = int(self._spin_pr_cfg.value())
 
-        def task() -> None:
+        def task() -> list[tuple[str, bytes]]:
             from pyflic import ProgressiveRatioExperiment
 
             exp = self._load_exp()
@@ -668,11 +891,17 @@ class AnalysisHubWindow(QMainWindow):
             if ad is None:
                 raise ValueError("No project_dir on experiment.")
             ad.mkdir(parents=True, exist_ok=True)
+            results: list[tuple[str, bytes]] = []
             for dfm_id, dfm in sorted(exp.dfms.items()):
-                p9 = exp.plot_breaking_point_dfm_gg(dfm, cfg)
+                fig = exp.plot_breaking_point_dfm_gg(dfm, cfg)
                 out = ad / f"breaking_point_dfm{dfm_id}_config{cfg}.png"
-                p9.save(str(out), dpi=150)
+                fig.save(str(out), dpi=150)
                 print(f"Wrote: {out}", flush=True)
+                results.append((
+                    f"Breaking Point — DFM {dfm_id} (config {cfg})",
+                    _figure_to_bytes(fig, dpi=100),
+                ))
+            return results
 
         self._start_worker(task)
 
