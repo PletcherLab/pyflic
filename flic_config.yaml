@@ -1,4 +1,3 @@
-data_dir: C:/Users/raruck/OneDrive - Michigan Medicine/Documents/Scott's Lab/ClancypyFLICTrial/my_experiment
 global:
   params:
     baseline_window_minutes: 3

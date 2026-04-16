@@ -3,41 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .events import expand_events, get_events, get_intervals
+from .events import get_intervals
 from ..parameters import Parameters
-
-
-def set_tasting_data(
-    baselined: pd.DataFrame,
-    thresholds: dict[str, pd.DataFrame],
-    feeding_lick_df: pd.DataFrame,
-    *,
-    params: Parameters,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Port of `Set.Tasting.Data()` and `Set.Tasting.Data.Well()`.
-    """
-
-    tasting_df = baselined.copy()
-    tasting_event_df = baselined.copy()
-
-    for well in range(1, 13):
-        cname = f"W{well}"
-        thr = thresholds[cname]
-        data = baselined[cname].to_numpy()
-
-        licks = (data > thr["TastingMin"].to_numpy()) & (data < thr["TastingMax"].to_numpy())
-
-        feeding_licks = feeding_lick_df[cname].to_numpy(dtype=bool)
-        licks[feeding_licks] = False
-
-        events = get_events(licks)
-        events[events < params.tasting_minevents] = 0
-
-        tasting_df[cname] = licks
-        tasting_event_df[cname] = events
-
-    return tasting_df, tasting_event_df
 
 
 def tasting_bout_durations_and_intervals(
@@ -119,4 +86,3 @@ def tasting_bout_durations_and_intervals(
             intervals[cname] = ints_df
 
     return durations, intervals
-

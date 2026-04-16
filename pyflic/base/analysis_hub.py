@@ -705,11 +705,28 @@ class AnalysisHubWindow(QMainWindow):
             QMessageBox.critical(self, "Could not start", str(e))
 
     def _qc_dir_for_range(self) -> Path:
+        """
+        Resolve the QC output directory for the current range.
+
+        Mirrors ``Experiment._range_suffix``: ``(0, 0)`` → ``qc``; finite
+        ``(a, b)`` → ``qc_{int(a)}_{int(b)}``; ``b`` of ``inf`` or ``0`` is
+        written as ``end`` by the producer, so we resolve that by matching the
+        existing ``qc_{int(a)}_*`` directory on disk.
+        """
         p = self._project_dir()
         a, b = self._range_minutes()
         if a == 0.0 and b == 0.0:
             return p / "qc"
-        ranged = p / f"qc_{int(a)}_{int(b)}"
+        a_lbl = str(int(a))
+        if b == float("inf") or b == 0.0:
+            exact = p / f"qc_{a_lbl}_end"
+            if exact.is_dir():
+                return exact
+            matches = sorted(p.glob(f"qc_{a_lbl}_*"))
+            if matches:
+                return matches[0]
+            return p / "qc"
+        ranged = p / f"qc_{a_lbl}_{int(b)}"
         if ranged.is_dir():
             return ranged
         return p / "qc"

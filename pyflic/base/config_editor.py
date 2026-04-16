@@ -892,8 +892,10 @@ class FLICConfigEditor(QMainWindow):
                         self._current_path = candidate
                         self.setWindowTitle(f"FLIC Config Editor — {candidate.name}")
                         self._populate_from_yaml(cfg)
-                except Exception:
-                    pass  # silently ignore; user can open manually
+                except Exception as exc:
+                    self.statusBar().showMessage(
+                        f"Could not auto-load {candidate.name}: {exc}.  Use File → Open to load manually."
+                    )
                 break
 
     def _browse_data_dir(self) -> None:

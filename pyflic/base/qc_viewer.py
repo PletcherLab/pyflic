@@ -1187,7 +1187,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return {}
         try:
             cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            self.statusBar().showMessage(
+                f"Could not parse {config_path.name}: {exc}.  Treating as no exclusions."
+            )
+            return {}
+        if not isinstance(cfg, dict):
+            self.statusBar().showMessage(
+                f"{config_path.name} is not a YAML mapping; treating as no exclusions."
+            )
             return {}
         result: dict[int, list[int]] = {}
         for dfm_node in cfg.get("dfms", []):
