@@ -182,6 +182,8 @@ def load_experiment_yaml(
     parallel: bool = True,
     max_workers: int | None = None,
     executor: Literal["threads", "processes"] = "threads",
+    eager: bool = True,
+    use_disk_cache: bool = True,
 ) -> Experiment:
     """
     Load an experiment from a project directory.
@@ -484,9 +486,34 @@ def load_experiment_yaml(
     if yaml_excluded_by_dfm:
         exp.yaml_excluded_chambers = yaml_excluded_by_dfm
 
-    # Pre-warm the full-range feeding summary cache so the first call is free.
+    if not eager:
+        print("Skipping feeding-summary pre-compute (eager=False).", flush=True)
+        return exp
+
+    if use_disk_cache:
+        from . import cache as _cache
+        cached = _cache.load_feeding_summary(
+            resolved_project_dir,
+            range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
+            transform_licks=True,
+        )
+        if cached is not None:
+            print("Loaded feeding summary from disk cache.", flush=True)
+            key = ((float(range_minutes[0]), float(range_minutes[1])), True)
+            exp._feeding_summary_cache[key] = cached
+            return exp
+
     print("Pre-computing feeding summary...", flush=True)
-    exp.feeding_summary()
+    df = exp.feeding_summary()
+    if use_disk_cache:
+        try:
+            _cache.save_feeding_summary(
+                df, resolved_project_dir,
+                range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
+                transform_licks=True,
+            )
+        except Exception as e:  # pragma: no cover
+            print(f"  (disk cache write skipped: {e})", flush=True)
     print("Ready.", flush=True)
     return exp
 

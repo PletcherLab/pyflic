@@ -16,6 +16,19 @@ from .base.treatment import Treatment, TreatmentChamber
 from .base.two_well_experiment import TwoWellExperiment
 from .base.yaml_config import load_experiment_yaml
 
+# Higher-level analytics (lazy imports happen at call time inside)
+from .base.analytics import (
+    bootstrap_metric,
+    bout_transition_matrix,
+    compare_configs,
+    compare_treatments,
+    light_phase_summary,
+    parameter_sensitivity,
+    tidy_events,
+)
+from .base.pdf_report import write_experiment_report
+from .base.yaml_lint import lint_flic_config
+
 __all__ = [
     "DFM",
     "Parameters",
@@ -28,9 +41,14 @@ __all__ = [
     "HedonicFeedingExperiment",
     "ProgressiveRatioExperiment",
     "load_experiment_yaml",
-    "feeding_summary_monitors",
-    "binned_feeding_summary_monitors",
-    "output_baselined_data_monitors",
-    "output_interval_data_monitors",
-    "output_duration_data_monitors",
+    # Analytics
+    "tidy_events",
+    "bootstrap_metric",
+    "compare_treatments",
+    "light_phase_summary",
+    "parameter_sensitivity",
+    "bout_transition_matrix",
+    "compare_configs",
+    "write_experiment_report",
+    "lint_flic_config",
 ]

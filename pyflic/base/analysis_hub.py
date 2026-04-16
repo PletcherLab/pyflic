@@ -506,6 +506,69 @@ class AnalysisHubWindow(QMainWindow):
             lay.addWidget(b)
             self._data_buttons.append(b)
 
+        # ── Advanced analytics ────────────────────────────────────────────
+        sep = QLabel("— Advanced —")
+        sep.setStyleSheet("color: #888; font-size: 10px;")
+        lay.addWidget(sep)
+
+        b = QPushButton("Tidy events CSV")
+        b.clicked.connect(self._action_tidy_export)
+        lay.addWidget(b)
+        self._data_buttons.append(b)
+
+        b = QPushButton("Bootstrap CIs (metric)…")
+        b.clicked.connect(self._action_bootstrap)
+        lay.addWidget(b)
+        self._data_buttons.append(b)
+
+        b = QPushButton("Compare treatments (ANOVA / LMM)…")
+        b.clicked.connect(self._action_compare)
+        lay.addWidget(b)
+        self._data_buttons.append(b)
+
+        b = QPushButton("Light-phase summary CSV")
+        b.clicked.connect(self._action_light_phase)
+        lay.addWidget(b)
+        self._data_buttons.append(b)
+
+        b = QPushButton("Parameter sensitivity sweep…")
+        b.clicked.connect(self._action_param_sensitivity)
+        lay.addWidget(b)
+        self._data_buttons.append(b)
+
+        is_two_well = (chamber_size == 2
+                       or exp_type in {"two_well", "hedonic", "progressive_ratio"})
+        if is_two_well:
+            b = QPushButton("Bout transition matrix")
+            b.clicked.connect(self._action_transition_matrix)
+            lay.addWidget(b)
+            self._data_buttons.append(b)
+
+        b = QPushButton("Write PDF report")
+        b.clicked.connect(self._action_pdf_report)
+        lay.addWidget(b)
+        self._data_buttons.append(b)
+
+        # ── Tools (config-level, no loaded experiment needed) ────────────
+        sep2 = QLabel("— Tools —")
+        sep2.setStyleSheet("color: #888; font-size: 10px;")
+        lay.addWidget(sep2)
+
+        b_lint = QPushButton("Lint flic_config.yaml")
+        b_lint.clicked.connect(self._action_lint_config)
+        lay.addWidget(b_lint)
+        self._load_buttons.append(b_lint)
+
+        b_diff = QPushButton("Compare two configs…")
+        b_diff.clicked.connect(self._action_compare_configs)
+        lay.addWidget(b_diff)
+        self._load_buttons.append(b_diff)
+
+        b_cache = QPushButton("Clear disk cache")
+        b_cache.clicked.connect(self._action_clear_cache)
+        lay.addWidget(b_cache)
+        self._load_buttons.append(b_cache)
+
         lay.addStretch()
 
     def _rebuild_grp_plots(self, exp_type: str | None, chamber_size: int | None) -> None:
@@ -737,6 +800,17 @@ class AnalysisHubWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid path", "Choose a valid project directory.")
             return
         qc_dir = self._qc_dir_for_range()
+        if not qc_dir.is_dir():
+            ans = QMessageBox.question(
+                self,
+                "No QC found",
+                f"No QC directory found at:\n{qc_dir}\n\n"
+                "Run 'Run full basic analysis' first to generate QC reports, or "
+                "open the viewer anyway?",
+                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
+            )
+            if ans != QMessageBox.StandardButton.Open:
+                return
         cmd = _resolve_cli("pyflic-qc", "pyflic.base.qc_viewer")
         cmd = [*cmd, str(p), str(qc_dir)]
         try:
@@ -962,6 +1036,232 @@ class AnalysisHubWindow(QMainWindow):
 
         self._start_worker(task)
 
+    # ------------------------------------------------------------------
+    # Advanced analytics actions
+    # ------------------------------------------------------------------
+
+    def _action_tidy_export(self) -> None:
+        rm = self._range_minutes()
+
+        def task() -> list[tuple[str, bytes]]:
+            from .analytics import tidy_events
+            exp = self._load_exp()
+            df = tidy_events(exp, kind="feeding")
+            out = exp.analysis_dir / "tidy_feeding_events.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(out, index=False)
+            print(f"Wrote: {out}  ({len(df)} bouts)", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    def _action_bootstrap(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+        rm = self._range_minutes()
+        metric, ok = QInputDialog.getText(
+            self, "Bootstrap CIs",
+            "Metric (e.g. PI, MedDuration, Events):", text="PI",
+        )
+        if not ok or not metric.strip():
+            return
+        n_boot, ok = QInputDialog.getInt(
+            self, "Bootstrap CIs", "Bootstrap iterations:", 2000, 100, 100000, 100,
+        )
+        if not ok:
+            return
+
+        def task() -> list[tuple[str, bytes]]:
+            from .analytics import bootstrap_metric
+            exp = self._load_exp()
+            res = bootstrap_metric(
+                exp, metric=metric.strip(),
+                two_well_mode="total",
+                n_boot=int(n_boot),
+                range_minutes=rm,
+            )
+            out = exp.analysis_dir / f"bootstrap_{metric.strip()}.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            res.summary.to_csv(out, index=False)
+            print(f"Wrote: {out}\n{res.summary.to_string(index=False)}", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    def _action_compare(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+        rm = self._range_minutes()
+        metric, ok = QInputDialog.getText(
+            self, "Compare treatments",
+            "Metric (e.g. MedDuration, PI, Events):", text="MedDuration",
+        )
+        if not ok or not metric.strip():
+            return
+        model, ok = QInputDialog.getItem(
+            self, "Compare treatments", "Model:", ["aov", "lmm"], 0, False,
+        )
+        if not ok:
+            return
+
+        def task() -> list[tuple[str, bytes]]:
+            from .analytics import compare_treatments
+            exp = self._load_exp()
+            res = compare_treatments(
+                exp, metric=metric.strip(),
+                two_well_mode="A", model=model,
+                range_minutes=rm,
+            )
+            out = exp.analysis_dir / f"compare_{metric.strip()}_{model}.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            res.table.to_csv(out, index=False)
+            if res.posthoc is not None:
+                res.posthoc.to_csv(out.with_name(out.stem + "_posthoc.csv"), index=False)
+            print(f"Wrote: {out}\n{res.table.to_string(index=False)}", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    def _action_light_phase(self) -> None:
+        def task() -> list[tuple[str, bytes]]:
+            from .analytics import light_phase_summary
+            exp = self._load_exp()
+            df = light_phase_summary(exp)
+            out = exp.analysis_dir / "light_phase_summary.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(out, index=False)
+            print(f"Wrote: {out}  ({len(df)} rows)", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    def _action_param_sensitivity(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+        rm = self._range_minutes()
+        param, ok = QInputDialog.getItem(
+            self, "Parameter sensitivity",
+            "Parameter to sweep:",
+            ["feeding_event_link_gap", "feeding_threshold", "feeding_minimum",
+             "tasting_minimum", "tasting_maximum", "feeding_minevents"],
+            0, False,
+        )
+        if not ok:
+            return
+        text, ok = QInputDialog.getText(
+            self, "Parameter sensitivity",
+            f"Comma-separated values for {param}:", text="2,5,10,15,20",
+        )
+        if not ok or not text.strip():
+            return
+        try:
+            values = [float(s.strip()) for s in text.split(",") if s.strip()]
+        except ValueError:
+            QMessageBox.warning(self, "Bad input", "Values must be numeric")
+            return
+        metric, ok = QInputDialog.getText(
+            self, "Parameter sensitivity",
+            "Metric to track (e.g. Events, MedDuration):", text="Events",
+        )
+        if not ok or not metric.strip():
+            return
+
+        def task() -> list[tuple[str, bytes]]:
+            from .analytics import parameter_sensitivity
+            exp = self._load_exp()
+            res = parameter_sensitivity(
+                exp, parameter=param, values=values,
+                metric=metric.strip(), two_well_mode="total",
+                range_minutes=rm,
+            )
+            out = exp.analysis_dir / f"param_sensitivity_{param}_{metric.strip()}.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            res.grid.to_csv(out, index=False)
+            print(f"Wrote: {out}\n{res.grid.to_string(index=False)}", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    def _action_transition_matrix(self) -> None:
+        def task() -> list[tuple[str, bytes]]:
+            from .analytics import bout_transition_matrix
+            exp = self._load_exp()
+            df = bout_transition_matrix(exp)
+            out = exp.analysis_dir / "bout_transition_matrix.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(out, index=False)
+            print(f"Wrote: {out}  ({len(df)} rows)", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    def _action_pdf_report(self) -> None:
+        rm = self._range_minutes()
+
+        def task() -> list[tuple[str, bytes]]:
+            from .pdf_report import write_experiment_report
+            exp = self._load_exp()
+            p = write_experiment_report(exp, range_minutes=rm)
+            print(f"Wrote PDF report: {p}", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    # ------------------------------------------------------------------
+    # Tools (no loaded experiment required)
+    # ------------------------------------------------------------------
+
+    def _action_lint_config(self) -> None:
+        from .yaml_lint import lint_flic_config
+        cfg = self._project_dir() / "flic_config.yaml"
+        if not cfg.is_file():
+            QMessageBox.warning(self, "No config", f"No flic_config.yaml in {self._project_dir()}")
+            return
+        issues = lint_flic_config(cfg)
+        n_err = sum(1 for i in issues if i.severity == "error")
+        n_warn = sum(1 for i in issues if i.severity == "warning")
+        if not issues:
+            QMessageBox.information(self, "Lint", f"{cfg.name}: clean (0 issues).")
+            return
+        body = "\n".join(i.format(cfg) for i in issues[:50])
+        body += f"\n\n{n_err} error(s), {n_warn} warning(s)"
+        if n_err:
+            QMessageBox.critical(self, "Lint errors", body)
+        else:
+            QMessageBox.warning(self, "Lint warnings", body)
+
+    def _action_compare_configs(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+        d = QFileDialog.getExistingDirectory(
+            self, "Select 2nd project to compare against", str(self._project_dir()),
+        )
+        if not d:
+            return
+        metric, ok = QInputDialog.getText(
+            self, "Compare configs", "Metric (e.g. Licks, Events, MedDuration):",
+            text="Events",
+        )
+        if not ok or not metric.strip():
+            return
+        rm = self._range_minutes()
+
+        def task() -> list[tuple[str, bytes]]:
+            from .analytics import compare_configs
+            df = compare_configs(
+                self._project_dir(), Path(d),
+                metrics=(metric.strip(),), two_well_mode="total",
+                range_minutes=rm,
+            )
+            out = self._project_dir() / "analysis" / f"compare_configs_{metric.strip()}.csv"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(out, index=False)
+            print(f"Wrote: {out}\n{df.to_string(index=False)}", flush=True)
+            return []
+
+        self._start_worker(task)
+
+    def _action_clear_cache(self) -> None:
+        from . import cache as _cache
+        n = _cache.clear(self._project_dir())
+        QMessageBox.information(self, "Cache cleared", f"Removed {n} cached file(s).")
+        self._invalidate_exp_cache()
 
     # ------------------------------------------------------------------
     # Script execution
@@ -1140,6 +1440,107 @@ class AnalysisHubWindow(QMainWindow):
                             f"Breaking Point — DFM {dfm_id} (config {cfg_idx})",
                             _figure_to_bytes(fig),
                         ))
+
+                elif action == "tidy_export":
+                    e = _ensure_exp(rm)
+                    from .analytics import tidy_events
+                    kind = str(step.get("kind", "feeding")).strip().lower()
+                    df = tidy_events(e, kind=kind)
+                    out = e.analysis_dir / f"tidy_{kind}_events.csv"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    df.to_csv(out, index=False)
+                    print(f"Wrote: {out}  ({len(df)} bouts)", flush=True)
+
+                elif action == "bootstrap":
+                    e = _ensure_exp(rm)
+                    from .analytics import bootstrap_metric
+                    metric = str(step.get("metric", "PI"))
+                    mode = str(step.get("mode", "total"))
+                    n_boot = int(step.get("n_boot", 2000))
+                    ci_lvl = float(step.get("ci", 0.95))
+                    seed = step.get("seed", 0)
+                    res = bootstrap_metric(
+                        e, metric=metric, two_well_mode=mode,
+                        n_boot=n_boot, ci=ci_lvl,
+                        range_minutes=rm,
+                        seed=int(seed) if seed is not None else None,
+                    )
+                    out = e.analysis_dir / f"bootstrap_{metric}.csv"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    res.summary.to_csv(out, index=False)
+                    print(f"Wrote: {out}\n{res.summary.to_string(index=False)}", flush=True)
+
+                elif action == "compare":
+                    e = _ensure_exp(rm)
+                    from .analytics import compare_treatments
+                    metric = str(step.get("metric", "MedDuration"))
+                    mode = str(step.get("mode", "A"))
+                    model = str(step.get("model", "aov"))
+                    factors = step.get("factors")
+                    res = compare_treatments(
+                        e, metric=metric, two_well_mode=mode, model=model,
+                        factors=tuple(factors) if isinstance(factors, list) else None,
+                        range_minutes=rm,
+                    )
+                    out = e.analysis_dir / f"compare_{metric}_{model}.csv"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    res.table.to_csv(out, index=False)
+                    if res.posthoc is not None:
+                        res.posthoc.to_csv(out.with_name(out.stem + "_posthoc.csv"), index=False)
+                    print(f"Wrote: {out}\n{res.table.to_string(index=False)}", flush=True)
+
+                elif action == "light_phase_summary":
+                    e = _ensure_exp(rm)
+                    from .analytics import light_phase_summary
+                    df = light_phase_summary(e)
+                    out = e.analysis_dir / "light_phase_summary.csv"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    df.to_csv(out, index=False)
+                    print(f"Wrote: {out}  ({len(df)} rows)", flush=True)
+
+                elif action == "param_sensitivity":
+                    e = _ensure_exp(rm)
+                    from .analytics import parameter_sensitivity
+                    param = str(step.get("parameter", "feeding_event_link_gap"))
+                    values = step.get("values") or []
+                    metric = str(step.get("metric", "Events"))
+                    mode = str(step.get("mode", "total"))
+                    res = parameter_sensitivity(
+                        e, parameter=param,
+                        values=[float(v) for v in values],
+                        metric=metric, two_well_mode=mode,
+                        range_minutes=rm,
+                    )
+                    out = e.analysis_dir / f"param_sensitivity_{param}_{metric}.csv"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    res.grid.to_csv(out, index=False)
+                    print(f"Wrote: {out}\n{res.grid.to_string(index=False)}", flush=True)
+
+                elif action == "transition_matrix":
+                    e = _ensure_exp(rm)
+                    from .analytics import bout_transition_matrix
+                    from pyflic import TwoWellExperiment
+                    if not isinstance(e, TwoWellExperiment):
+                        print("[Skip] transition_matrix requires two-well experiment.", flush=True)
+                        continue
+                    df = bout_transition_matrix(e)
+                    out = e.analysis_dir / "bout_transition_matrix.csv"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    df.to_csv(out, index=False)
+                    print(f"Wrote: {out}  ({len(df)} rows)", flush=True)
+
+                elif action == "pdf_report":
+                    e = _ensure_exp(rm)
+                    from .pdf_report import write_experiment_report
+                    metrics = step.get("metrics") or ("Licks", "Events", "MedDuration")
+                    bs = float(step.get("binsize", ui_binsize))
+                    p = write_experiment_report(
+                        e,
+                        metrics=tuple(metrics),
+                        binsize_min=bs,
+                        range_minutes=rm,
+                    )
+                    print(f"Wrote: {p}", flush=True)
 
                 else:
                     print(f"[Skip] Unknown action: {action!r}", flush=True)

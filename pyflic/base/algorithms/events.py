@@ -76,28 +76,41 @@ def get_surviving_events(minvec: np.ndarray, maxvec: np.ndarray) -> np.ndarray:
 
 def link_events(z: np.ndarray, thresh: int) -> np.ndarray:
     """
-    R equivalent: `Link.Events(z, thresh)`.
+    Bridge short FALSE gaps **between** TRUE runs by setting them to TRUE.
 
-    Bridge FALSE runs of length <= thresh by setting them to TRUE.
+    A FALSE run is bridged iff its length is ``<= thresh`` *and* it sits
+    between two TRUE runs.  Leading and trailing FALSE runs (those at the
+    start or end of the array, with no TRUE on one side) are never
+    converted, since there is nothing to link them to.
     """
 
     z = np.asarray(z, dtype=bool)
     n = z.size
-    if n == 0:
+    if n == 0 or thresh <= 0:
         return z.copy()
 
     out = z.copy()
+    # Find run boundaries
     i = 0
+    runs: list[tuple[int, int, bool]] = []   # (start, end_exclusive, value)
     while i < n:
-        v = out[i]
         j = i + 1
-        while j < n and out[j] == v:
+        v = bool(out[i])
+        while j < n and bool(out[j]) == v:
             j += 1
-        run_len = j - i
-        if (v is False) or (v == False):  # noqa: E712
-            if run_len <= thresh:
-                out[i:j] = True
+        runs.append((i, j, v))
         i = j
+
+    # Bridge interior FALSE runs only
+    for k in range(1, len(runs) - 1):
+        start, end, val = runs[k]
+        if val:
+            continue
+        if (end - start) > thresh:
+            continue
+        # Both neighbours must be TRUE (always true here by run alternation)
+        if runs[k - 1][2] and runs[k + 1][2]:
+            out[start:end] = True
     return out
 
 

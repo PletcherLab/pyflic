@@ -23,12 +23,14 @@ pyflic = "pyflic.__main__:main"
 pyflic-config = "pyflic.base.config_editor:launch"
 pyflic-qc = "pyflic.base.qc_viewer:main"
 pyflic-hub = "pyflic.base.analysis_hub:main"
+pyflic-lint = "pyflic.base.yaml_lint:main_cli"
 
 [tool.hatch.version]
 source = "vcs"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.111.0",
     "ipykernel>=7.2.0",
     "pytest>=9.0.2",
 ]

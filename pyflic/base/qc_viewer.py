@@ -900,6 +900,95 @@ class DfmTab(QtWidgets.QWidget):
 # Main window
 # ───────────────────────────────────────────────────────────────────────────
 
+class ParamsTab(QtWidgets.QWidget):
+    """
+    Live parameter editor: tweak feeding/tasting thresholds and link gap,
+    then click "Recompute" to rebuild every DFM in place without re-reading
+    the data files.
+
+    Emits ``recompute_requested(dict)`` where the dict maps param name → value.
+    """
+
+    recompute_requested = pyqtSignal(dict)
+
+    _PARAM_FIELDS: tuple[tuple[str, str, float, float, float, float, int], ...] = (
+        # (param_name, label, min, max, step, default, decimals)
+        ("baseline_window_minutes", "Baseline window (min)", 0.1, 60.0, 0.5, 3.0, 2),
+        ("feeding_threshold",       "Feeding threshold",     -5.0, 1000.0, 1.0, 20.0, 1),
+        ("feeding_minimum",         "Feeding minimum",       -5.0, 1000.0, 1.0, 10.0, 1),
+        ("tasting_minimum",         "Tasting minimum",       -5.0, 1000.0, 1.0, 5.0, 1),
+        ("tasting_maximum",         "Tasting maximum",       -5.0, 1000.0, 1.0, 20.0, 1),
+        ("feeding_event_link_gap",  "Feeding event link gap (samples)", 0, 100, 1, 5, 0),
+        ("feeding_minevents",       "Feeding min events (samples)", 1, 100, 1, 1, 0),
+    )
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._spins: dict[str, QtWidgets.QDoubleSpinBox] = {}
+        self._build()
+
+    def _build(self) -> None:
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+
+        info = QtWidgets.QLabel(
+            "Adjust parameters and click 'Recompute' to re-run feeding/tasting "
+            "extraction on the loaded DFMs without re-reading CSVs.  Changes do "
+            "NOT modify flic_config.yaml.")
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        form = QtWidgets.QFormLayout()
+        for name, label, lo, hi, step, default, decimals in self._PARAM_FIELDS:
+            sb = QtWidgets.QDoubleSpinBox()
+            sb.setRange(float(lo), float(hi))
+            sb.setSingleStep(float(step))
+            sb.setDecimals(int(decimals))
+            sb.setValue(float(default))
+            self._spins[name] = sb
+            form.addRow(label + ":", sb)
+        root.addLayout(form)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self._btn_recompute = QtWidgets.QPushButton("Recompute")
+        self._btn_recompute.clicked.connect(self._on_recompute)
+        btn_row.addWidget(self._btn_recompute)
+        self._status = QtWidgets.QLabel("")
+        btn_row.addWidget(self._status, stretch=1)
+        root.addLayout(btn_row)
+
+        root.addStretch()
+
+    def populate_from_params(self, params) -> None:
+        """Set spinbox values from a Parameters object."""
+        for name, sb in self._spins.items():
+            try:
+                v = float(getattr(params, name))
+            except Exception:
+                continue
+            sb.blockSignals(True)
+            sb.setValue(v)
+            sb.blockSignals(False)
+
+    def _on_recompute(self) -> None:
+        overrides = {
+            "baseline_window_minutes": float(self._spins["baseline_window_minutes"].value()),
+            "feeding_threshold":       float(self._spins["feeding_threshold"].value()),
+            "feeding_minimum":         float(self._spins["feeding_minimum"].value()),
+            "tasting_minimum":         float(self._spins["tasting_minimum"].value()),
+            "tasting_maximum":         float(self._spins["tasting_maximum"].value()),
+            "feeding_event_link_gap":  int(self._spins["feeding_event_link_gap"].value()),
+            "feeding_minevents":       int(self._spins["feeding_minevents"].value()),
+        }
+        self._status.setText("Recomputing...")
+        self._btn_recompute.setEnabled(False)
+        try:
+            self.recompute_requested.emit(overrides)
+        finally:
+            self._btn_recompute.setEnabled(True)
+            self._status.setText("Done.")
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """
     Top-level window.
@@ -921,6 +1010,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dfm_tab_widgets: dict[int, DfmTab] = {}
         self._dfm_chamber_sizes: dict[int, int] = {}  # dfm_id → chamber_size
         self._feeding_tab: FeedingSummaryTab | None = None
+        self._params_tab: ParamsTab | None = None
         self._active_subtab_idx: int = 0
 
         # Auto-save timer: coalesces rapid changes (e.g. "Mark All") into one write
@@ -960,6 +1050,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dfm_tab_widgets.clear()
         self._dfm_chamber_sizes.clear()
         self._feeding_tab = None
+        self._params_tab = None
 
         # Cache chamber_size per DFM
         for dfm_id, dfm in exp.dfms.items():
@@ -981,6 +1072,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._feeding_tab.auto_filter_requested.connect(self._on_auto_filter)
         self._feeding_tab.view_criteria_requested.connect(self._on_view_filter_criteria)
         self._tabs.addTab(self._feeding_tab, "Feeding Summary")
+
+        # Params tab (live recompute)
+        self._params_tab = ParamsTab()
+        # Seed from the first DFM's params (all DFMs share most params in practice)
+        first_dfm = next(iter(exp.dfms.values()), None)
+        if first_dfm is not None:
+            self._params_tab.populate_from_params(first_dfm.params)
+        self._params_tab.recompute_requested.connect(self._on_params_recompute)
+        self._tabs.addTab(self._params_tab, "Params")
 
         # DFM tabs — convert excluded chamber numbers to well numbers
         qc_dir = self._project_dir / "qc"
@@ -1019,6 +1119,46 @@ class MainWindow(QtWidgets.QMainWindow):
             tab._tabs.blockSignals(True)
             tab._tabs.setCurrentIndex(target)
             tab._tabs.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # Live parameter recompute
+    # ------------------------------------------------------------------
+
+    def _on_params_recompute(self, overrides: dict) -> None:
+        """Apply *overrides* to every DFM's Parameters and rebuild caches in place."""
+        if self._exp is None:
+            return
+        try:
+            new_dfms = {}
+            for dfm_id, dfm in self._exp.dfms.items():
+                # cast to original field types
+                cast: dict = {}
+                for k, v in overrides.items():
+                    cur = getattr(dfm.params, k)
+                    cast[k] = type(cur)(v)
+                new_params = dfm.params.with_updates(**cast)
+                new_dfms[dfm_id] = dfm.with_params(new_params)
+        except Exception as exc:
+            self.statusBar().showMessage(f"Recompute failed: {exc}")
+            return
+
+        self._exp.dfms = new_dfms
+        self._exp.design.dfms = dict(new_dfms)
+        self._exp._feeding_summary_cache.clear()
+
+        try:
+            fs = self._exp.feeding_summary()
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not refresh feeding summary: {exc}")
+            return
+
+        excluded_by_dfm = self._read_excluded_from_yaml()
+        if self._feeding_tab is not None:
+            self._feeding_tab.populate(fs, excluded_by_dfm=excluded_by_dfm)
+        self.statusBar().showMessage(
+            "Recomputed feeding/tasting with new parameters.  QC plots reflect "
+            "original disk-cached images; re-run write_qc_reports to refresh them."
+        )
 
     # ------------------------------------------------------------------
     # Chamber ↔ well mapping helpers
