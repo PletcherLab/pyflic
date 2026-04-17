@@ -999,12 +999,13 @@ class MainWindow(QtWidgets.QMainWindow):
     sync via the ``_syncing`` flag and two cross-wired signal handlers.
     """
 
-    def __init__(self, project_dir: Path) -> None:
+    def __init__(self, project_dir: Path, qc_dir: Path | None = None) -> None:
         super().__init__()
         self.resize(1380, 900)
         self.setWindowTitle(f"FLIC QC Viewer  —  {project_dir}")
 
         self._project_dir: Path = project_dir
+        self._initial_qc_dir: Path | None = qc_dir
         self._exp = None
         self._syncing = False                        # prevents exclusion sync feedback loops
         self._dfm_tab_widgets: dict[int, DfmTab] = {}
@@ -1083,7 +1084,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tabs.addTab(self._params_tab, "Params")
 
         # DFM tabs — convert excluded chamber numbers to well numbers
-        qc_dir = self._project_dir / "qc"
+        qc_dir = self._initial_qc_dir if self._initial_qc_dir is not None else self._project_dir / "qc"
         for dfm_id in sorted(exp.dfms.keys()):
             excl_chambers = excluded_by_dfm.get(dfm_id, [])
             excl_wells = [
@@ -1338,7 +1339,10 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return {}
         result: dict[int, list[int]] = {}
-        for dfm_node in cfg.get("dfms", []):
+        dfm_nodes = cfg.get("dfms", [])
+        if isinstance(dfm_nodes, dict):
+            dfm_nodes = [dict(v, id=int(k)) for k, v in dfm_nodes.items() if isinstance(v, dict)]
+        for dfm_node in dfm_nodes:
             if not isinstance(dfm_node, dict):
                 continue
             dfm_id = int(dfm_node.get("id", 0))
@@ -1359,10 +1363,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Could not read YAML: {exc}")
             return
 
-        for dfm_node in cfg.get("dfms", []):
-            if not isinstance(dfm_node, dict):
-                continue
-            dfm_id = int(dfm_node.get("id", 0))
+        dfm_nodes_raw = cfg.get("dfms", [])
+        is_mapping_form = isinstance(dfm_nodes_raw, dict)
+        if is_mapping_form:
+            dfm_nodes_iter = [(int(k), v) for k, v in dfm_nodes_raw.items() if isinstance(v, dict)]
+        else:
+            dfm_nodes_iter = [(int(n.get("id", 0)), n) for n in dfm_nodes_raw if isinstance(n, dict)]
+        for dfm_id, dfm_node in dfm_nodes_iter:
             tab = self._dfm_tab_widgets.get(dfm_id)
             if tab is None:
                 continue
@@ -1405,8 +1412,8 @@ class MainWindow(QtWidgets.QMainWindow):
 # ───────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    if len(sys.argv) > 2:
-        print("Usage: pyflic-qc [project_dir]", file=sys.stderr)
+    if len(sys.argv) > 3:
+        print("Usage: pyflic-qc [project_dir [qc_dir]]", file=sys.stderr)
         sys.exit(1)
 
     project_dir = Path(sys.argv[1] if len(sys.argv) >= 2 else ".").expanduser().resolve()
@@ -1414,10 +1421,14 @@ def main() -> None:
         print(f"Error: not a directory: {project_dir}", file=sys.stderr)
         sys.exit(1)
 
+    qc_dir: Path | None = None
+    if len(sys.argv) >= 3:
+        qc_dir = Path(sys.argv[2]).expanduser().resolve()
+
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("FLIC QC Viewer")
 
-    win = MainWindow(project_dir)
+    win = MainWindow(project_dir, qc_dir=qc_dir)
     win.show()
     sys.exit(app.exec())
 

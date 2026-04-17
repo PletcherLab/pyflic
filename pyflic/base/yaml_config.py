@@ -504,7 +504,7 @@ def load_experiment_yaml(
             return exp
 
     print("Pre-computing feeding summary...", flush=True)
-    df = exp.feeding_summary()
+    df = exp.feeding_summary(range_minutes=(float(range_minutes[0]), float(range_minutes[1])))
     if use_disk_cache:
         try:
             _cache.save_feeding_summary(

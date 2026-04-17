@@ -884,7 +884,7 @@ class AnalysisHubWindow(QMainWindow):
 
         def task() -> None:
             exp = self._load_exp()
-            paths = exp.execute_basic_analysis(range_minutes=rm, skip_qc=True)
+            paths = exp.execute_basic_analysis(range_minutes=rm, skip_qc=False)
             for k, v in paths.items():
                 if v is not None:
                     print(f"{k}: {v}", flush=True)

@@ -239,8 +239,7 @@ class DFM:
         # Port of `CalculateBaseline()` with the same window logic.
         df = self.raw_df.copy()
         window_min = float(self.params.baseline_window_minutes)
-        # R code uses a fixed 5 samples/sec here.
-        window = int(round(window_min * 60 * 5))
+        window = int(round(window_min * 60 * self.params.samples_per_second))
         if window % 2 == 0:
             window += 1
 

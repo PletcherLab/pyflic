@@ -182,11 +182,13 @@ def write_experiment_report(
             _text_page(pdf, "Feeding summary plot failed", str(exc))
 
         # Per-metric binned plots
+        _count_metrics = {"Licks", "Events", "PI", "EventPI"}
         for metric in metrics:
             try:
+                two_well_mode = "total" if metric in _count_metrics else "A"
                 fig = experiment.plot_binned_metric_by_treatment(
                     metric=metric,
-                    two_well_mode="total",
+                    two_well_mode=two_well_mode,
                     binsize_min=binsize_min,
                     range_minutes=range_minutes,
                     transform_licks=transform_licks,

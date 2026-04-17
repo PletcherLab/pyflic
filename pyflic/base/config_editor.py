@@ -803,7 +803,6 @@ class FLICConfigEditor(QMainWindow):
 
     def _on_chamber_size_changed(self) -> None:
         cs = self._chamber_size()
-        self._global_params.reset_defaults(cs)
         self._global_params.set_chamber_size(cs)
         for w in self._dfm_widgets:
             w.update_chamber_size(cs)

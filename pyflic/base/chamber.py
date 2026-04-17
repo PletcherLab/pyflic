@@ -46,7 +46,7 @@ def compute_feeding_for_well(
     bridged = link_events(licks, int(params.feeding_event_link_gap))
     events = get_events(bridged)
 
-    return FeedingWellResult(licks=licks.astype(bool), events=events.astype(int))
+    return FeedingWellResult(licks=bridged.astype(bool), events=events.astype(int))
 
 
 def compute_tasting_for_well(
