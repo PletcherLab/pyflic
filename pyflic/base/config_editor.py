@@ -714,6 +714,14 @@ class FLICConfigEditor(QMainWindow):
         self._btn_theme.clicked.connect(self._toggle_theme)
         self._top_bar.add_right(self._btn_theme)
 
+        self._btn_script_editor = QToolButton()
+        self._btn_script_editor.setIcon(icon("script", category=Category.SCRIPTS))
+        self._btn_script_editor.setIconSize(QSize(18, 18))
+        self._btn_script_editor.setToolTip("Open script editor")
+        self._btn_script_editor.setAutoRaise(True)
+        self._btn_script_editor.clicked.connect(self._open_script_editor)
+        self._top_bar.add_right(self._btn_script_editor)
+
         outer.addWidget(self._top_bar)
 
         splitter = QSplitter(Qt.Orientation.Vertical)

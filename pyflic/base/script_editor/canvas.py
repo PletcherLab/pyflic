@@ -1,4 +1,4 @@
-"""Script canvas — step list with drag-to-reorder + script-level header.
+"""Script canvas — step list with move buttons + script-level header.
 
 The canvas is the editor's single source of truth for the currently-being-
 edited script.  It exposes:
@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..ui import Category, category_color, icon
-from .actions import Action, describe_step, get_action, validation_issues
+from .actions import describe_step, get_action, validation_issues
 
 
 # ---------------------------------------------------------------------------
@@ -41,15 +41,10 @@ from .actions import Action, describe_step, get_action, validation_issues
 # ---------------------------------------------------------------------------
 
 class _StepCard(QFrame):
-    """Compact visual for one step.
+    """Compact visual for one step."""
 
-    Step state lives in the QListWidgetItem's user role; this widget is a
-    pure view.  The card has no click handlers — selection is managed by
-    the parent QListWidget.
-    """
-
-    deleteRequested = pyqtSignal(object)        # emits self
-    menuRequested = pyqtSignal(object)          # emits self
+    deleteRequested = pyqtSignal(object)
+    menuRequested = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -57,16 +52,12 @@ class _StepCard(QFrame):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setAutoFillBackground(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._category = Category.NEUTRAL
+        self._selected = False
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 8, 10, 8)
         lay.setSpacing(10)
-
-        # Drag handle (purely visual — drag is driven by QListWidget)
-        self._handle = QLabel("☰", self)
-        self._handle.setStyleSheet("color: palette(mid); font-size: 14pt;")
-        self._handle.setFixedWidth(18)
-        lay.addWidget(self._handle)
 
         # Number + icon
         self._num_lbl = QLabel("1.", self)
@@ -91,7 +82,7 @@ class _StepCard(QFrame):
         text_col.addWidget(self._chip_lbl)
         lay.addLayout(text_col, 1)
 
-        # Warning indicator (shown when validation returns issues)
+        # Warning indicator
         self._warn_lbl = QLabel(self)
         self._warn_lbl.setFixedSize(QSize(18, 18))
         self._warn_lbl.setPixmap(icon("warning", category=Category.QC).pixmap(16, 16))
@@ -127,8 +118,7 @@ class _StepCard(QFrame):
             self._apply_category_color(Category.NEUTRAL)
             return
         self._title_lbl.setText(act.label)
-        chip = describe_step(step)
-        self._chip_lbl.setText(chip)
+        self._chip_lbl.setText(describe_step(step))
         self._icon_lbl.setPixmap(icon(act.icon, category=act.category).pixmap(20, 20))
         self._num_lbl.setText(f"{index + 1}.")
         self._apply_category_color(act.category)
@@ -140,8 +130,15 @@ class _StepCard(QFrame):
             self._warn_lbl.setVisible(False)
             self._warn_lbl.setToolTip("")
 
+    def set_selected(self, selected: bool) -> None:
+        if self._selected != selected:
+            self._selected = selected
+            self._apply_category_color(self._category)
+
     def _apply_category_color(self, category: Category) -> None:
+        self._category = category
         col = category_color(category)
+        bg = "rgba(100, 140, 220, 35)" if self._selected else "palette(base)"
         self.setStyleSheet(
             f"QFrame#ScriptStepCard {{"
             f"  border-left: 4px solid {col};"
@@ -149,7 +146,7 @@ class _StepCard(QFrame):
             f"  border-right: 1px solid palette(mid);"
             f"  border-bottom: 1px solid palette(mid);"
             f"  border-radius: 6px;"
-            f"  background: palette(base);"
+            f"  background: {bg};"
             f"}}"
         )
 
@@ -159,11 +156,8 @@ class _StepCard(QFrame):
 # ---------------------------------------------------------------------------
 
 class _CardDelegate(QStyledItemDelegate):
-    """Paint the default item background without a focus rectangle."""
-
     def paint(self, painter, option: QStyleOptionViewItem, index) -> None:
         from PyQt6.QtWidgets import QStyle
-
         opt = QStyleOptionViewItem(option)
         opt.state &= ~QStyle.StateFlag.State_HasFocus
         super().paint(painter, opt, index)
@@ -209,12 +203,30 @@ class Canvas(QWidget):
 
         outer.addWidget(self._header)
 
+        # Move-step toolbar
+        move_bar = QHBoxLayout()
+        move_bar.setContentsMargins(0, 0, 0, 0)
+        move_bar.setSpacing(4)
+        self._btn_up = QToolButton()
+        self._btn_up.setText("▲  Move up")
+        self._btn_up.setToolTip("Move selected step up")
+        self._btn_up.setAutoRaise(True)
+        self._btn_up.setEnabled(False)
+        self._btn_up.clicked.connect(self._move_up)
+        self._btn_down = QToolButton()
+        self._btn_down.setText("▼  Move down")
+        self._btn_down.setToolTip("Move selected step down")
+        self._btn_down.setAutoRaise(True)
+        self._btn_down.setEnabled(False)
+        self._btn_down.clicked.connect(self._move_down)
+        move_bar.addWidget(self._btn_up)
+        move_bar.addWidget(self._btn_down)
+        move_bar.addStretch()
+        outer.addLayout(move_bar)
+
         # Step list
         self._list = QListWidget(self)
         self._list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self._list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self._list.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self._list.setMovement(QListWidget.Movement.Snap)
         self._list.setSpacing(4)
         self._list.setItemDelegate(_CardDelegate(self._list))
         self._list.setStyleSheet(
@@ -223,7 +235,6 @@ class Canvas(QWidget):
             "QListWidget::item:selected { background: transparent; }"
         )
         self._list.itemSelectionChanged.connect(self._on_selection_changed)
-        self._list.model().rowsMoved.connect(self._on_rows_moved)
         outer.addWidget(self._list, 1)
 
         # Empty-state hint
@@ -247,15 +258,10 @@ class Canvas(QWidget):
 
     def set_experiment_type(self, et: str | None) -> None:
         self._experiment_type = et
-        # Re-render each step so warnings update.
         for i in range(self._list.count()):
             self._rerender_row(i)
 
     def load_script(self, script: dict[str, Any] | None) -> None:
-        """Populate the canvas from *script* (a dict like ``{name, start, end, steps}``).
-
-        Passing ``None`` clears the canvas.
-        """
         self._list.blockSignals(True)
         self._list.clear()
         if script is None:
@@ -276,11 +282,11 @@ class Canvas(QWidget):
         self._update_empty_hint()
         if self._list.count() > 0:
             self._list.setCurrentRow(0)
+            self._update_selection_highlight()
         else:
             self.stepSelected.emit(-1)
 
     def current_script(self) -> dict[str, Any]:
-        """Return the current in-memory script dict (fresh copy)."""
         return {
             "name": self._name_edit.text().strip(),
             "steps": [self._step_at(i) for i in range(self._list.count())],
@@ -304,7 +310,6 @@ class Canvas(QWidget):
         self._emit_changed()
 
     def append_step(self, action_name: str) -> None:
-        """Add a new step with default values for *action_name*."""
         act = get_action(action_name)
         if act is None:
             return
@@ -332,6 +337,17 @@ class Canvas(QWidget):
         card.menuRequested.connect(lambda _c=card, i=item: self._show_context_menu(i))
         card.update_from(self._list.row(item), step, experiment_type=self._experiment_type)
 
+    def _insert_item_at(self, row: int, step: dict[str, Any]) -> None:
+        card = _StepCard(self._list)
+        item = QListWidgetItem()
+        item.setData(_STEP_ROLE, step)
+        item.setSizeHint(QSize(0, 60))
+        self._list.insertItem(row, item)
+        self._list.setItemWidget(item, card)
+        card.deleteRequested.connect(lambda _c=card, i=item: self._delete_item(i))
+        card.menuRequested.connect(lambda _c=card, i=item: self._show_context_menu(i))
+        card.update_from(row, step, experiment_type=self._experiment_type)
+
     def _rerender_row(self, row: int) -> None:
         if row < 0 or row >= self._list.count():
             return
@@ -356,6 +372,7 @@ class Canvas(QWidget):
         self._list.takeItem(row)
         self._rerender_all()
         self._update_empty_hint()
+        self._update_move_buttons()
         self._emit_changed()
 
     def _show_context_menu(self, item: QListWidgetItem) -> None:
@@ -389,28 +406,38 @@ class Canvas(QWidget):
         self._insert_item_at(dst, step)
         self._list.setCurrentRow(dst)
         self._rerender_all()
+        self._update_selection_highlight()
+        self._update_move_buttons()
         self._emit_changed()
 
-    def _insert_item_at(self, row: int, step: dict[str, Any]) -> None:
-        card = _StepCard(self._list)
-        item = QListWidgetItem()
-        item.setData(_STEP_ROLE, step)
-        item.setSizeHint(QSize(0, 60))
-        self._list.insertItem(row, item)
-        self._list.setItemWidget(item, card)
-        card.deleteRequested.connect(lambda _c=card, i=item: self._delete_item(i))
-        card.menuRequested.connect(lambda _c=card, i=item: self._show_context_menu(i))
-        card.update_from(row, step, experiment_type=self._experiment_type)
+    def _move_up(self) -> None:
+        row = self._list.currentRow()
+        self._move_row(row, row - 1)
+
+    def _move_down(self) -> None:
+        row = self._list.currentRow()
+        self._move_row(row, row + 1)
+
+    def _update_move_buttons(self) -> None:
+        row = self._list.currentRow()
+        n = self._list.count()
+        self._btn_up.setEnabled(row > 0)
+        self._btn_down.setEnabled(0 <= row < n - 1)
+
+    def _update_selection_highlight(self) -> None:
+        row = self._list.currentRow()
+        for i in range(self._list.count()):
+            card = self._list.itemWidget(self._list.item(i))
+            if isinstance(card, _StepCard):
+                card.set_selected(i == row)
 
     def _update_empty_hint(self) -> None:
         self._empty_hint.setVisible(self._list.count() == 0)
 
     def _on_selection_changed(self) -> None:
+        self._update_move_buttons()
+        self._update_selection_highlight()
         self.stepSelected.emit(self.selected_index())
-
-    def _on_rows_moved(self, *_: Any) -> None:
-        self._rerender_all()
-        self._emit_changed()
 
     def _on_name_changed(self, _text: str) -> None:
         self._emit_changed()

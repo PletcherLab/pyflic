@@ -1425,9 +1425,9 @@ class AnalysisHubWindow(QMainWindow):
             out = exp.analysis_dir / "feeding_summary.png"
             out.parent.mkdir(parents=True, exist_ok=True)
             if hasattr(fig, "save"):
-                fig.save(str(out), dpi=150)
+                fig.save(str(out), dpi=300)
             else:
-                fig.savefig(str(out), dpi=150, bbox_inches="tight")
+                fig.savefig(str(out), dpi=300, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
             return "Feeding Summary", fig
 
@@ -1449,7 +1449,7 @@ class AnalysisHubWindow(QMainWindow):
             safe = metric.replace("/", "_")
             out = exp.analysis_dir / f"binned_{safe}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(str(out), dpi=150, bbox_inches="tight")
+            fig.savefig(str(out), dpi=300, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
             return f"Binned: {metric}", fig
 
@@ -1470,9 +1470,9 @@ class AnalysisHubWindow(QMainWindow):
             out = exp.analysis_dir / f"dot_{safe}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
             if hasattr(fig, "save"):
-                fig.save(str(out), dpi=150)
+                fig.save(str(out), dpi=300)
             else:
-                fig.savefig(str(out), dpi=150, bbox_inches="tight")
+                fig.savefig(str(out), dpi=300, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
             return f"Dot: {metric}", fig
 
@@ -1494,7 +1494,7 @@ class AnalysisHubWindow(QMainWindow):
             fig = exp.facet_plot_well_durations(metric=metric, range_minutes=rm)
             out = exp.analysis_dir / f"well_comparison_{metric}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
-            fig.save(str(out), dpi=150)
+            fig.save(str(out), dpi=300)
             print(f"Wrote: {out}", flush=True)
             return f"Well A vs B: {metric}", fig
 
@@ -1538,7 +1538,7 @@ class AnalysisHubWindow(QMainWindow):
             for dfm_id, dfm in sorted(exp.dfms.items()):
                 fig = exp.plot_breaking_point_dfm_gg(dfm, cfg)
                 out = ad / f"breaking_point_dfm{dfm_id}_config{cfg}.png"
-                fig.save(str(out), dpi=150)
+                fig.save(str(out), dpi=300)
                 print(f"Wrote: {out}", flush=True)
                 results.append((
                     f"Breaking Point — DFM {dfm_id} (config {cfg})",
@@ -2052,9 +2052,9 @@ class AnalysisHubWindow(QMainWindow):
                     out = e.analysis_dir / "feeding_summary.png"
                     out.parent.mkdir(parents=True, exist_ok=True)
                     if hasattr(fig, "save"):
-                        fig.save(str(out), dpi=150)
+                        fig.save(str(out), dpi=300)
                     else:
-                        fig.savefig(str(out), dpi=150, bbox_inches="tight")
+                        fig.savefig(str(out), dpi=300, bbox_inches="tight")
                     print(f"Wrote: {out}", flush=True)
                     figures.append(("Feeding Summary", fig))
 
@@ -2070,7 +2070,7 @@ class AnalysisHubWindow(QMainWindow):
                         safe = metric.replace("/", "_")
                         out = e.analysis_dir / f"binned_{safe}.png"
                         out.parent.mkdir(parents=True, exist_ok=True)
-                        fig.savefig(str(out), dpi=150, bbox_inches="tight")
+                        fig.savefig(str(out), dpi=300, bbox_inches="tight")
                         print(f"Wrote: {out}", flush=True)
                         figures.append((f"Binned: {metric}", fig))
                     else:
@@ -2081,9 +2081,9 @@ class AnalysisHubWindow(QMainWindow):
                         out = e.analysis_dir / f"dot_{safe}.png"
                         out.parent.mkdir(parents=True, exist_ok=True)
                         if hasattr(fig, "save"):
-                            fig.save(str(out), dpi=150)
+                            fig.save(str(out), dpi=300)
                         else:
-                            fig.savefig(str(out), dpi=150, bbox_inches="tight")
+                            fig.savefig(str(out), dpi=300, bbox_inches="tight")
                         print(f"Wrote: {out}", flush=True)
                         figures.append((f"Dot: {metric}", fig))
 
@@ -2097,7 +2097,7 @@ class AnalysisHubWindow(QMainWindow):
                     fig = e.facet_plot_well_durations(metric=metric, range_minutes=rm)
                     out = e.analysis_dir / f"well_comparison_{metric}.png"
                     out.parent.mkdir(parents=True, exist_ok=True)
-                    fig.save(str(out), dpi=150)
+                    fig.save(str(out), dpi=300)
                     print(f"Wrote: {out}", flush=True)
                     figures.append((f"Well A vs B: {metric}", fig))
 
@@ -2123,7 +2123,7 @@ class AnalysisHubWindow(QMainWindow):
                     for dfm_id, dfm in sorted(e.dfms.items()):
                         fig = e.plot_breaking_point_dfm_gg(dfm, cfg_idx)
                         out = ad / f"breaking_point_dfm{dfm_id}_config{cfg_idx}.png"
-                        fig.save(str(out), dpi=150)
+                        fig.save(str(out), dpi=300)
                         print(f"Wrote: {out}", flush=True)
                         figures.append((
                             f"Breaking Point — DFM {dfm_id} (config {cfg_idx})",

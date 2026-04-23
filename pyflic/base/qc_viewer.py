@@ -1089,7 +1089,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tabs.addTab(self._params_tab, "Params")
 
         # DFM tabs — convert excluded chamber numbers to well numbers
-        qc_dir = self._initial_qc_dir if self._initial_qc_dir is not None else self._project_dir / "qc"
+        if self._initial_qc_dir is not None:
+            qc_dir = self._initial_qc_dir
+        elif exp.qc_dir is not None and exp.qc_dir.exists():
+            qc_dir = exp.qc_dir
+        else:
+            # Fallback: scan the output root for any qc* directory that exists
+            root = exp._output_root or self._project_dir
+            candidates = sorted(root.glob("qc*")) if root.exists() else []
+            qc_dir = candidates[0] if candidates else (root / "qc")
         for dfm_id in sorted(exp.dfms.keys()):
             excl_chambers = excluded_by_dfm.get(dfm_id, [])
             excl_wells = [

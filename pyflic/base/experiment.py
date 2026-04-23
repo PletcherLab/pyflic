@@ -12,6 +12,13 @@ import pandas as pd
 from .dfm import DFM
 from .experiment_design import ExperimentDesign
 
+# Okabe-Ito color-blind-safe palette (8 colors).
+_OKABE_ITO = [
+    "#E69F00", "#56B4E9", "#009E73",
+    "#F0E442", "#0072B2", "#D55E00",
+    "#CC79A7", "#999999",
+]
+
 
 def _fmt_min(v: float) -> str:
     """Format a minute value for use in a filename.  ``inf`` → ``'end'``."""
@@ -690,71 +697,124 @@ class Experiment:
         base_font_size: float = 20.0,
     ):
         """
-        Jitter + mean + SE error bar plot faceted by a grouping column.
+        Publication-quality jitter + mean ± SEM plot faceted by a grouping column.
 
-        Mirrors the R pattern::
-
-            ggplot(df, aes(x_col, y_col, color=x_col))
-              + geom_jitter(width=0.25, size=3)
-              + stat_summary(fun=mean)
-              + stat_summary(fun.data=mean_se, geom="errorbar")
-              + scale_color_brewer(palette="RdGy")
-              + facet_wrap(facet_col)
-              + theme_bw(base_size=20)
+        Points are jittered over the x-axis grouping; a filled diamond marks the
+        group mean and capped error bars show ± 1 SEM.  Colors follow the
+        Okabe-Ito color-blind-safe palette unless *colors* is provided.
 
         Parameters
         ----------
         df : pd.DataFrame
             Feeding summary (or any DataFrame) with the relevant columns.
-            Pass ``exp.feeding_summary()`` or a version augmented with
-            extra metadata columns (e.g. a "Sucrose" concentration column).
         x_col : str
-            Column for the x-axis grouping (e.g. ``"Sucrose"``).
+            Column for the x-axis grouping (e.g. ``"TreatmentNew"``).
         y_col : str
-            Column for the y-axis metric (e.g. ``"MedDurationA"``).
+            Column for the y-axis metric (e.g. ``"_MetricValue"``).
         facet_col : str
-            Column to facet by (default ``"Treatment"``).
+            Column to facet by.  Pass ``"_Facet"`` (synthetic constant column)
+            for a single-panel plot — the strip label is hidden automatically.
         x_order : list[str] | None
             Explicit ordering of x-axis categories.
         annotation : str | None
-            Optional text label to draw on every facet panel.
+            Optional text label drawn on every facet panel.
         annotation_x / annotation_y
             Data coordinates for the annotation.
         """
         from plotnine import (
-            ggplot, aes, geom_jitter, stat_summary,
-            scale_color_brewer, scale_color_manual, scale_x_discrete, coord_cartesian,
-            facet_wrap, theme_bw, labs, annotate as p9_annotate,
+            aes,
+            annotate as p9_annotate,
+            coord_cartesian,
+            element_blank,
+            element_line,
+            element_rect,
+            element_text,
+            facet_wrap,
+            geom_jitter,
+            ggplot,
+            guides,
+            labs,
+            scale_color_manual,
+            scale_shape_manual,
+            scale_x_discrete,
+            stat_summary,
+            theme,
+            theme_classic,
         )
-        import numpy as np
+
+        # Derive figure width from number of groups × facets.
+        n_groups = df[x_col].nunique() if x_col in df.columns else 2
+        n_facets = df[facet_col].nunique() if facet_col in df.columns else 1
+        fig_w = max(3.0, n_groups * 1.4) * n_facets
+        fig_h = 4.5
+
+        palette = list(colors.values()) if colors is not None else _OKABE_ITO
+        # Build a shape cycle using string marker codes (avoids numpy int issues).
+        _shape_strs = ["o", "s", "D", "^", "v", ">", "<", "p"]
+        group_levels = (
+            x_order if x_order is not None
+            else sorted(df[x_col].unique()) if x_col in df.columns else []
+        )
+        shape_map = {g: _shape_strs[i % len(_shape_strs)] for i, g in enumerate(group_levels)}
 
         if size_col is not None:
-            jitter_kwargs: dict = {"mapping": aes(size=size_col), "width": jitter_width}
+            jitter_kwargs: dict = {
+                "mapping": aes(size=size_col),
+                "width": jitter_width,
+                "alpha": 0.65,
+                "stroke": 0.3,
+            }
         else:
-            jitter_kwargs = {"width": jitter_width, "size": point_size}
+            jitter_kwargs = {
+                "width": jitter_width,
+                "size": point_size,
+                "alpha": 0.65,
+                "stroke": 0.3,
+            }
+
         p = (
-            ggplot(df, aes(x=x_col, y=y_col, color=x_col))
+            ggplot(df, aes(x=x_col, y=y_col, color=x_col, shape=x_col))
             + geom_jitter(**jitter_kwargs)
-            + stat_summary(fun_y=np.mean, geom="point", color="#333333", shape="x", size=4)
+            + stat_summary(
+                fun_y=np.mean,
+                geom="point",
+                color="black",
+                shape="D",
+                size=4,
+                fill="black",
+            )
             + stat_summary(
                 fun_ymin=lambda x: x.mean() - x.sem(),
                 fun_ymax=lambda x: x.mean() + x.sem(),
                 geom="errorbar",
-                color="#333333",
-                size=0.35,
+                color="black",
+                size=0.7,
+                width=0.15,
             )
             + facet_wrap(f"~ {facet_col}")
-            + theme_bw(base_size=base_font_size)
+            + scale_color_manual(values=palette)
+            + scale_shape_manual(values=shape_map)
+            + guides(color=False, shape=False)
+            + theme_classic(base_size=base_font_size)
+            + theme(
+                axis_line=element_line(color="black", size=0.8),
+                axis_ticks=element_line(color="black", size=0.6),
+                strip_background=element_rect(fill="#f0f0f0", color="black", size=0.5),
+                strip_text=element_text(size=base_font_size * 0.85, face="bold"),
+                figure_size=(fig_w, fig_h),
+            )
             + labs(title=title, x=x_label or x_col, y=y_label or y_col)
         )
 
-        if colors is not None:
-            p = p + scale_color_manual(values=colors)
-        else:
-            p = p + scale_color_brewer(type="qual", palette="Set1")
+        # Hide the facet strip entirely when it carries no information.
+        if facet_col == "_Facet":
+            p = p + theme(
+                strip_background=element_blank(),
+                strip_text=element_blank(),
+            )
 
         if x_order is not None or x_labels is not None:
-            limits = x_order  # may be None, scale_x_discrete handles that
+            limits = x_order
             labels = ([x_labels.get(v, v) for v in x_order] if (x_labels and x_order) else None)
             p = p + scale_x_discrete(limits=limits, labels=labels)
 
@@ -786,10 +846,12 @@ class Experiment:
         figsize: tuple[float, float] | None = None,
     ) -> Any:
         """
-        Produce a faceted jitter+box plot of feeding summary metrics grouped by treatment.
+        Produce a publication-quality faceted jitter + mean ± SEM plot of feeding
+        summary metrics grouped by treatment.
 
-        Treatments appear on the x-axis; each facet shows one metric with free y scales.
-        Individual chamber values are overlaid as jittered coloured dots on grey box plots.
+        Treatments appear on the x-axis; each facet shows one metric with free y
+        scales.  Individual chamber values are jittered over the group; a filled
+        diamond marks the group mean and capped error bars show ± 1 SEM.
 
         For chamber_size=1 (8 metrics) the default grid is 3 columns.
         For chamber_size=2 (18 metrics) the default grid is 4 columns.
@@ -800,34 +862,40 @@ class Experiment:
 
         from plotnine import (
             aes,
+            element_blank,
+            element_line,
+            element_rect,
             element_text,
             facet_wrap,
-            geom_boxplot,
             geom_jitter,
             ggplot,
+            guides,
+            scale_color_manual,
+            scale_shape_manual,
+            stat_summary,
             theme,
-            theme_bw,
+            theme_classic,
         )
 
         df = self.feeding_summary(
             range_minutes=range_minutes, transform_licks=transform_licks
         )
         if df.empty:
-            from plotnine import annotate
+            from plotnine import annotate, theme_classic as _tc
             return (
                 ggplot()
                 + annotate("text", x=0, y=0, label="No feeding summary data")
-                + theme_bw()
+                + _tc()
             )
 
         metrics = [(col, lbl) for col, lbl in self._feeding_plot_metrics() if col in df.columns]
 
         if not metrics:
-            from plotnine import annotate
+            from plotnine import annotate, theme_classic as _tc
             return (
                 ggplot()
                 + annotate("text", x=0, y=0, label="No matching columns in feeding summary")
-                + theme_bw()
+                + _tc()
             )
 
         df, group_col = self._resolve_group_col(df)
@@ -854,24 +922,42 @@ class Experiment:
         nrows = math.ceil(len(metrics) / ncols)
 
         if figsize is None:
-            figsize = (ncols * 3.5, nrows * 3.2)
+            figsize = (ncols * 3.5, nrows * 3.5)
+
+        group_levels = sorted(df_long[group_col].unique())
+        _shape_strs = ["o", "s", "D", "^", "v", ">", "<", "p"]
+        shape_map = {g: _shape_strs[i % len(_shape_strs)] for i, g in enumerate(group_levels)}
 
         p = (
-            ggplot(df_long, aes(x=group_col, y="Value"))
-            + geom_boxplot(
-                aes(group=group_col),
-                fill="white",
-                color="#666666",
-                alpha=0.5,
-                outlier_alpha=0,
-                width=0.4,
+            ggplot(df_long, aes(x=group_col, y="Value", color=group_col, shape=group_col))
+            + geom_jitter(width=0.15, size=1.8, alpha=0.65, stroke=0.3)
+            + stat_summary(
+                fun_y=np.mean,
+                geom="point",
+                color="black",
+                shape="D",
+                size=3,
+                fill="black",
             )
-            + geom_jitter(aes(color=group_col), width=0.15, size=2, alpha=0.8)
+            + stat_summary(
+                fun_ymin=lambda x: x.mean() - x.sem(),
+                fun_ymax=lambda x: x.mean() + x.sem(),
+                geom="errorbar",
+                color="black",
+                size=0.6,
+                width=0.15,
+            )
             + facet_wrap("~ Metric", ncol=ncols, scales="free_y")
-            + theme_bw()
+            + scale_color_manual(values=_OKABE_ITO)
+            + scale_shape_manual(values=shape_map)
+            + guides(color=False, shape=False)
+            + theme_classic(base_size=9)
             + theme(
-                axis_text_x=element_text(rotation=30, hjust=1, size=8),
-                strip_text=element_text(size=8),
+                axis_line=element_line(color="black", size=0.6),
+                axis_ticks=element_line(color="black", size=0.5),
+                axis_text_x=element_text(rotation=30, hjust=1),
+                strip_background=element_rect(fill="#f0f0f0", color="black", size=0.5),
+                strip_text=element_text(size=8, face="bold"),
                 legend_position="none",
                 figure_size=figsize,
             )

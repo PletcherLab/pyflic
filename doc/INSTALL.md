@@ -75,6 +75,14 @@ Running `pyflic` on its own prints a summary of available subcommands:
 pyflic
 ```
 
+Verify GUI dependencies (PyQt + plotting backends) by launching each app:
+
+```bash
+pyflic config
+pyflic hub
+pyflic qc /path/to/project
+```
+
 ---
 
 ## Available commands
@@ -90,6 +98,8 @@ pyflic installs a unified CLI (`pyflic`) with subcommands, plus standalone entry
 | `pyflic report <project_dir>` | | Generate a PDF experiment report |
 | `pyflic clear-cache <project_dir>` | | Remove disk-cached feeding summaries |
 | `pyflic version` | | Print the installed version |
+
+The Script Editor is launched from the config editor (`File -> Script Editor`) and does not have a separate CLI command.
 
 Quick start example:
 

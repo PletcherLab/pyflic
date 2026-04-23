@@ -41,8 +41,11 @@ pyflic expects one directory per experiment with the following structure:
 project_dir/
   flic_config.yaml        <-- required; defines experiment structure and parameters
   data/                   <-- DFM CSV files (one per DFM, named by device ID)
-  qc/                     <-- written by pyflic after running QC (do not create manually)
-  analysis/               <-- written by pyflic after running analysis (do not create manually)
+  remove_chambers.csv     <-- optional; named exclusion groups (see Section 4)
+  flic_config_results/    <-- outputs for flic_config.yaml (auto-created)
+    qc/                   <-- QC output (or qc_<start>_<end> for ranged loads)
+    analysis/             <-- analysis output (or analysis_<start>_<end>)
+  my_other_config_results/ <-- outputs for my_other_config.yaml (same pattern)
   .pyflic_cache/          <-- auto-managed disk cache for feeding summaries (safe to delete)
 ```
 
@@ -52,6 +55,8 @@ Data files must live in the `data/` subdirectory and follow one of these naming 
 - **v2 format:** `DFM_{id}.csv` or `DFM_{id}_{segment}.csv`
 
 Multi-segment experiments are stitched together automatically in filename order.
+
+> Output directories are namespaced by config filename stem. For example, loading `my_protocol.yaml` writes to `project_dir/my_protocol_results/`.
 
 ---
 
@@ -279,7 +284,6 @@ dfms:
     chambers:
       1: Paired,WCS           # chamber 1: Paired genotype WCS
       2: Unpaired,WCS         # chamber 2: Unpaired genotype WCS
-    excluded_chambers: [3]     # optional: exclude chamber 3 from analysis
   2:
     params: {}                # no overrides; inherits all global params
     chambers:
@@ -289,7 +293,26 @@ dfms:
 
 - The `params` block accepts the same keys as `global.params` and takes precedence over global defaults for that DFM.
 - The `chambers` block maps chamber index to treatment name (or comma-separated factor levels if `experimental_design_factors` is defined).
-- `excluded_chambers` is an optional list of chamber indices to exclude. This is typically managed via the QC viewer GUI, which writes the exclusion state back to the YAML file automatically.
+- `excluded_chambers` in YAML is deprecated and ignored at load time. Use `remove_chambers.csv` groups instead (below).
+
+### `remove_chambers.csv` (recommended exclusion workflow)
+
+Chamber exclusions are stored in `project_dir/remove_chambers.csv`, not in `flic_config.yaml`.
+
+CSV format:
+
+```csv
+group,dfm_id,chamber,note
+general,1,3,low lick count
+general,2,5,
+Standard Analysis,1,4,noisy signal
+```
+
+- `group` lets you keep multiple exclusion sets in one file.
+- `load_experiment_yaml(..., exclusion_group="general")` applies one group at load.
+- The hub **Remove chambers** button applies group `general`.
+- Script action `remove_chambers` defaults to the script's `name` as the group when `group:` is omitted.
+- QC Viewer can save current exclusions to any named group via **Save removed chambers...**.
 
 ---
 
@@ -387,6 +410,8 @@ For each step, parameter values are resolved in this order:
 | `action:` | Parameters | Experiment type |
 |---|---|---|
 | `load` | `start`, `end`, `parallel` | all |
+| `remove_chambers` | `group` | all |
+| `write_summary` | `start`, `end` | all |
 | `basic_analysis` | `start`, `end` | all |
 | `feeding_csv` | `start`, `end` | all |
 | `binned_csv` | `start`, `end`, `binsize` | all |
@@ -480,11 +505,13 @@ pyflic lint /path/to/project
 
 ### `pyflic report`
 
-Generates a multi-page PDF report at `project_dir/analysis/experiment_report.pdf` containing the experiment summary, a feeding summary table (key metrics only), binned time-course plots for Licks, Events, and MedDuration, and an ANOVA comparison with Tukey HSD posthoc.
+Generates a multi-page PDF report at `project_dir/<config_stem>_results/analysis/experiment_report.pdf` containing the experiment summary, a feeding summary table (key metrics only), binned time-course plots for Licks, Events, and MedDuration, and an ANOVA comparison with Tukey HSD posthoc.
 
 ```bash
 pyflic report /path/to/project
 ```
+
+When using the default config (`flic_config.yaml`), the report is written under `project_dir/flic_config_results/analysis/`.
 
 ### `pyflic clear-cache`
 
@@ -512,20 +539,31 @@ Automatically loads `flic_config.yaml` from the current directory on startup. Sa
 
 ### Analysis Hub (`pyflic hub`)
 
-The primary GUI for running analyses. The hub is organized into three columns:
+The primary GUI for running analyses. The hub is organized as cards (Project, Load, Analyze, Plots, Scripts, Tools):
 
-**Load group:**
-- Load experiment (with time range and parallelism options)
-- Run Script dropdown (when `scripts:` is defined in the config)
-- Edit Config and QC Viewer launcher buttons
+**Project card:**
+- Project folder + config selector (`*.yaml` in the directory)
+- **Run action for every YAML config** toggle (batch mode)
+- **YAML info...** popup summarizing type/chamber size/scripts/exclusions per YAML
 
-**Analyze group -- core:**
+**Load card:**
+- Time range, parallel-load toggle, and bin size
+- **Load experiment**
+- **Remove chambers** (applies `general` group from `remove_chambers.csv`)
+- Launchers for Config Editor and QC Viewer
+
+**Scripts card:**
+- Script dropdown (single-yaml mode) or union of script names (batch mode)
+- **Run Script**
+- **Run All Scripts** (all scripts in the active YAML)
+
+**Analyze card -- core:**
 - Run full basic analysis
 - Write feeding summary CSV
 - Write binned feeding summary CSV
 - Write weighted duration summary (hedonic only)
 
-**Analyze group -- advanced:**
+**Analyze card -- advanced:**
 - **Tidy events CSV** -- one row per bout, long format suitable for downstream tools
 - **Bootstrap CIs** -- prompts for a metric name and iteration count, then writes per-treatment bootstrap confidence intervals
 - **Compare treatments (ANOVA / LMM)** -- prompts for a metric and model type, runs the statistical test, writes results and posthoc tables
@@ -534,12 +572,12 @@ The primary GUI for running analyses. The hub is organized into three columns:
 - **Bout transition matrix** -- A-to-A, A-to-B, B-to-A, B-to-B counts per chamber (two-well only)
 - **Write PDF report** -- generates the full experiment report
 
-**Analyze group -- tools:**
-- **Lint flic_config.yaml** -- validate config schema without leaving the hub
+**Tools card:**
+- **Lint config** -- validate the currently selected YAML without leaving the hub
 - **Compare two configs** -- select a second project directory and compare per-treatment metric means
 - **Clear disk cache** -- remove `.pyflic_cache/` for the current project
 
-**Plots group:**
+**Plots card:**
 - Feeding summary plot
 - Binned time-course with metric/mode selector
 - Dot plot with metric/mode selector
@@ -547,7 +585,7 @@ The primary GUI for running analyses. The hub is organized into three columns:
 - Hedonic feeding plot (hedonic only)
 - Breaking-point plots (progressive ratio only)
 
-All outputs (CSVs, PNGs, PDFs) are written to `project_dir/analysis/`.
+All outputs (CSVs, PNGs, PDFs) are written to `project_dir/<config_stem>_results/analysis[_start_end]/`.
 
 ### QC Viewer (`pyflic qc`)
 
@@ -571,7 +609,7 @@ Interactive dashboard for inspecting QC results and managing chamber exclusions.
 - Sub-tabs: Integrity, Data Breaks, Simultaneous Feeding, Bleeding, Raw Signal, Baselined Signal, Cumulative Licks
 - Per-well exclusion checkboxes (synced with Feeding Summary)
 
-Exclusion checkboxes are persisted to `flic_config.yaml` as `excluded_chambers:` entries under each DFM.
+Exclusions are managed in-memory while reviewing, and can be persisted to `remove_chambers.csv` via **Save removed chambers...** under a named group.
 
 ---
 
@@ -584,10 +622,12 @@ from pyflic import load_experiment_yaml
 
 exp = load_experiment_yaml(
     "/path/to/project_dir",
+    config_name="flic_config.yaml", # select a specific YAML in project_dir
     range_minutes=(0, 0),       # (start, end); (0, 0) = full recording
     parallel=True,              # load DFMs concurrently
     eager=True,                 # pre-compute feeding summary on load (set False to skip)
     use_disk_cache=True,        # read/write .pyflic_cache/ for feeding summaries
+    exclusion_group="general",  # apply one remove_chambers.csv group; None disables file exclusions
 )
 ```
 
@@ -656,7 +696,7 @@ print(exp.summary_text())
 exp.write_summary()
 
 from pyflic import write_experiment_report
-write_experiment_report(exp)    # writes to project_dir/analysis/experiment_report.pdf
+write_experiment_report(exp)    # writes to project_dir/<config_stem>_results/analysis/experiment_report.pdf
 ```
 
 ---
