@@ -111,3 +111,52 @@ dfms:
     4: Ctrl, Female
     5: Ctrl, Female
     6: Ctrl, Female
+
+# ---------------------------------------------------------------------------
+# Scripts
+# ---------------------------------------------------------------------------
+# Each entry is a named recipe run from the Hub's "Run Script" button.
+# Precedence for time window: step.start/end > script.start/end > UI spinboxes.
+# `end: 0` means "through the end of the recording".
+scripts:
+
+  # Quick overview — load, run the basic pipeline, drop a feeding-summary plot.
+  - name: quick_overview
+    steps:
+      - action: load
+      - action: basic_analysis
+      - action: plot_feeding_summary
+
+  # Time-windowed look at the first hour with a couple of binned metrics.
+  # Script-level start/end apply to every step unless the step overrides them.
+  - name: first_hour
+    start: 0
+    end: 60
+    steps:
+      - action: load
+      - action: binned_csv
+        binsize: 10
+      - action: plot_binned
+        metric: PI
+        mode: total
+        binsize: 10
+      - action: plot_binned
+        metric: Licks
+        mode: total
+        binsize: 10
+
+  # Full artefact bundle: basic analysis + tidy events + PDF report.
+  # The PDF step picks its own binsize independent of the UI value.
+  - name: full_report
+    steps:
+      - action: load
+      - action: basic_analysis
+      - action: tidy_export
+        kind: feeding
+      - action: compare
+        metric: MedDuration
+        mode: A
+        model: aov
+      - action: pdf_report
+        metrics: [Licks, Events, MedDuration, PI]
+        binsize: 30

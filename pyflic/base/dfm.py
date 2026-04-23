@@ -254,9 +254,12 @@ class DFM:
     def _calculate_lights(self) -> None:
         raw = self.raw_df
         wcols = [f"W{i}" for i in range(1, 13)]
-        if "OptoCol1" not in raw.columns:
+        # Empty-frame or missing-column fall-through: emit a zero-row/zero-light
+        # frame with the expected schema so downstream code never sees NaN vs
+        # boolean mismatches.
+        if "OptoCol1" not in raw.columns or len(raw) == 0:
             out = pd.DataFrame(0, index=raw.index, columns=wcols)
-            out.insert(0, "Minutes", raw["Minutes"].to_numpy())
+            out.insert(0, "Minutes", raw["Minutes"].to_numpy() if "Minutes" in raw.columns else [])
             out["OptoCol1"] = np.nan
             out["OptoCol2"] = np.nan
             self.lights_df = out
@@ -267,7 +270,10 @@ class DFM:
             if "OptoCol2" in raw.columns
             else np.zeros(len(raw), dtype=int)
         )
-        lights = np.vstack([np.array([(v & (1 << i)) > 0 for i in range(12)], dtype=bool) for v in opto1])
+        # Vectorised bit-unpack — one shot over all rows, no list-comp, no
+        # empty-input vstack hazard.
+        bit_masks = 1 << np.arange(12, dtype=np.int64)
+        lights = (opto1[:, None] & bit_masks) > 0
         out = pd.DataFrame(lights, columns=wcols)
         out.insert(0, "Minutes", raw["Minutes"].to_numpy())
         out["OptoCol1"] = opto1

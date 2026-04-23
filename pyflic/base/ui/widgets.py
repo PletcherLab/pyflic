@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QColor, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QTabWidget,
     QVBoxLayout,
@@ -327,15 +328,20 @@ class PlotDock(QTabWidget):
         if w is not None:
             w.deleteLater()
 
-    def add_figure(self, title: str, figure: Any) -> None:
+    def add_figure(self, title: str, figure: Any, *, interactive: bool = False) -> None:
         """Embed *figure* (a matplotlib ``Figure``) as a new tab.
 
         Plotnine ggplot objects are accepted too — they're drawn first.
-        """
-        # Lazy imports so headless smoke tests don't pull matplotlib
-        # backends until needed.
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 
+        Parameters
+        ----------
+        interactive:
+            When *True*, embeds a live :class:`FigureCanvasQTAgg` with a
+            pan/zoom/save toolbar and (if available) hover tooltips via
+            ``mplcursors``.  When *False* (the default), renders the figure
+            to a static PNG and shows it in a scrollable label — faster to
+            paint and zero memory footprint beyond the image itself.
+        """
         if not hasattr(figure, "savefig") and hasattr(figure, "draw"):
             figure = figure.draw()
 
@@ -343,19 +349,46 @@ class PlotDock(QTabWidget):
         lay = QVBoxLayout(host)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        canvas = FigureCanvasQTAgg(figure)
-        toolbar = NavigationToolbar2QT(canvas, host)
-        lay.addWidget(toolbar)
-        lay.addWidget(canvas, 1)
 
-        # Hover tooltips if mplcursors is available.
-        try:
-            import mplcursors
+        if interactive:
+            # Lazy imports so headless smoke tests don't pull matplotlib
+            # backends until needed.
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 
-            cursor = mplcursors.cursor(figure, hover=True)
-            host._mpl_cursor = cursor  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
-            pass
+            canvas = FigureCanvasQTAgg(figure)
+            toolbar = NavigationToolbar2QT(canvas, host)
+            lay.addWidget(toolbar)
+            lay.addWidget(canvas, 1)
+            try:
+                import mplcursors
+
+                cursor = mplcursors.cursor(figure, hover=True)
+                host._mpl_cursor = cursor  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            import io as _io
+
+            buf = _io.BytesIO()
+            figure.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+            buf.seek(0)
+            pix = QPixmap()
+            pix.loadFromData(buf.getvalue())
+            # Free the matplotlib figure now that we've rasterised it.
+            try:
+                import matplotlib.pyplot as _plt
+
+                _plt.close(figure)
+            except Exception:  # noqa: BLE001
+                pass
+            scroll = QScrollArea(host)
+            scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label = QLabel()
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setPixmap(pix)
+            scroll.setWidget(label)
+            scroll.setWidgetResizable(False)
+            lay.addWidget(scroll, 1)
 
         idx = self.addTab(host, icon("plots", category=Category.PLOTS), title)
         self.setCurrentIndex(idx)

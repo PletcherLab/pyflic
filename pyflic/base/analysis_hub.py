@@ -323,6 +323,16 @@ class AnalysisHubWindow(QMainWindow):
 
         # ── Top bar ───────────────────────────────────────────────────────
         self._top_bar = TopBar("pyflic — Analysis Hub")
+        # Interactive-plot toggle (off by default — static PNG tabs).
+        self._chk_interactive = QCheckBox("Interactive plots")
+        self._chk_interactive.setToolTip(
+            "When checked, plot tabs embed a live matplotlib canvas with "
+            "pan/zoom/save toolbar and hover tooltips. Off: plot tabs show a "
+            "static PNG snapshot (faster, less memory)."
+        )
+        self._chk_interactive.setChecked(False)
+        self._top_bar.add_right(self._chk_interactive)
+
         # Theme toggle (right side)
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(icon("theme_dark" if resolved_mode() == "light" else "theme_light"))
@@ -379,6 +389,11 @@ class AnalysisHubWindow(QMainWindow):
         for k in ("analyze", "plots", "scripts", "tools"):
             self._cards_lay.addWidget(self._cards[k])
         self._cards_lay.addStretch(1)
+
+        # Scripts card is populated now (static); its visibility is managed
+        # later by ``_refresh_script_dropdown``.  Analyze / Plots / Tools are
+        # rebuilt dynamically after meta is known.
+        self._build_card_scripts()
 
         # ── Output / Plot dock ────────────────────────────────────────────
         self._log = OutputLog()
@@ -456,7 +471,7 @@ class AnalysisHubWindow(QMainWindow):
         path_row.addWidget(browse)
         card.add_body(path_row)
 
-        # Config row
+        # Config row — full width now; no other widget competes for space.
         cfg_row = QHBoxLayout()
         cfg_row.addWidget(QLabel("Config:"))
         self._cmb_config = QComboBox()
@@ -468,7 +483,10 @@ class AnalysisHubWindow(QMainWindow):
         )
         self._cmb_config.currentTextChanged.connect(self._on_config_changed)
         cfg_row.addWidget(self._cmb_config, 1)
-        self._chk_all_yamls = QCheckBox("Run for every YAML")
+        card.add_body(cfg_row)
+
+        # Batch-mode toggle on its own row.
+        self._chk_all_yamls = QCheckBox("Run action for every YAML config")
         self._chk_all_yamls.setToolTip(
             "When checked, the next action button you press runs once for every "
             "YAML config in the project directory. Each run writes into its own "
@@ -478,14 +496,19 @@ class AnalysisHubWindow(QMainWindow):
             "with that name (skipping YAMLs that don't define it)."
         )
         self._chk_all_yamls.toggled.connect(self._on_all_yamls_toggled)
-        cfg_row.addWidget(self._chk_all_yamls)
-        card.add_body(cfg_row)
+        card.add_body(self._chk_all_yamls)
 
-        # Status (multi-line label with html chips)
-        self._status = QLabel("No project loaded.")
-        self._status.setWordWrap(True)
-        self._status.setTextFormat(Qt.TextFormat.RichText)
-        card.add_body(self._status)
+        # Status text is stored and revealed in a popup dialog.
+        self._status_html = "No project loaded."
+        info_row = QHBoxLayout()
+        self._btn_yaml_info = ActionButton("YAML info…", category=Category.NEUTRAL,
+                                           icon_name="info")
+        self._btn_yaml_info.setToolTip("Show experiment type, chamber size, and "
+                                       "per-YAML details for this project.")
+        self._btn_yaml_info.clicked.connect(self._show_yaml_info)
+        info_row.addWidget(self._btn_yaml_info)
+        info_row.addStretch(1)
+        card.add_body(info_row)
 
         self._cards["project"] = card
         self._cards_lay.addWidget(card)
@@ -529,33 +552,16 @@ class AnalysisHubWindow(QMainWindow):
 
         card.add_body(opt_form)
 
-        # Action row: Load Experiment + Run Script
+        # Action row: Load Experiment + launchers for companion apps.
         actions = QHBoxLayout()
         btn_load = ActionButton("Load experiment", category=Category.LOAD,
                                 icon_name="load", primary=True)
         btn_load.clicked.connect(self._action_load_experiment)
         actions.addWidget(btn_load)
         self._load_buttons.append(btn_load)
-
-        self._cmb_script = QComboBox()
-        self._cmb_script.setMinimumWidth(80)
-        self._cmb_script.setSizePolicy(QSizePolicy.Policy.Expanding,
-                                       QSizePolicy.Policy.Fixed)
-        self._cmb_script.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
-        )
-        actions.addWidget(self._cmb_script, 1)
-
-        self._btn_run_script = ActionButton("Run Script", category=Category.SCRIPTS,
-                                            icon_name="script")
-        self._btn_run_script.clicked.connect(self._action_run_script)
-        actions.addWidget(self._btn_run_script)
-        self._load_buttons.append(self._btn_run_script)
-        self._cmb_script.setVisible(False)
-        self._btn_run_script.setVisible(False)
+        actions.addStretch(1)
         card.add_body(actions)
 
-        # Hub-launched apps
         actions2 = QHBoxLayout()
         self._btn_config = ActionButton("Edit config…", category=Category.TOOLS,
                                         icon_name="config")
@@ -570,6 +576,49 @@ class AnalysisHubWindow(QMainWindow):
 
         self._cards["load"] = card
         self._cards_lay.addWidget(card)
+
+    def _build_card_scripts(self) -> None:
+        """Populate the Scripts card with a name dropdown + Run button.
+
+        The dropdown + button are hidden until the active YAML (or — in
+        batch mode — any YAML in the project) actually defines a
+        ``scripts:`` section.  ``_refresh_script_dropdown`` manages the
+        visibility; this just creates the widgets.
+        """
+        card = self._cards["scripts"]
+        lay = card.body_layout()
+        self._clear_layout(lay)
+
+        self._script_empty_lbl = QLabel(
+            "No scripts defined in the active YAML. "
+            "Add a <code>scripts:</code> section to your config "
+            "to run multi-step recipes."
+        )
+        self._script_empty_lbl.setWordWrap(True)
+        self._script_empty_lbl.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(self._script_empty_lbl)
+
+        picker_row = QHBoxLayout()
+        picker_row.addWidget(QLabel("Script:"))
+        self._cmb_script = QComboBox()
+        self._cmb_script.setMinimumWidth(80)
+        self._cmb_script.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                       QSizePolicy.Policy.Fixed)
+        self._cmb_script.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        picker_row.addWidget(self._cmb_script, 1)
+        lay.addLayout(picker_row)
+
+        self._btn_run_script = ActionButton("Run Script", category=Category.SCRIPTS,
+                                            icon_name="script", primary=True)
+        self._btn_run_script.clicked.connect(self._action_run_script)
+        lay.addWidget(self._btn_run_script)
+        self._load_buttons.append(self._btn_run_script)
+
+        # Hidden until the active YAML has scripts (or batch mode is on).
+        self._cmb_script.setVisible(False)
+        self._btn_run_script.setVisible(False)
 
     # ------------------------------------------------------------------
     # Dynamic group box rebuilding (Analyze / Plots)
@@ -624,7 +673,7 @@ class AnalysisHubWindow(QMainWindow):
         cfg_name = self._active_config or "flic_config.yaml"
         meta = read_project_meta(p, cfg_name)
         if not meta.get("ok"):
-            self._status.setText(meta.get("error", "Invalid project."))
+            self._status_html = meta.get("error", "Invalid project.")
             self._rebuild_dynamic_groups(None, None)
             return
         et = meta.get("experiment_type")
@@ -641,7 +690,7 @@ class AnalysisHubWindow(QMainWindow):
             parts.append(f"chamber_size: <code>{cs}</code>")
         data_ok = (p / "data").is_dir()
         parts.append("data/: " + ("found" if data_ok else "<span style='color:#a50'>missing</span>"))
-        self._status.setText(" — ".join(parts))
+        self._status_html = " — ".join(parts)
         self._rebuild_dynamic_groups(et or inf, cs)
 
         # Capture the active YAML's scripts (for single-yaml mode), then
@@ -673,6 +722,24 @@ class AnalysisHubWindow(QMainWindow):
         has = bool(names)
         self._cmb_script.setVisible(has)
         self._btn_run_script.setVisible(has)
+        # Empty-state hint lives next to the widgets in the Scripts card.
+        empty_lbl = getattr(self, "_script_empty_lbl", None)
+        if empty_lbl is not None:
+            empty_lbl.setVisible(not has)
+            if has:
+                empty_lbl.setText("")
+            else:
+                if self._chk_all_yamls.isChecked():
+                    empty_lbl.setText(
+                        "No <code>scripts:</code> section found in any YAML "
+                        "in this project."
+                    )
+                else:
+                    empty_lbl.setText(
+                        f"No <code>scripts:</code> section in "
+                        f"<code>{self._active_config}</code>. Add one to the "
+                        f"YAML or switch to another config above."
+                    )
 
     def _rebuild_dynamic_groups(self, exp_type: str | None, chamber_size: int | None) -> None:
         self._data_buttons.clear()
@@ -760,19 +827,6 @@ class AnalysisHubWindow(QMainWindow):
             )
             return cmb
 
-        # Binned
-        binned_row = QHBoxLayout()
-        binned_row.addWidget(QLabel("Binned:"))
-        self._cmb_binned_metric = _shrinky_combo()
-        for label, metric, mode in metrics:
-            self._cmb_binned_metric.addItem(label, userData=(metric, mode))
-        binned_row.addWidget(self._cmb_binned_metric, 1)
-        b_binned = ActionButton("Plot", category=Category.PLOTS, icon_name="binned")
-        b_binned.clicked.connect(self._action_plot_binned)
-        binned_row.addWidget(b_binned)
-        lay.addLayout(binned_row)
-        self._data_buttons.append(b_binned)
-
         # Dot
         dot_row = QHBoxLayout()
         dot_row.addWidget(QLabel("Dot plot:"))
@@ -785,6 +839,19 @@ class AnalysisHubWindow(QMainWindow):
         dot_row.addWidget(b_dot)
         lay.addLayout(dot_row)
         self._data_buttons.append(b_dot)
+
+        # Binned
+        binned_row = QHBoxLayout()
+        binned_row.addWidget(QLabel("Binned:"))
+        self._cmb_binned_metric = _shrinky_combo()
+        for label, metric, mode in metrics:
+            self._cmb_binned_metric.addItem(label, userData=(metric, mode))
+        binned_row.addWidget(self._cmb_binned_metric, 1)
+        b_binned = ActionButton("Plot", category=Category.PLOTS, icon_name="binned")
+        b_binned.clicked.connect(self._action_plot_binned)
+        binned_row.addWidget(b_binned)
+        lay.addLayout(binned_row)
+        self._data_buttons.append(b_binned)
 
         # Well A vs B (two-well only)
         if is_two_well:
@@ -935,7 +1002,9 @@ class AnalysisHubWindow(QMainWindow):
         if figure is None:
             return
         try:
-            self._plot_dock.add_figure(title, figure)
+            self._plot_dock.add_figure(
+                title, figure, interactive=self._chk_interactive.isChecked()
+            )
         except Exception as exc:  # noqa: BLE001
             self._append_log(f"[plot] Failed to embed {title!r}: {exc}")
 
@@ -956,6 +1025,126 @@ class AnalysisHubWindow(QMainWindow):
         if card is None:
             return
         self._scroll.ensureWidgetVisible(card, 0, 8)
+
+    def _show_yaml_info(self) -> None:
+        """Open a pop-out dialog summarising every YAML in the project dir."""
+        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QTextBrowser
+
+        p = self._project_dir()
+        yamls = _list_yaml_configs(p)
+
+        rows: list[str] = []
+        for name in yamls:
+            meta = read_project_meta(p, name)
+            active_marker = (" <span style='color:#2563eb'>(active)</span>"
+                             if name == self._active_config else "")
+            if not meta.get("ok"):
+                rows.append(
+                    f"<li><b>{name}</b>{active_marker} "
+                    f"<span style='color:#c33'>[error: {meta.get('error')}]</span></li>"
+                )
+                continue
+            et = meta.get("experiment_type") or \
+                 (f"<i>(inferred: {meta.get('inferred_type')})</i>"
+                  if meta.get("inferred_type") else "<i>unknown</i>")
+            cs = meta.get("chamber_size")
+
+            details: list[str] = []
+            details.append(f"experiment_type: <code>{et}</code>")
+            if cs is not None:
+                details.append(f"chamber_size: <code>{cs}</code>")
+
+            try:
+                cfg = _read_yaml(p / name)
+            except Exception:  # noqa: BLE001
+                rows.append(
+                    f"<li><b>{name}</b>{active_marker}<br>"
+                    f"{' &middot; '.join(details)}</li>"
+                )
+                continue
+
+            # DFM count + excluded-chamber roll-up.
+            dfms_raw = cfg.get("dfms") or cfg.get("DFMs") or []
+            if isinstance(dfms_raw, dict):
+                dfm_items: list[tuple[Any, dict]] = [
+                    (k, v) for k, v in dfms_raw.items() if isinstance(v, dict)
+                ]
+            elif isinstance(dfms_raw, list):
+                dfm_items = [
+                    (node.get("id", node.get("ID", "?")), node)
+                    for node in dfms_raw if isinstance(node, dict)
+                ]
+            else:
+                dfm_items = []
+            details.append(f"DFMs: {len(dfm_items)}")
+
+            excl_parts: list[str] = []
+            excl_total = 0
+            for dfm_id, node in dfm_items:
+                excluded = node.get("excluded_chambers") or []
+                if excluded:
+                    excl_total += len(excluded)
+                    ids = ", ".join(str(c) for c in excluded)
+                    excl_parts.append(f"DFM {dfm_id}: [{ids}]")
+            if excl_total:
+                details.append(
+                    f"excluded chambers: <code>{excl_total}</code> "
+                    f"({'; '.join(excl_parts)})"
+                )
+            else:
+                details.append("excluded chambers: <i>none</i>")
+
+            # Experimental design factors.
+            global_cfg = cfg.get("global") or {}
+            factors = (global_cfg.get("experimental_design_factors") or {}
+                       if isinstance(global_cfg, dict) else {})
+            if isinstance(factors, dict) and factors:
+                factor_parts = []
+                for fname, levels in factors.items():
+                    if isinstance(levels, list):
+                        factor_parts.append(f"{fname}=[{', '.join(str(x) for x in levels)}]")
+                    else:
+                        factor_parts.append(str(fname))
+                details.append("factors: " + "; ".join(factor_parts))
+            else:
+                details.append("factors: <i>none</i>")
+
+            # Scripts: count and names.
+            scripts = _parse_scripts(cfg)
+            if scripts:
+                names = ", ".join(f"<code>{s.get('name', '(unnamed)')}</code>"
+                                  for s in scripts)
+                details.append(f"scripts ({len(scripts)}): {names}")
+            else:
+                details.append("scripts: <i>none</i>")
+
+            rows.append(
+                f"<li><b>{name}</b>{active_marker}<br>"
+                f"{' &middot; '.join(details)}</li>"
+            )
+
+        list_html = "<ul>" + "".join(rows) + "</ul>" if rows else "<i>No YAML files found.</i>"
+        body = (
+            f"<p><b>Project:</b> <code>{p}</code></p>"
+            f"<h3 style='margin-top:12px;margin-bottom:4px;'>YAML configs</h3>"
+            f"{list_html}"
+        )
+
+        dlg = QDialog(self)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.setWindowTitle("YAML info")
+        dlg.resize(680, 500)
+        lay = QVBoxLayout(dlg)
+        view = QTextBrowser()
+        view.setOpenExternalLinks(False)
+        view.setHtml(body)
+        lay.addWidget(view, 1)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject)
+        btns.accepted.connect(dlg.accept)
+        btns.button(QDialogButtonBox.StandardButton.Close).clicked.connect(dlg.accept)
+        lay.addWidget(btns)
+        dlg.exec()
 
     # ------------------------------------------------------------------
     # Project / experiment helpers
