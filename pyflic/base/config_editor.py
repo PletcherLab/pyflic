@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -43,9 +43,13 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+from .ui import Category, TopBar, apply_theme, icon, resolved_mode
+from .ui import settings as ui_settings
 
 # ---------------------------------------------------------------------------
 # Parameter metadata
@@ -640,24 +644,24 @@ class FLICConfigEditor(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("&File")
 
-        new_act = QAction("&New", self)
+        new_act = QAction(icon("new"), "&New", self)
         new_act.setShortcut("Ctrl+N")
         new_act.triggered.connect(self._new)
         file_menu.addAction(new_act)
 
-        open_act = QAction("&Open…", self)
+        open_act = QAction(icon("open"), "&Open…", self)
         open_act.setShortcut("Ctrl+O")
         open_act.triggered.connect(self._open)
         file_menu.addAction(open_act)
 
         file_menu.addSeparator()
 
-        save_act = QAction("&Save", self)
+        save_act = QAction(icon("save"), "&Save", self)
         save_act.setShortcut("Ctrl+S")
         save_act.triggered.connect(self._save)
         file_menu.addAction(save_act)
 
-        saveas_act = QAction("Save &As…", self)
+        saveas_act = QAction(icon("save_as"), "Save &As…", self)
         saveas_act.setShortcut("Ctrl+Shift+S")
         saveas_act.triggered.connect(self._save_as)
         file_menu.addAction(saveas_act)
@@ -674,8 +678,34 @@ class FLICConfigEditor(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        # Compose a top-bar + splitter shell.
+        central = QWidget()
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._top_bar = TopBar("FLIC Config Editor")
+        self._modified_pill = QLabel("")
+        self._modified_pill.setStyleSheet(
+            "color: #f59e0b; font-weight: 600; padding: 2px 8px;"
+            " border: 1px solid #f59e0b; border-radius: 10px;"
+        )
+        self._modified_pill.setVisible(False)
+        self._top_bar.add_right(self._modified_pill)
+
+        self._btn_theme = QToolButton()
+        self._btn_theme.setIcon(icon("theme_dark" if resolved_mode() == "light" else "theme_light"))
+        self._btn_theme.setIconSize(QSize(18, 18))
+        self._btn_theme.setToolTip("Toggle light / dark theme")
+        self._btn_theme.setAutoRaise(True)
+        self._btn_theme.clicked.connect(self._toggle_theme)
+        self._top_bar.add_right(self._btn_theme)
+
+        outer.addWidget(self._top_bar)
+
         splitter = QSplitter(Qt.Orientation.Vertical)
-        self.setCentralWidget(splitter)
+        outer.addWidget(splitter, 1)
+        self.setCentralWidget(central)
 
         # ---- Top pane ---------------------------------------------------
         top_widget = QWidget()
@@ -1102,6 +1132,18 @@ class FLICConfigEditor(QMainWindow):
         self.setWindowTitle(f"FLIC Config Editor — {self._current_path.name}")
         self._write_yaml(self._current_path)
 
+    def _toggle_theme(self) -> None:
+        from .ui import theme as _theme
+
+        new_mode = "light" if _theme.resolved_mode() == "dark" else "dark"
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, mode=new_mode)
+        ui_settings.set_value("theme", new_mode)
+        self._btn_theme.setIcon(
+            icon("theme_dark" if _theme.resolved_mode() == "light" else "theme_light")
+        )
+
     def _write_yaml(self, path: Path) -> None:
         try:
             cfg = self._collect_yaml()
@@ -1127,6 +1169,7 @@ def launch() -> None:
     the current working directory.
     """
     app = QApplication.instance() or QApplication(sys.argv)
+    apply_theme(app, mode=ui_settings.get("theme", "auto"))
     initial_path = sys.argv[1] if len(sys.argv) > 1 else None
     win = FLICConfigEditor(initial_path=initial_path)
     win.show()

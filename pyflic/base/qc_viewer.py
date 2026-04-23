@@ -39,7 +39,7 @@ import matplotlib
 matplotlib.use("QtAgg")
 
 import matplotlib.image as mpimg
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 
 # ── PyQt — try 6 first, fall back to 5 ─────────────────────────────────────
@@ -140,7 +140,7 @@ def _text_widget(path: Path) -> QtWidgets.QWidget:
 
 
 def _png_widget(path: Path) -> QtWidgets.QWidget:
-    """Embed a PNG as a matplotlib image canvas."""
+    """Embed a PNG as a matplotlib image canvas with pan/zoom toolbar."""
     w = QtWidgets.QWidget()
     layout = QtWidgets.QVBoxLayout(w)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -158,6 +158,8 @@ def _png_widget(path: Path) -> QtWidgets.QWidget:
             QtWidgets.QSizePolicy.Policy.Expanding if _PYQT == 6 else QtWidgets.QSizePolicy.Expanding,  # type: ignore[attr-defined]
             QtWidgets.QSizePolicy.Policy.Expanding if _PYQT == 6 else QtWidgets.QSizePolicy.Expanding,  # type: ignore[attr-defined]
         )
+        toolbar = NavigationToolbar2QT(canvas, w)
+        layout.addWidget(toolbar)
         layout.addWidget(canvas)
     except Exception as exc:
         layout.addWidget(QtWidgets.QLabel(f"Could not render image:\n{exc}"))
@@ -1427,6 +1429,15 @@ def main() -> None:
 
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("FLIC QC Viewer")
+
+    # Apply the shared pyflic theme.
+    try:
+        from .ui import apply_theme
+        from .ui import settings as ui_settings
+
+        apply_theme(app, mode=ui_settings.get("theme", "auto"))
+    except Exception:  # noqa: BLE001
+        pass
 
     win = MainWindow(project_dir, qc_dir=qc_dir)
     win.show()

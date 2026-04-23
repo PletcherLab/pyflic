@@ -15,29 +15,42 @@ from pathlib import Path
 from typing import Any, Callable
 
 import yaml
-from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QObject, QSize, QThread, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+from .ui import (
+    ActionButton,
+    Card,
+    Category,
+    OutputLog,
+    PlotDock,
+    SidebarNav,
+    TopBar,
+    apply_theme,
+    icon,
+    resolved_mode,
+)
+from .ui import settings as ui_settings
 
 # ---------------------------------------------------------------------------
 # Metric definitions for plot controls
@@ -208,56 +221,6 @@ def _resolve_cli(name: str, module: str) -> list[str]:
     return [sys.executable, "-m", module]
 
 
-def _figure_to_bytes(fig_or_gg, *, dpi: int = 100) -> bytes:
-    """Render a matplotlib Figure or plotnine ggplot to PNG bytes."""
-    import io as _io
-
-    import matplotlib.pyplot as _plt
-
-    buf = _io.BytesIO()
-    if hasattr(fig_or_gg, "savefig"):          # matplotlib Figure
-        fig_or_gg.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
-        _plt.close(fig_or_gg)
-    else:                                       # plotnine ggplot
-        mpl_fig = fig_or_gg.draw()
-        mpl_fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
-        _plt.close(mpl_fig)
-    buf.seek(0)
-    return buf.read()
-
-
-
-# ---------------------------------------------------------------------------
-# Plot display window
-# ---------------------------------------------------------------------------
-
-class _PlotWindow(QDialog):
-    """Scrollable window for displaying a rendered plot image."""
-
-    def __init__(self, title: str, png_bytes: bytes, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self.setWindowTitle(title)
-        self.resize(980, 760)
-
-        lay = QVBoxLayout(self)
-
-        scroll = QScrollArea()
-        scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label = QLabel()
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pix = QPixmap()
-        pix.loadFromData(png_bytes)
-        label.setPixmap(pix)
-        scroll.setWidget(label)
-        scroll.setWidgetResizable(False)
-        lay.addWidget(scroll, stretch=1)
-
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.close)
-        lay.addWidget(close_btn)
-
-
 # ---------------------------------------------------------------------------
 # Background worker
 # ---------------------------------------------------------------------------
@@ -287,23 +250,24 @@ class AnalysisWorker(QObject):
 
     Task callables may return one of:
     - ``None``                                      — no figure to display
-    - ``(title: str, png_bytes: bytes)``            — single figure
-    - ``[(title, png_bytes), ...]``                 — multiple figures
+    - ``(title: str, fig: object)``                 — single figure
+    - ``[(title, fig), ...]``                       — multiple figures
+
+    *fig* may be a matplotlib ``Figure`` or a plotnine ``ggplot``.  Plotnine
+    objects are drawn here on the worker thread so the GUI thread receives a
+    ready-to-embed matplotlib ``Figure``.
     """
 
     log = pyqtSignal(str)
     failed = pyqtSignal(str)
     finished = pyqtSignal()
-    figure_ready = pyqtSignal(str, bytes)
+    figure_ready = pyqtSignal(str, object)
 
     def __init__(self, task: Callable[[], Any]) -> None:
         super().__init__()
         self._task = task
 
     def run(self) -> None:
-        import matplotlib
-
-        matplotlib.use("Agg")
         writer = _SignalWriter(self.log)
         result = None
         try:
@@ -316,16 +280,20 @@ class AnalysisWorker(QObject):
             writer.flush()
             self.failed.emit(f"{type(e).__name__}: {e}\n{traceback.format_exc()}")
         finally:
-            # Emit any figures returned by the task.
-            figures: list[tuple[str, bytes]] = []
+            # Normalize result → list of (title, figure_or_ggplot) tuples.
+            # Plotnine ggplot objects are passed through untouched; the GUI
+            # thread calls ``.draw()`` to obtain a matplotlib Figure for
+            # embedding (calling it here would warn about creating a GUI
+            # canvas off the main thread).
+            figures: list[tuple[str, Any]] = []
             if isinstance(result, list):
-                figures = [(str(t), bytes(b)) for t, b in result
-                           if isinstance(b, (bytes, bytearray))]
-            elif (isinstance(result, tuple) and len(result) == 2
-                  and isinstance(result[1], (bytes, bytearray))):
-                figures = [(str(result[0]), bytes(result[1]))]
-            for title, png_bytes in figures:
-                self.figure_ready.emit(title, png_bytes)
+                for item in result:
+                    if isinstance(item, tuple) and len(item) == 2 and item[1] is not None:
+                        figures.append((str(item[0]), item[1]))
+            elif isinstance(result, tuple) and len(result) == 2 and result[1] is not None:
+                figures.append((str(result[0]), result[1]))
+            for title, fig in figures:
+                self.figure_ready.emit(title, fig)
             self.finished.emit()
 
 
@@ -348,33 +316,128 @@ class AnalysisHubWindow(QMainWindow):
         self._exp_loaded: bool = False
         self._load_buttons: list[QPushButton] = []   # always enabled when not busy
         self._data_buttons: list[QPushButton] = []   # enabled only when exp loaded
-        self._plot_windows: list[_PlotWindow] = []
         self._scripts: list[dict] = []
         self._active_config: str = "flic_config.yaml"
+        self._cards: dict[str, Card] = {}
+        self._sidebar_keys: list[str] = []
 
+        # ── Top bar ───────────────────────────────────────────────────────
+        self._top_bar = TopBar("pyflic — Analysis Hub")
+        # Theme toggle (right side)
+        self._btn_theme = QToolButton()
+        self._btn_theme.setIcon(icon("theme_dark" if resolved_mode() == "light" else "theme_light"))
+        self._btn_theme.setIconSize(QSize(18, 18))
+        self._btn_theme.setToolTip("Toggle light / dark theme")
+        self._btn_theme.setAutoRaise(True)
+        self._btn_theme.clicked.connect(self._toggle_theme)
+        self._top_bar.add_right(self._btn_theme)
+
+        # ── Sidebar nav ───────────────────────────────────────────────────
+        self._sidebar = SidebarNav()
+        for key, label, icon_name, cat in [
+            ("project",  "Project",  "project",  Category.NEUTRAL),
+            ("load",     "Load",     "load",     Category.LOAD),
+            ("analyze",  "Analyze",  "basic",    Category.ANALYZE),
+            ("plots",    "Plots",    "plots",    Category.PLOTS),
+            ("scripts",  "Scripts",  "scripts",  Category.SCRIPTS),
+            ("tools",    "Tools",    "tools",    Category.TOOLS),
+        ]:
+            self._sidebar.add_item(key, label, icon_name, category=cat)
+            self._sidebar_keys.append(key)
+        self._sidebar.add_stretch()
+        self._sidebar.itemSelected.connect(self._scroll_to_card)
+
+        # ── Cards (built once; Analyze / Plots get rebuilt on meta refresh)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        cards_host = QWidget()
+        self._cards_lay = QVBoxLayout(cards_host)
+        self._cards_lay.setContentsMargins(16, 12, 16, 12)
+        self._cards_lay.setSpacing(12)
+        self._scroll.setWidget(cards_host)
+
+        self._build_card_project()
+        self._build_card_load()
+        # Analyze, Plots, Scripts, Tools cards are placeholders until meta
+        # refresh populates them with experiment-aware buttons.
+        self._cards["analyze"] = Card("Analyze", category=Category.ANALYZE,
+                                      subtitle="Summaries, CSV exports, statistics",
+                                      icon_name="basic")
+        self._cards["plots"] = Card("Plots", category=Category.PLOTS,
+                                    subtitle="Interactive figures (zoom / pan / hover)",
+                                    icon_name="plot")
+        self._cards["scripts"] = Card("Scripts", category=Category.SCRIPTS,
+                                      subtitle="Multi-step recipes defined in YAML",
+                                      icon_name="scripts")
+        self._cards["tools"] = Card("Tools", category=Category.TOOLS,
+                                    subtitle="Lint, compare configs, clear cache, edit YAML",
+                                    icon_name="tools")
+        for k in ("analyze", "plots", "scripts", "tools"):
+            self._cards_lay.addWidget(self._cards[k])
+        self._cards_lay.addStretch(1)
+
+        # ── Output / Plot dock ────────────────────────────────────────────
+        self._log = OutputLog()
+        self._plot_dock = PlotDock(self._log)
+
+        # ── Compose central widget ────────────────────────────────────────
         root = QWidget()
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._top_bar)
 
-        # ── Project directory row ────────────────────────────────────────
-        proj_row = QHBoxLayout()
-        proj_row.addWidget(QLabel("Project directory:"))
+        body_row = QHBoxLayout()
+        body_row.setContentsMargins(0, 0, 0, 0)
+        body_row.setSpacing(0)
+        body_row.addWidget(self._sidebar)
+        body_row.addWidget(self._scroll, 1)
+        body_widget = QWidget()
+        body_widget.setLayout(body_row)
+        outer.addWidget(body_widget, 3)
+        outer.addWidget(self._plot_dock, 2)
+
+        # ── Final wiring ──────────────────────────────────────────────────
+        self._path_edit.editingFinished.connect(self._refresh_meta)
+        self._spin_start.valueChanged.connect(self._invalidate_exp_cache)
+        self._spin_end.valueChanged.connect(self._invalidate_exp_cache)
+
+        start_dir = self._initial_dir or Path.cwd()
+        self._path_edit.setText(str(start_dir))
+        self._refresh_meta()
+
+    # ------------------------------------------------------------------
+    # Card builders
+    # ------------------------------------------------------------------
+
+    def _build_card_project(self) -> None:
+        card = Card("Project", category=Category.NEUTRAL,
+                    subtitle="Choose the project directory and YAML config.",
+                    icon_name="project")
+
+        # Path row
+        path_row = QHBoxLayout()
+        path_row.addWidget(QLabel("Folder:"))
         self._path_edit = QLineEdit()
         self._path_edit.setPlaceholderText("Select a folder containing a YAML config and data/")
-        proj_row.addWidget(self._path_edit, stretch=1)
-        browse = QPushButton("Browse…")
+        path_row.addWidget(self._path_edit, 1)
+        browse = QToolButton()
+        browse.setIcon(icon("browse"))
+        browse.setToolTip("Browse…")
         browse.clicked.connect(self._browse_project)
-        proj_row.addWidget(browse)
-        outer.addLayout(proj_row)
+        path_row.addWidget(browse)
+        card.add_body(path_row)
 
-        # ── Config file row ──────────────────────────────────────────────
+        # Config row
         cfg_row = QHBoxLayout()
-        cfg_row.addWidget(QLabel("Config file:"))
+        cfg_row.addWidget(QLabel("Config:"))
         self._cmb_config = QComboBox()
-        self._cmb_config.setMinimumWidth(240)
+        self._cmb_config.setMinimumWidth(220)
         self._cmb_config.currentTextChanged.connect(self._on_config_changed)
-        cfg_row.addWidget(self._cmb_config, stretch=1)
-        self._chk_all_yamls = QCheckBox("Run action for every YAML config")
+        cfg_row.addWidget(self._cmb_config, 1)
+        self._chk_all_yamls = QCheckBox("Run for every YAML")
         self._chk_all_yamls.setToolTip(
             "When checked, the next action button you press runs once for every "
             "YAML config in the project directory. Each run writes into its own "
@@ -385,105 +448,86 @@ class AnalysisHubWindow(QMainWindow):
         )
         self._chk_all_yamls.toggled.connect(self._on_all_yamls_toggled)
         cfg_row.addWidget(self._chk_all_yamls)
-        outer.addLayout(cfg_row)
+        card.add_body(cfg_row)
 
-        # ── Status label ─────────────────────────────────────────────────
+        # Status (multi-line label with html chips)
         self._status = QLabel("No project loaded.")
         self._status.setWordWrap(True)
-        outer.addWidget(self._status)
+        self._status.setTextFormat(Qt.TextFormat.RichText)
+        card.add_body(self._status)
 
-        # ── Load options ─────────────────────────────────────────────────
-        opt_box = QGroupBox("Load options")
-        opt_form = QFormLayout(opt_box)
+        self._cards["project"] = card
+        self._cards_lay.addWidget(card)
+
+    def _build_card_load(self) -> None:
+        card = Card("Load", category=Category.LOAD,
+                    subtitle="Load the experiment, set time window, run a script.",
+                    icon_name="load")
+
+        # Load options form
+        opt_form = QFormLayout()
+        opt_form.setHorizontalSpacing(10)
+        opt_form.setVerticalSpacing(6)
 
         self._spin_start = QDoubleSpinBox()
         self._spin_start.setRange(0, 1_000_000)
         self._spin_start.setSpecialValueText("0")
         self._spin_start.setValue(0)
-        opt_form.addRow("Start minute (0 = from beginning):", self._spin_start)
+        opt_form.addRow("Start min (0 = beginning):", self._spin_start)
 
         self._spin_end = QDoubleSpinBox()
         self._spin_end.setRange(0, 1_000_000)
         self._spin_end.setSpecialValueText("0")
         self._spin_end.setValue(0)
-        opt_form.addRow("End minute (0 = through end of recording):", self._spin_end)
+        opt_form.addRow("End min (0 = end of recording):", self._spin_end)
 
         self._chk_parallel = QCheckBox("Load DFMs in parallel")
         self._chk_parallel.setChecked(True)
-        opt_form.addRow(self._chk_parallel)
+        opt_form.addRow("", self._chk_parallel)
 
         self._spin_binsize = QSpinBox()
         self._spin_binsize.setRange(1, 10_000)
         self._spin_binsize.setValue(30)
-        opt_form.addRow("Bin size (minutes):", self._spin_binsize)
+        opt_form.addRow("Bin size (min):", self._spin_binsize)
 
-        outer.addWidget(opt_box)
+        card.add_body(opt_form)
 
-        # ── Three action group boxes ──────────────────────────────────────
-        self._grp_load = QGroupBox("Load")
-        QVBoxLayout(self._grp_load)
-        self._build_grp_load()
-
-        self._grp_analyze = QGroupBox("Analyze")
-        QVBoxLayout(self._grp_analyze)
-
-        self._grp_plots = QGroupBox("Plots")
-        QVBoxLayout(self._grp_plots)
-
-        mid = QHBoxLayout()
-        mid.addWidget(self._grp_load, stretch=1)
-        mid.addWidget(self._grp_analyze, stretch=2)
-        mid.addWidget(self._grp_plots, stretch=2)
-        outer.addLayout(mid)
-
-        # ── Output log ───────────────────────────────────────────────────
-        outer.addWidget(QLabel("Output"))
-        self._log = QPlainTextEdit()
-        self._log.setReadOnly(True)
-        self._log.setMaximumBlockCount(5000)
-        outer.addWidget(self._log, stretch=1)
-
-        self._path_edit.editingFinished.connect(self._refresh_meta)
-        self._spin_start.valueChanged.connect(self._invalidate_exp_cache)
-        self._spin_end.valueChanged.connect(self._invalidate_exp_cache)
-
-        start_dir = self._initial_dir or Path.cwd()
-        self._path_edit.setText(str(start_dir))
-        self._refresh_meta()
-
-    # ------------------------------------------------------------------
-    # Load group box (static)
-    # ------------------------------------------------------------------
-
-    def _build_grp_load(self) -> None:
-        lay = self._grp_load.layout()
-
-        btn_load = QPushButton("Load experiment")
+        # Action row: Load Experiment + Run Script
+        actions = QHBoxLayout()
+        btn_load = ActionButton("Load experiment", category=Category.LOAD,
+                                icon_name="load", primary=True)
         btn_load.clicked.connect(self._action_load_experiment)
-        lay.addWidget(btn_load)
+        actions.addWidget(btn_load)
         self._load_buttons.append(btn_load)
 
-        # Script selector row — shown only when flic_config.yaml has a scripts: section
-        script_row = QHBoxLayout()
         self._cmb_script = QComboBox()
-        self._btn_run_script = QPushButton("Run Script")
+        self._cmb_script.setMinimumWidth(180)
+        actions.addWidget(self._cmb_script, 1)
+
+        self._btn_run_script = ActionButton("Run Script", category=Category.SCRIPTS,
+                                            icon_name="script")
         self._btn_run_script.clicked.connect(self._action_run_script)
-        script_row.addWidget(self._cmb_script, stretch=1)
-        script_row.addWidget(self._btn_run_script)
-        lay.addLayout(script_row)
+        actions.addWidget(self._btn_run_script)
         self._load_buttons.append(self._btn_run_script)
         self._cmb_script.setVisible(False)
         self._btn_run_script.setVisible(False)
+        card.add_body(actions)
 
-        self._btn_config = QPushButton("Edit config (pyflic-config)…")
+        # Hub-launched apps
+        actions2 = QHBoxLayout()
+        self._btn_config = ActionButton("Edit config…", category=Category.TOOLS,
+                                        icon_name="config")
         self._btn_config.clicked.connect(self._launch_config_editor)
-        lay.addWidget(self._btn_config)
-
-        self._btn_qc = QPushButton("QC viewer (pyflic-qc)…")
+        actions2.addWidget(self._btn_config)
+        self._btn_qc = ActionButton("QC viewer…", category=Category.QC,
+                                    icon_name="qc")
         self._btn_qc.clicked.connect(self._launch_qc_viewer)
-        lay.addWidget(self._btn_qc)
+        actions2.addWidget(self._btn_qc)
+        actions2.addStretch(1)
+        card.add_body(actions2)
 
-        lay.addStretch()
+        self._cards["load"] = card
+        self._cards_lay.addWidget(card)
 
     # ------------------------------------------------------------------
     # Dynamic group box rebuilding (Analyze / Plots)
@@ -590,169 +634,128 @@ class AnalysisHubWindow(QMainWindow):
 
     def _rebuild_dynamic_groups(self, exp_type: str | None, chamber_size: int | None) -> None:
         self._data_buttons.clear()
-        # Purge load_buttons that live inside the dynamic groups (they'll be
-        # re-created below).  Keep only buttons whose C++ side is still alive
-        # AND whose parent is NOT the Analyze or Plots group box.
+        # Drop dead/dynamic-card buttons; static buttons (Load, Run Script,
+        # Edit Config, QC viewer) stay in self._load_buttons.
+        analyze_card = self._cards.get("analyze")
+        tools_card = self._cards.get("tools")
         self._load_buttons = [
             b for b in self._load_buttons
-            if not _is_deleted(b) and not _is_child_of(b, self._grp_analyze)
+            if not _is_deleted(b)
+               and not _is_child_of(b, analyze_card)
+               and not _is_child_of(b, tools_card)
         ]
-        self._rebuild_grp_analyze(exp_type, chamber_size)
-        self._rebuild_grp_plots(exp_type, chamber_size)
+        self._rebuild_card_analyze(exp_type, chamber_size)
+        self._rebuild_card_plots(exp_type, chamber_size)
+        self._rebuild_card_tools()
         self._update_data_buttons()
 
-    def _rebuild_grp_analyze(self, exp_type: str | None, chamber_size: int | None) -> None:
-        lay = self._grp_analyze.layout()
+    def _rebuild_card_analyze(self, exp_type: str | None, chamber_size: int | None) -> None:
+        card = self._cards["analyze"]
+        lay = card.body_layout()
         self._clear_layout(lay)
 
-        b = QPushButton("Run full basic analysis")
-        b.clicked.connect(self._action_basic_full)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        b = QPushButton("Write feeding summary CSV")
-        b.clicked.connect(self._action_write_feeding_csv)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        b = QPushButton("Write binned feeding summary CSV")
-        b.clicked.connect(self._action_binned_csv)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        if exp_type == "hedonic":
-            b = QPushButton("Write weighted duration summary")
-            b.clicked.connect(self._action_weighted_duration)
+        def add(text: str, slot, *, icon_name: str = "basic") -> None:
+            b = ActionButton(text, category=Category.ANALYZE, icon_name=icon_name)
+            b.clicked.connect(slot)
             lay.addWidget(b)
             self._data_buttons.append(b)
 
-        # ── Advanced analytics ────────────────────────────────────────────
-        sep = QLabel("— Advanced —")
-        sep.setStyleSheet("color: #888; font-size: 10px;")
-        lay.addWidget(sep)
+        add("Run full basic analysis", self._action_basic_full, icon_name="basic")
+        add("Write feeding summary CSV", self._action_write_feeding_csv, icon_name="csv")
+        add("Write binned feeding summary CSV", self._action_binned_csv, icon_name="binned")
+        if exp_type == "hedonic":
+            add("Write weighted duration summary", self._action_weighted_duration, icon_name="weighted")
 
-        b = QPushButton("Tidy events CSV")
-        b.clicked.connect(self._action_tidy_export)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        b = QPushButton("Bootstrap CIs (metric)…")
-        b.clicked.connect(self._action_bootstrap)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        b = QPushButton("Compare treatments (ANOVA / LMM)…")
-        b.clicked.connect(self._action_compare)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        b = QPushButton("Light-phase summary CSV")
-        b.clicked.connect(self._action_light_phase)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        b = QPushButton("Parameter sensitivity sweep…")
-        b.clicked.connect(self._action_param_sensitivity)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
+        card.add_section_label("— Advanced —")
+        add("Tidy events CSV", self._action_tidy_export, icon_name="tidy")
+        add("Bootstrap CIs (metric)…", self._action_bootstrap, icon_name="bootstrap")
+        add("Compare treatments (ANOVA / LMM)…", self._action_compare, icon_name="compare")
+        add("Light-phase summary CSV", self._action_light_phase, icon_name="lightphase")
+        add("Parameter sensitivity sweep…", self._action_param_sensitivity, icon_name="sensitivity")
         is_two_well = (chamber_size == 2
                        or exp_type in {"two_well", "hedonic", "progressive_ratio"})
         if is_two_well:
-            b = QPushButton("Bout transition matrix")
-            b.clicked.connect(self._action_transition_matrix)
-            lay.addWidget(b)
-            self._data_buttons.append(b)
+            add("Bout transition matrix", self._action_transition_matrix, icon_name="transition")
+        add("Write PDF report", self._action_pdf_report, icon_name="pdf")
 
-        b = QPushButton("Write PDF report")
-        b.clicked.connect(self._action_pdf_report)
-        lay.addWidget(b)
-        self._data_buttons.append(b)
-
-        # ── Tools (config-level, no loaded experiment needed) ────────────
-        sep2 = QLabel("— Tools —")
-        sep2.setStyleSheet("color: #888; font-size: 10px;")
-        lay.addWidget(sep2)
-
-        b_lint = QPushButton("Lint flic_config.yaml")
-        b_lint.clicked.connect(self._action_lint_config)
-        lay.addWidget(b_lint)
-        self._load_buttons.append(b_lint)
-
-        b_diff = QPushButton("Compare two configs…")
-        b_diff.clicked.connect(self._action_compare_configs)
-        lay.addWidget(b_diff)
-        self._load_buttons.append(b_diff)
-
-        b_cache = QPushButton("Clear disk cache")
-        b_cache.clicked.connect(self._action_clear_cache)
-        lay.addWidget(b_cache)
-        self._load_buttons.append(b_cache)
-
-        lay.addStretch()
-
-    def _rebuild_grp_plots(self, exp_type: str | None, chamber_size: int | None) -> None:
-        lay = self._grp_plots.layout()
+    def _rebuild_card_tools(self) -> None:
+        card = self._cards["tools"]
+        lay = card.body_layout()
         self._clear_layout(lay)
 
-        # ── Feeding summary ──────────────────────────────────────────────
-        b = QPushButton("Feeding summary")
+        def add(text: str, slot, *, icon_name: str) -> None:
+            b = ActionButton(text, category=Category.TOOLS, icon_name=icon_name)
+            b.clicked.connect(slot)
+            lay.addWidget(b)
+            self._load_buttons.append(b)
+
+        add("Lint config", self._action_lint_config, icon_name="lint")
+        add("Compare two configs…", self._action_compare_configs, icon_name="compare_cfg")
+        add("Clear disk cache", self._action_clear_cache, icon_name="clear")
+
+    def _rebuild_card_plots(self, exp_type: str | None, chamber_size: int | None) -> None:
+        card = self._cards["plots"]
+        lay = card.body_layout()
+        self._clear_layout(lay)
+
+        # Feeding summary
+        b = ActionButton("Feeding summary", category=Category.PLOTS, icon_name="feeding")
         b.clicked.connect(self._action_plot_feeding_summary)
         lay.addWidget(b)
         self._data_buttons.append(b)
 
-        # ── Binned time-course ───────────────────────────────────────────
         is_two_well = (chamber_size == 2
                        or exp_type in {"two_well", "hedonic", "progressive_ratio"})
         metrics = _TWO_WELL_BINNED if is_two_well else _SINGLE_WELL_BINNED
 
+        # Binned
         binned_row = QHBoxLayout()
         binned_row.addWidget(QLabel("Binned:"))
         self._cmb_binned_metric = QComboBox()
         for label, metric, mode in metrics:
             self._cmb_binned_metric.addItem(label, userData=(metric, mode))
-        binned_row.addWidget(self._cmb_binned_metric, stretch=1)
-        b_binned = QPushButton("Plot")
+        binned_row.addWidget(self._cmb_binned_metric, 1)
+        b_binned = ActionButton("Plot", category=Category.PLOTS, icon_name="binned")
         b_binned.clicked.connect(self._action_plot_binned)
         binned_row.addWidget(b_binned)
         lay.addLayout(binned_row)
         self._data_buttons.append(b_binned)
 
-        # ── Dot plot (same metrics, non-binned) ──────────────────────────
+        # Dot
         dot_row = QHBoxLayout()
         dot_row.addWidget(QLabel("Dot plot:"))
         self._cmb_dot_metric = QComboBox()
         for label, metric, mode in metrics:
             self._cmb_dot_metric.addItem(label, userData=(metric, mode))
-        dot_row.addWidget(self._cmb_dot_metric, stretch=1)
-        b_dot = QPushButton("Plot")
+        dot_row.addWidget(self._cmb_dot_metric, 1)
+        b_dot = ActionButton("Plot", category=Category.PLOTS, icon_name="dot")
         b_dot.clicked.connect(self._action_plot_dot)
         dot_row.addWidget(b_dot)
         lay.addLayout(dot_row)
         self._data_buttons.append(b_dot)
 
-        # ── Well A vs B comparison (two-well only) ───────────────────────
+        # Well A vs B (two-well only)
         if is_two_well:
             cmp_row = QHBoxLayout()
             cmp_row.addWidget(QLabel("Well A vs B:"))
             self._cmb_well_cmp = QComboBox()
             for m in _WELL_CMP_METRICS:
                 self._cmb_well_cmp.addItem(m)
-            cmp_row.addWidget(self._cmb_well_cmp, stretch=1)
-            b_cmp = QPushButton("Plot")
+            cmp_row.addWidget(self._cmb_well_cmp, 1)
+            b_cmp = ActionButton("Plot", category=Category.PLOTS, icon_name="well")
             b_cmp.clicked.connect(self._action_plot_well_cmp)
             cmp_row.addWidget(b_cmp)
             lay.addLayout(cmp_row)
             self._data_buttons.append(b_cmp)
 
-        # ── Hedonic-specific ─────────────────────────────────────────────
+        # Hedonic
         if exp_type == "hedonic":
-            b = QPushButton("Hedonic feeding plot")
+            b = ActionButton("Hedonic feeding plot", category=Category.PLOTS, icon_name="feeding")
             b.clicked.connect(self._action_plot_hedonic)
             lay.addWidget(b)
             self._data_buttons.append(b)
 
-        # ── Progressive-ratio breaking-point ────────────────────────────
+        # Progressive-ratio
         if exp_type == "progressive_ratio":
             pr_row = QHBoxLayout()
             pr_row.addWidget(QLabel("BP config:"))
@@ -761,13 +764,12 @@ class AnalysisHubWindow(QMainWindow):
             self._spin_pr_cfg.setValue(1)
             pr_row.addWidget(self._spin_pr_cfg)
             pr_row.addStretch()
-            b_pr = QPushButton("Breaking-point plots")
+            b_pr = ActionButton("Breaking-point plots", category=Category.PLOTS,
+                                icon_name="plot")
             b_pr.clicked.connect(self._action_plot_pr)
             pr_row.addWidget(b_pr)
             lay.addLayout(pr_row)
             self._data_buttons.append(b_pr)
-
-        lay.addStretch()
 
     # ------------------------------------------------------------------
     # Busy / worker helpers
@@ -875,18 +877,33 @@ class AnalysisHubWindow(QMainWindow):
         QMessageBox.critical(self, "Analysis error", msg[:1200])
 
     def _append_log(self, text: str) -> None:
-        self._log.appendPlainText(text.rstrip())
-        sb = self._log.verticalScrollBar()
-        sb.setValue(sb.maximum())
+        self._log.append_line(text)
 
-    def _show_figure(self, title: str, png_bytes: bytes) -> None:
-        win = _PlotWindow(title, png_bytes, parent=self)
-        win.show()
-        self._plot_windows.append(win)
-        win.finished.connect(
-            lambda: self._plot_windows.remove(win)
-            if win in self._plot_windows else None
+    def _show_figure(self, title: str, figure: Any) -> None:
+        if figure is None:
+            return
+        try:
+            self._plot_dock.add_figure(title, figure)
+        except Exception as exc:  # noqa: BLE001
+            self._append_log(f"[plot] Failed to embed {title!r}: {exc}")
+
+    def _toggle_theme(self) -> None:
+        from .ui import theme as _theme
+
+        new_mode = "light" if _theme.resolved_mode() == "dark" else "dark"
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app, mode=new_mode)
+        ui_settings.set_value("theme", new_mode)
+        self._btn_theme.setIcon(
+            icon("theme_dark" if _theme.resolved_mode() == "light" else "theme_light")
         )
+
+    def _scroll_to_card(self, key: str) -> None:
+        card = self._cards.get(key)
+        if card is None:
+            return
+        self._scroll.ensureWidgetVisible(card, 0, 8)
 
     # ------------------------------------------------------------------
     # Project / experiment helpers
@@ -1104,7 +1121,7 @@ class AnalysisHubWindow(QMainWindow):
             else:
                 fig.savefig(str(out), dpi=150, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
-            return "Feeding Summary", _figure_to_bytes(fig, dpi=100)
+            return "Feeding Summary", fig
 
         self._start_worker(task)
 
@@ -1126,7 +1143,7 @@ class AnalysisHubWindow(QMainWindow):
             out.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(str(out), dpi=150, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
-            return f"Binned: {metric}", _figure_to_bytes(fig, dpi=100)
+            return f"Binned: {metric}", fig
 
         self._start_worker(task)
 
@@ -1149,7 +1166,7 @@ class AnalysisHubWindow(QMainWindow):
             else:
                 fig.savefig(str(out), dpi=150, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
-            return f"Dot: {metric}", _figure_to_bytes(fig, dpi=100)
+            return f"Dot: {metric}", fig
 
         self._start_worker(task)
 
@@ -1171,7 +1188,7 @@ class AnalysisHubWindow(QMainWindow):
             out.parent.mkdir(parents=True, exist_ok=True)
             fig.save(str(out), dpi=150)
             print(f"Wrote: {out}", flush=True)
-            return f"Well A vs B: {metric}", _figure_to_bytes(fig, dpi=100)
+            return f"Well A vs B: {metric}", fig
 
         self._start_worker(task)
 
@@ -1189,7 +1206,7 @@ class AnalysisHubWindow(QMainWindow):
                 )
             fig = exp.hedonic_feeding_plot(save=True, range_minutes=rm)
             print("Wrote hedonic feeding plot.", flush=True)
-            return "Hedonic Feeding Plot", _figure_to_bytes(fig, dpi=100)
+            return "Hedonic Feeding Plot", fig
 
         self._start_worker(task)
 
@@ -1217,7 +1234,7 @@ class AnalysisHubWindow(QMainWindow):
                 print(f"Wrote: {out}", flush=True)
                 results.append((
                     f"Breaking Point — DFM {dfm_id} (config {cfg})",
-                    _figure_to_bytes(fig, dpi=100),
+                    fig,
                 ))
             return results
 
@@ -1661,7 +1678,7 @@ class AnalysisHubWindow(QMainWindow):
                     else:
                         fig.savefig(str(out), dpi=150, bbox_inches="tight")
                     print(f"Wrote: {out}", flush=True)
-                    figures.append(("Feeding Summary", _figure_to_bytes(fig)))
+                    figures.append(("Feeding Summary", fig))
 
                 elif action in ("plot_binned", "plot_dot"):
                     metric = str(step.get("metric", "Licks"))
@@ -1677,7 +1694,7 @@ class AnalysisHubWindow(QMainWindow):
                         out.parent.mkdir(parents=True, exist_ok=True)
                         fig.savefig(str(out), dpi=150, bbox_inches="tight")
                         print(f"Wrote: {out}", flush=True)
-                        figures.append((f"Binned: {metric}", _figure_to_bytes(fig)))
+                        figures.append((f"Binned: {metric}", fig))
                     else:
                         fig = e.plot_dot_metric_by_treatment(
                             metric=metric, two_well_mode=mode, range_minutes=rm
@@ -1690,7 +1707,7 @@ class AnalysisHubWindow(QMainWindow):
                         else:
                             fig.savefig(str(out), dpi=150, bbox_inches="tight")
                         print(f"Wrote: {out}", flush=True)
-                        figures.append((f"Dot: {metric}", _figure_to_bytes(fig)))
+                        figures.append((f"Dot: {metric}", fig))
 
                 elif action == "plot_well_comparison":
                     from pyflic import TwoWellExperiment
@@ -1704,7 +1721,7 @@ class AnalysisHubWindow(QMainWindow):
                     out.parent.mkdir(parents=True, exist_ok=True)
                     fig.save(str(out), dpi=150)
                     print(f"Wrote: {out}", flush=True)
-                    figures.append((f"Well A vs B: {metric}", _figure_to_bytes(fig)))
+                    figures.append((f"Well A vs B: {metric}", fig))
 
                 elif action == "plot_hedonic":
                     from pyflic import HedonicFeedingExperiment
@@ -1714,7 +1731,7 @@ class AnalysisHubWindow(QMainWindow):
                         continue
                     fig = e.hedonic_feeding_plot(save=True, range_minutes=rm)
                     print("Wrote hedonic feeding plot.", flush=True)
-                    figures.append(("Hedonic Feeding Plot", _figure_to_bytes(fig)))
+                    figures.append(("Hedonic Feeding Plot", fig))
 
                 elif action == "plot_breaking_point":
                     from pyflic import ProgressiveRatioExperiment
@@ -1732,7 +1749,7 @@ class AnalysisHubWindow(QMainWindow):
                         print(f"Wrote: {out}", flush=True)
                         figures.append((
                             f"Breaking Point — DFM {dfm_id} (config {cfg_idx})",
-                            _figure_to_bytes(fig),
+                            fig,
                         ))
 
                 elif action == "tidy_export":
@@ -1844,6 +1861,7 @@ class AnalysisHubWindow(QMainWindow):
 def main() -> None:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("pyflic Analysis Hub")
+    apply_theme(app, mode=ui_settings.get("theme", "auto"))
     project_dir = sys.argv[1] if len(sys.argv) > 1 else None
     win = AnalysisHubWindow(project_dir=project_dir)
     win.show()
