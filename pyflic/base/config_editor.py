@@ -628,6 +628,7 @@ class FLICConfigEditor(QMainWindow):
         super().__init__()
         self._current_path: Path | None = None
         self._dfm_widgets: list[DFMWidget] = []
+        self._script_editor_window: Any | None = None
 
         self.setWindowTitle("FLIC Config Editor")
         self.resize(960, 1020)
@@ -665,6 +666,18 @@ class FLICConfigEditor(QMainWindow):
         saveas_act.setShortcut("Ctrl+Shift+S")
         saveas_act.triggered.connect(self._save_as)
         file_menu.addAction(saveas_act)
+
+        file_menu.addSeparator()
+
+        script_act = QAction(icon("scripts", category=Category.SCRIPTS),
+                             "Script &Editor…", self)
+        script_act.setShortcut("Ctrl+E")
+        script_act.setToolTip(
+            "Open a visual editor for the YAML's scripts: section. "
+            "Requires the config to have been saved first."
+        )
+        script_act.triggered.connect(self._open_script_editor)
+        file_menu.addAction(script_act)
 
         file_menu.addSeparator()
 
@@ -1131,6 +1144,38 @@ class FLICConfigEditor(QMainWindow):
         self._current_path = chosen
         self.setWindowTitle(f"FLIC Config Editor — {self._current_path.name}")
         self._write_yaml(self._current_path)
+
+    def _open_script_editor(self) -> None:
+        """Launch the graphical script editor as a non-modal companion window."""
+        if self._current_path is None:
+            QMessageBox.information(
+                self,
+                "Save config first",
+                "The script editor writes to the YAML file on disk. "
+                "Save your config (File → Save or Save As) first, then try "
+                "File → Script Editor again.",
+            )
+            return
+
+        # If a script editor is already open for any path, bring it forward
+        # (and retarget it if the user has since opened a different yaml).
+        existing = self._script_editor_window
+        if existing is not None:
+            try:
+                existing.raise_()
+                existing.activateWindow()
+                return
+            except RuntimeError:
+                # Underlying C++ object has been destroyed — fall through.
+                self._script_editor_window = None
+
+        from .script_editor import ScriptEditorWindow
+
+        win = ScriptEditorWindow(self._current_path, parent=self)
+        win.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        win.destroyed.connect(lambda: setattr(self, "_script_editor_window", None))
+        self._script_editor_window = win
+        win.show()
 
     def _toggle_theme(self) -> None:
         from .ui import theme as _theme
