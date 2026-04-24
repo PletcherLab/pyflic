@@ -513,6 +513,19 @@ class AnalysisHubWindow(QMainWindow):
         info_row.addStretch(1)
         card.add_body(info_row)
 
+        # External tool launchers
+        tools_row = QHBoxLayout()
+        self._btn_config = ActionButton("Edit config…", category=Category.TOOLS,
+                                        icon_name="config")
+        self._btn_config.clicked.connect(self._launch_config_editor)
+        tools_row.addWidget(self._btn_config)
+        self._btn_qc = ActionButton("QC viewer…", category=Category.QC,
+                                    icon_name="qc")
+        self._btn_qc.clicked.connect(self._launch_qc_viewer)
+        tools_row.addWidget(self._btn_qc)
+        tools_row.addStretch(1)
+        card.add_body(tools_row)
+
         self._cards["project"] = card
         self._cards_lay.addWidget(card)
 
@@ -576,18 +589,6 @@ class AnalysisHubWindow(QMainWindow):
 
         actions.addStretch(1)
         card.add_body(actions)
-
-        actions2 = QHBoxLayout()
-        self._btn_config = ActionButton("Edit config…", category=Category.TOOLS,
-                                        icon_name="config")
-        self._btn_config.clicked.connect(self._launch_config_editor)
-        actions2.addWidget(self._btn_config)
-        self._btn_qc = ActionButton("QC viewer…", category=Category.QC,
-                                    icon_name="qc")
-        self._btn_qc.clicked.connect(self._launch_qc_viewer)
-        actions2.addWidget(self._btn_qc)
-        actions2.addStretch(1)
-        card.add_body(actions2)
 
         self._cards["load"] = card
         self._cards_lay.addWidget(card)
@@ -1267,7 +1268,7 @@ class AnalysisHubWindow(QMainWindow):
         """
         p = self._project_dir()
         stem = Path(self._active_config or "flic_config.yaml").stem
-        base = p / stem
+        base = p / f"{stem}_results"
         a, b = self._range_minutes()
         if a == 0.0 and b == 0.0:
             return base / "qc"
@@ -1290,22 +1291,10 @@ class AnalysisHubWindow(QMainWindow):
         if not p.is_dir():
             QMessageBox.warning(self, "Invalid path", "Choose a valid project directory.")
             return
-        qc_dir = self._qc_dir_for_range()
-        if not qc_dir.is_dir():
-            ans = QMessageBox.question(
-                self,
-                "No QC found",
-                f"No QC directory found at:\n{qc_dir}\n\n"
-                "Run 'Run full basic analysis' first to generate QC reports, or "
-                "open the viewer anyway?",
-                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
-            )
-            if ans != QMessageBox.StandardButton.Open:
-                return
         cmd = _resolve_cli("pyflic-qc", "pyflic.base.qc_viewer")
-        cmd = [*cmd, str(p), str(qc_dir)]
+        cmd = [*cmd, str(p), str(self._qc_dir_for_range())]
         try:
-            subprocess.Popen(cmd)  # noqa: S603
+            subprocess.Popen(cmd, cwd=str(p))  # noqa: S603
         except OSError as e:
             QMessageBox.critical(self, "Could not start", str(e))
 

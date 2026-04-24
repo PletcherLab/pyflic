@@ -184,6 +184,7 @@ class ParamsForm(QWidget):
         *,
         override_mode: bool = False,
         chamber_size: int = 2,
+        num_columns: int = 3,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -195,8 +196,9 @@ class ParamsForm(QWidget):
         defaults = _PARAM_DEFAULTS.get(chamber_size, _PARAM_DEFAULTS[2])
 
         n = len(_PARAM_ORDER)
-        s1 = (n + 2) // 3
-        columns = [_PARAM_ORDER[:s1], _PARAM_ORDER[s1 : 2 * s1], _PARAM_ORDER[2 * s1 :]]
+        c = max(1, num_columns)
+        col_size = (n + c - 1) // c
+        columns = [_PARAM_ORDER[i * col_size : (i + 1) * col_size] for i in range(c)]
 
         outer = QHBoxLayout(self)
         outer.setSpacing(20)
@@ -739,6 +741,11 @@ class FLICConfigEditor(QMainWindow):
         top_layout.setSpacing(8)
         top_layout.setContentsMargins(6, 6, 6, 6)
 
+        # Side-by-side row: Experiment Settings (left) + Global Parameters (right)
+        side_row = QHBoxLayout()
+        side_row.setContentsMargins(0, 0, 0, 0)
+        side_row.setSpacing(8)
+
         # Experiment Settings
         exp_card = Card("Experiment Settings", Category.LOAD, icon_name="settings")
         self._exp_form = QFormLayout()
@@ -803,7 +810,7 @@ class FLICConfigEditor(QMainWindow):
         self._exp_form.addRow("Max Events:", self._max_events_edit)
 
         exp_card.add_body(self._exp_form)
-        top_layout.addWidget(exp_card)
+        side_row.addWidget(exp_card, 1)
 
         # Global Parameters
         global_card = Card(
@@ -811,9 +818,11 @@ class FLICConfigEditor(QMainWindow):
             Category.ANALYZE,
             subtitle="Applied to all DFMs unless overridden per-DFM.",
         )
-        self._global_params = ParamsForm(override_mode=False, chamber_size=2)
+        self._global_params = ParamsForm(override_mode=False, chamber_size=2, num_columns=2)
         global_card.add_body(self._global_params)
-        top_layout.addWidget(global_card)
+        side_row.addWidget(global_card, 1)
+
+        top_layout.addLayout(side_row)
 
         # Experimental Design Factors
         factors_card = Card(
@@ -841,7 +850,7 @@ class FLICConfigEditor(QMainWindow):
         dfm_card.add_body(self._dfm_tabs)
         splitter.addWidget(dfm_card)
 
-        splitter.setSizes([440, 580])
+        splitter.setSizes([300, 720])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
 
