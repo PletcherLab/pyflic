@@ -180,15 +180,15 @@ class Card(QFrame):
             ico.setPixmap(icon(icon_name, category=category).pixmap(20, 20))
             title_row.addWidget(ico)
 
-        title_lbl = QLabel(title, self)
-        title_lbl.setObjectName("PyflicCardTitle")
-        title_lbl.setStyleSheet(
+        self._title_lbl = QLabel(title, self)
+        self._title_lbl.setObjectName("PyflicCardTitle")
+        self._title_lbl.setStyleSheet(
             f"QLabel#PyflicCardTitle {{ "
             f"  border-left: 4px solid {category_color(category)};"
             f"  padding-left: 8px;"
             f"}}"
         )
-        title_row.addWidget(title_lbl, 1)
+        title_row.addWidget(self._title_lbl, 1)
 
         outer.addLayout(title_row)
 
@@ -218,6 +218,9 @@ class Card(QFrame):
             self._body.addWidget(widget_or_layout)
         else:
             self._body.addLayout(widget_or_layout)
+
+    def set_title(self, title: str) -> None:
+        self._title_lbl.setText(title)
 
     def add_section_label(self, text: str) -> None:
         lbl = QLabel(text, self)

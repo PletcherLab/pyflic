@@ -28,7 +28,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -48,7 +47,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .ui import Category, TopBar, apply_theme, icon, resolved_mode
+from .ui import ActionButton, Card, Category, TopBar, apply_theme, icon, resolved_mode
 from .ui import settings as ui_settings
 
 # ---------------------------------------------------------------------------
@@ -312,11 +311,11 @@ class FactorsWidget(QWidget):
         btn_layout = QHBoxLayout(btn_row)
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(6)
-        add_btn = QPushButton("+ Factor")
-        add_btn.setMaximumWidth(90)
+        add_btn = ActionButton("Add Factor", Category.LOAD, icon_name="new")
+        add_btn.setMaximumWidth(130)
         add_btn.clicked.connect(self._add_row)
-        remove_btn = QPushButton("− Remove")
-        remove_btn.setMaximumWidth(90)
+        remove_btn = ActionButton("Remove", Category.QC, icon_name="clear")
+        remove_btn.setMaximumWidth(110)
         remove_btn.clicked.connect(self._remove_row)
         btn_layout.addWidget(add_btn)
         btn_layout.addWidget(remove_btn)
@@ -410,41 +409,46 @@ class DFMWidget(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        outer.setSpacing(8)
+        outer.setContentsMargins(8, 8, 8, 8)
 
         # -- DFM ID --------------------------------------------------------
-        id_group = QGroupBox("DFM Identity")
-        id_layout = QHBoxLayout(id_group)
-        id_layout.addWidget(QLabel("DFM ID:"))
+        id_card = Card("DFM Identity", Category.NEUTRAL)
+        id_inner = QHBoxLayout()
+        id_inner.setContentsMargins(0, 0, 0, 0)
+        id_inner.addWidget(QLabel("DFM ID:"))
         self._id_spin = QSpinBox()
         self._id_spin.setRange(1, 99)
         self._id_spin.setValue(dfm_id)
         self._id_spin.setMaximumWidth(80)
-        id_layout.addWidget(self._id_spin)
-        id_layout.addStretch()
-        outer.addWidget(id_group)
+        id_inner.addWidget(self._id_spin)
+        id_inner.addStretch()
+        id_card.add_body(id_inner)
+        outer.addWidget(id_card)
 
         # -- Chamber table -------------------------------------------------
         n_chambers = 12 if chamber_size == 1 else 6
-        self._ch_group = QGroupBox("Chamber → Treatment Assignments")
-        ch_layout = QVBoxLayout(self._ch_group)
+        self._ch_card = Card("Chamber → Treatment Assignments", Category.LOAD)
         self._ch_hint = QLabel(
             "Leave a Treatment cell blank to omit that chamber from the config."
         )
-        self._ch_hint.setStyleSheet("color: gray; font-size: 11px;")
-        ch_layout.addWidget(self._ch_hint)
+        self._ch_hint.setObjectName("PyflicCardSubtitle")
+        self._ch_hint.setWordWrap(True)
+        self._ch_card.add_body(self._ch_hint)
         self._chamber_table = _build_chamber_table(n_chambers)
         self._chamber_table.itemChanged.connect(self._on_chamber_cell_changed)
-        ch_layout.addWidget(self._chamber_table)
-        outer.addWidget(self._ch_group)
+        self._ch_card.add_body(self._chamber_table)
+        outer.addWidget(self._ch_card)
 
         # -- Parameter overrides -------------------------------------------
-        over_group = QGroupBox(
-            "Parameter Overrides  (check a box to override the global value)"
+        over_card = Card(
+            "Parameter Overrides",
+            Category.ANALYZE,
+            subtitle="Check a box to override the global value for this DFM.",
         )
-        over_layout = QVBoxLayout(over_group)
         self._params_form = ParamsForm(override_mode=True, chamber_size=chamber_size)
-        over_layout.addWidget(self._params_form)
-        outer.addWidget(over_group)
+        over_card.add_body(self._params_form)
+        outer.addWidget(over_card)
 
     # ------------------------------------------------------------------
 
@@ -531,13 +535,13 @@ class DFMWidget(QWidget):
 
         if factor_names:
             headers = ["Chamber"] + factor_names
-            self._ch_group.setTitle("Chamber → Factor Level Assignments")
+            self._ch_card.set_title("Chamber → Factor Level Assignments")
             self._ch_hint.setText(
                 f"Enter one level per column in the order: {', '.join(factor_names)}.  Leave blank to omit."
             )
         else:
             headers = ["Chamber", "Treatment"]
-            self._ch_group.setTitle("Chamber → Treatment Assignments")
+            self._ch_card.set_title("Chamber → Treatment Assignments")
             self._ch_hint.setText("Leave a Treatment cell blank to omit that chamber from the config.")
 
         self._chamber_table.setHorizontalHeaderLabels(headers)
@@ -736,8 +740,8 @@ class FLICConfigEditor(QMainWindow):
         top_layout.setContentsMargins(6, 6, 6, 6)
 
         # Experiment Settings
-        exp_group = QGroupBox("Experiment Settings")
-        self._exp_form = QFormLayout(exp_group)
+        exp_card = Card("Experiment Settings", Category.LOAD, icon_name="settings")
+        self._exp_form = QFormLayout()
         self._exp_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._exp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
@@ -776,7 +780,7 @@ class FLICConfigEditor(QMainWindow):
 
         # Auto-filter thresholds (used by auto_remove_chambers)
         filter_header = QLabel("Auto-filter Thresholds  (used by auto_remove_chambers)")
-        filter_header.setStyleSheet("color: gray; font-size: 11px; margin-top: 4px;")
+        filter_header.setObjectName("PyflicSectionDivider")
         self._filter_header_row = self._exp_form.rowCount()
         self._exp_form.addRow(filter_header)
 
@@ -798,30 +802,31 @@ class FLICConfigEditor(QMainWindow):
         self._max_events_row = self._exp_form.rowCount()
         self._exp_form.addRow("Max Events:", self._max_events_edit)
 
-        top_layout.addWidget(exp_group)
+        exp_card.add_body(self._exp_form)
+        top_layout.addWidget(exp_card)
 
         # Global Parameters
-        global_group = QGroupBox("Global Parameters  (applied to all DFMs unless overridden)")
-        global_inner = QVBoxLayout(global_group)
-        global_inner.setContentsMargins(8, 8, 8, 8)
+        global_card = Card(
+            "Global Parameters",
+            Category.ANALYZE,
+            subtitle="Applied to all DFMs unless overridden per-DFM.",
+        )
         self._global_params = ParamsForm(override_mode=False, chamber_size=2)
-        global_inner.addWidget(self._global_params)
-        top_layout.addWidget(global_group)
+        global_card.add_body(self._global_params)
+        top_layout.addWidget(global_card)
 
         # Experimental Design Factors
-        factors_group = QGroupBox("Experimental Design Factors  (optional)")
-        factors_inner = QVBoxLayout(factors_group)
-        factors_inner.setContentsMargins(8, 4, 8, 8)
-        hint = QLabel(
-            "Define factors here. Chamber assignments will use comma-separated level values "
-            "in the same order as the factors listed below. Leave empty for simple treatment names."
+        factors_card = Card(
+            "Experimental Design Factors",
+            Category.TOOLS,
+            subtitle=(
+                "Optional. Define factors so chamber assignments use comma-separated "
+                "level values. Leave empty for simple treatment names."
+            ),
         )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray; font-size: 11px;")
-        factors_inner.addWidget(hint, stretch=1)
         self._factors_widget = FactorsWidget()
-        factors_inner.addWidget(self._factors_widget, stretch=4)
-        top_layout.addWidget(factors_group)
+        factors_card.add_body(self._factors_widget)
+        top_layout.addWidget(factors_card)
 
         # Wire factor table changes → update DFM chamber column headers
         self._factors_widget._table.itemChanged.connect(self._on_factors_changed)
@@ -831,12 +836,10 @@ class FLICConfigEditor(QMainWindow):
         splitter.addWidget(top_widget)
 
         # ---- Bottom pane: DFM Tabs --------------------------------------
-        dfm_group = QGroupBox("DFM Configuration")
-        dfm_group_layout = QVBoxLayout(dfm_group)
-        dfm_group_layout.setContentsMargins(6, 6, 6, 6)
+        dfm_card = Card("DFM Configuration", Category.NEUTRAL)
         self._dfm_tabs = QTabWidget()
-        dfm_group_layout.addWidget(self._dfm_tabs)
-        splitter.addWidget(dfm_group)
+        dfm_card.add_body(self._dfm_tabs)
+        splitter.addWidget(dfm_card)
 
         splitter.setSizes([440, 580])
         splitter.setStretchFactor(0, 0)

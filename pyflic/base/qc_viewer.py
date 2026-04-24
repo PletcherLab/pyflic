@@ -42,25 +42,24 @@ import matplotlib.image as mpimg
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 
-# ── PyQt — try 6 first, fall back to 5 ─────────────────────────────────────
-try:
-    from PyQt6 import QtCore, QtWidgets
-    from PyQt6.QtCore import Qt, pyqtSignal
-    _PYQT = 6
-    _Checked   = Qt.CheckState.Checked
-    _Unchecked = Qt.CheckState.Unchecked
-except ImportError:
-    from PyQt5 import QtCore, QtWidgets          # type: ignore[no-redef]
-    from PyQt5.QtCore import Qt, pyqtSignal      # type: ignore[no-redef]
-    _PYQT = 5
-    _Checked   = Qt.Checked                      # type: ignore[attr-defined]
-    _Unchecked = Qt.Unchecked                    # type: ignore[attr-defined]
+from PyQt6 import QtCore, QtWidgets
+from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtWidgets import QToolButton
+
+_Checked   = Qt.CheckState.Checked
+_Unchecked = Qt.CheckState.Unchecked
 
 import shutil
 import subprocess
 
 import pandas as pd
 import yaml
+
+from .ui import (
+    ActionButton, Card, Category, OutputLog, TopBar,
+    apply_theme, icon, resolved_mode,
+)
+from .ui import settings as ui_settings
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -84,11 +83,7 @@ class _DfTableWidget(QtWidgets.QTableWidget):
 
     def __init__(self, df: pd.DataFrame, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
-            if _PYQT == 6 else
-            QtWidgets.QAbstractItemView.NoEditTriggers  # type: ignore[attr-defined]
-        )
+        self.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self._populate(df)
 
@@ -104,8 +99,6 @@ class _DfTableWidget(QtWidgets.QTableWidget):
                 item = QtWidgets.QTableWidgetItem(text)
                 item.setTextAlignment(
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-                    if _PYQT == 6 else
-                    Qt.AlignRight | Qt.AlignVCenter  # type: ignore[attr-defined]
                 )
                 self.setItem(r, c, item)
         self.resizeColumnsToContents()
@@ -155,8 +148,8 @@ def _png_widget(path: Path) -> QtWidgets.QWidget:
         ax.axis("off")
         canvas = FigureCanvasQTAgg(fig)
         canvas.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding if _PYQT == 6 else QtWidgets.QSizePolicy.Expanding,  # type: ignore[attr-defined]
-            QtWidgets.QSizePolicy.Policy.Expanding if _PYQT == 6 else QtWidgets.QSizePolicy.Expanding,  # type: ignore[attr-defined]
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
         )
         toolbar = NavigationToolbar2QT(canvas, w)
         layout.addWidget(toolbar)
@@ -191,17 +184,9 @@ class _SelectableTableWidget(QtWidgets.QTableWidget):
         super().__init__(parent)
         self._df = df
         self._pre_checked: set[int] = set(pre_checked or [])
-        self.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
-            if _PYQT == 6 else
-            QtWidgets.QAbstractItemView.NoEditTriggers  # type: ignore[attr-defined]
-        )
+        self.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
-        self.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
-            if _PYQT == 6 else
-            QtWidgets.QAbstractItemView.SelectRows  # type: ignore[attr-defined]
-        )
+        self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self._populate()
 
     def _populate(self) -> None:
@@ -210,14 +195,9 @@ class _SelectableTableWidget(QtWidgets.QTableWidget):
         self.setRowCount(len(self._df))
         self.setHorizontalHeaderLabels(cols)
 
-        if _PYQT == 6:
-            _checkable = Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
-            _readonly  = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-            _align_r   = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        else:
-            _checkable = Qt.ItemIsUserCheckable | Qt.ItemIsEnabled           # type: ignore[attr-defined]
-            _readonly  = Qt.ItemIsEnabled | Qt.ItemIsSelectable              # type: ignore[attr-defined]
-            _align_r   = Qt.AlignRight | Qt.AlignVCenter                     # type: ignore[attr-defined]
+        _checkable = Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
+        _readonly  = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        _align_r   = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
 
         self.blockSignals(True)
         for r in range(len(self._df)):
@@ -383,15 +363,21 @@ class LoadTab(QtWidgets.QWidget):
     def _build(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
 
-        # ── Project directory ──────────────────────────────────────────
+        # ── Settings card ─────────────────────────────────────────────
+        settings_card = Card("Load Experiment", Category.LOAD)
         form = QtWidgets.QFormLayout()
-        form.setContentsMargins(0, 0, 0, 8)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setContentsMargins(0, 0, 0, 0)
 
         self._project_edit = QtWidgets.QLineEdit(str(self._project_dir))
-        browse_btn = QtWidgets.QPushButton("Browse…")
+        browse_btn = ActionButton("Browse…", Category.TOOLS, icon_name="browse")
+        browse_btn.setMaximumWidth(110)
         browse_btn.clicked.connect(self._browse_project)
         dir_row = QtWidgets.QHBoxLayout()
+        dir_row.setContentsMargins(0, 0, 0, 0)
         dir_row.addWidget(self._project_edit, stretch=1)
         dir_row.addWidget(browse_btn)
         form.addRow("Project directory:", dir_row)
@@ -417,22 +403,24 @@ class LoadTab(QtWidgets.QWidget):
         self._parallel_cb.setChecked(True)
         form.addRow("", self._parallel_cb)
 
-        root.addLayout(form)
+        settings_card.add_body(form)
+        root.addWidget(settings_card)
 
         # ── Action buttons row ────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setSpacing(6)
 
-        self._load_btn = QtWidgets.QPushButton("Load")
-        self._load_btn.setFixedWidth(120)
+        self._load_btn = ActionButton("Load", Category.LOAD, icon_name="load", primary=True)
+        self._load_btn.setFixedWidth(130)
         self._load_btn.clicked.connect(self._on_load_clicked)
         btn_row.addWidget(self._load_btn)
 
-        edit_cfg_btn = QtWidgets.QPushButton("Edit Config")
+        edit_cfg_btn = ActionButton("Edit Config", Category.TOOLS, icon_name="config")
         edit_cfg_btn.setToolTip("Open flic_config.yaml in the pyflic-config editor")
         edit_cfg_btn.clicked.connect(self._on_edit_config)
         btn_row.addWidget(edit_cfg_btn)
 
-        reload_cfg_btn = QtWidgets.QPushButton("Reload Config")
+        reload_cfg_btn = ActionButton("Reload Config", Category.NEUTRAL, icon_name="open")
         reload_cfg_btn.setToolTip("Re-read flic_config.yaml and show a summary in the log")
         reload_cfg_btn.clicked.connect(self._on_reload_config)
         btn_row.addWidget(reload_cfg_btn)
@@ -448,12 +436,7 @@ class LoadTab(QtWidgets.QWidget):
         root.addWidget(self._progress)
 
         # ── Log window ────────────────────────────────────────────────
-        self._log = QtWidgets.QPlainTextEdit()
-        self._log.setReadOnly(True)
-        font = self._log.font()
-        font.setFamily("Monospace")
-        self._log.setFont(font)
-        self._log.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
+        self._log = OutputLog()
         root.addWidget(self._log, stretch=1)
 
     # ------------------------------------------------------------------
@@ -548,9 +531,7 @@ class LoadTab(QtWidgets.QWidget):
         self._thread.start()
 
     def _append_log(self, text: str) -> None:
-        text = text.rstrip("\n")
-        if text:
-            self._log.appendPlainText(text)
+        self._log.append_line(text)
 
     def _on_finished(self, exp) -> None:
         self._progress.setVisible(False)
@@ -562,7 +543,7 @@ class LoadTab(QtWidgets.QWidget):
         self._progress.setVisible(False)
         self._load_btn.setEnabled(True)
         self._status_label.setText(f"Error: {msg}")
-        self._log.appendPlainText(f"\n[ERROR] {msg}")
+        self._log.append_line(f"\n[ERROR] {msg}")
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -628,22 +609,23 @@ class FeedingSummaryTab(QtWidgets.QWidget):
 
         # Button bar
         btn_bar = QtWidgets.QHBoxLayout()
-        mark_all_btn = QtWidgets.QPushButton("Mark All Excluded")
+        btn_bar.setSpacing(6)
+        mark_all_btn = ActionButton("Mark All Excluded", Category.QC, icon_name="stop")
         mark_all_btn.clicked.connect(lambda: self._set_all_and_sync(True))
-        clear_all_btn = QtWidgets.QPushButton("Clear All")
+        clear_all_btn = ActionButton("Clear All", Category.LOAD, icon_name="new")
         clear_all_btn.clicked.connect(lambda: self._set_all_and_sync(False))
-        auto_filter_btn = QtWidgets.QPushButton("Auto Filter Chambers")
+        auto_filter_btn = ActionButton("Auto Filter", Category.QC, icon_name="qc")
         auto_filter_btn.setToolTip(
             "Apply thresholds from global_constants in flic_config.yaml to automatically "
             "exclude chambers that fail QC criteria."
         )
         auto_filter_btn.clicked.connect(self.auto_filter_requested)
-        criteria_btn = QtWidgets.QPushButton("View Filter Criteria")
+        criteria_btn = ActionButton("View Criteria", Category.TOOLS, icon_name="info")
         criteria_btn.setToolTip("Show the criteria used by the last Auto Filter run.")
         criteria_btn.clicked.connect(self.view_criteria_requested)
-        export_btn = QtWidgets.QPushButton("Export Included to CSV…")
+        export_btn = ActionButton("Export CSV…", Category.ANALYZE, icon_name="csv")
         export_btn.clicked.connect(self._export_included)
-        save_btn = QtWidgets.QPushButton("Save removed chambers…")
+        save_btn = ActionButton("Save Exclusions…", Category.LOAD, icon_name="save")
         save_btn.setToolTip(
             "Save the current exclusion state to remove_chambers.csv under a named group."
         )
@@ -772,9 +754,7 @@ class DfmTab(QtWidgets.QWidget):
         if not integ_csv.exists() and not integ_txt.exists():
             integ_outer.addWidget(QtWidgets.QLabel("No integrity files found."))
         else:
-            splitter = QtWidgets.QSplitter(
-                Qt.Orientation.Vertical if _PYQT == 6 else Qt.Vertical  # type: ignore[attr-defined]
-            )
+            splitter = QtWidgets.QSplitter(Qt.Orientation.Vertical)
             integ_outer.addWidget(splitter)
 
             top = QtWidgets.QWidget()
@@ -824,9 +804,7 @@ class DfmTab(QtWidgets.QWidget):
             bleed_outer.setContentsMargins(8, 8, 8, 8)
             found = False
 
-            splitter = QtWidgets.QSplitter(
-                Qt.Orientation.Vertical if _PYQT == 6 else Qt.Vertical  # type: ignore[attr-defined]
-            )
+            splitter = QtWidgets.QSplitter(Qt.Orientation.Vertical)
 
             if bleed_mat.exists():
                 found = True
@@ -869,12 +847,9 @@ class DfmTab(QtWidgets.QWidget):
         ]:
             tabs.addTab(_png_widget(self._resolve(qc_dir, subdir, suffix)), label)
 
-    def _build_exclusion_panel(self, excluded_wells: list[int]) -> QtWidgets.QGroupBox:
-        panel = QtWidgets.QGroupBox("Exclude Wells")
-        panel.setFixedWidth(140)
-        layout = QtWidgets.QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
+    def _build_exclusion_panel(self, excluded_wells: list[int]) -> Card:
+        panel = Card("Exclude Wells", Category.QC)
+        panel.setFixedWidth(160)
 
         excluded_set = set(excluded_wells)
         for well_num in range(1, 13):
@@ -884,9 +859,9 @@ class DfmTab(QtWidgets.QWidget):
                 lambda checked, w=well_num: self.exclusion_changed.emit(self._dfm_id, w, checked)
             )
             self._checkboxes[well_num] = cb
-            layout.addWidget(cb)
+            panel.add_body(cb)
 
-        layout.addStretch()
+        panel.body_layout().addStretch()
         return panel
 
     # ------------------------------------------------------------------
@@ -940,15 +915,19 @@ class ParamsTab(QtWidgets.QWidget):
     def _build(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
 
-        info = QtWidgets.QLabel(
-            "Adjust parameters and click 'Recompute' to re-run feeding/tasting "
-            "extraction on the loaded DFMs without re-reading CSVs.  Changes do "
-            "NOT modify flic_config.yaml.")
-        info.setWordWrap(True)
-        root.addWidget(info)
-
+        params_card = Card(
+            "Analysis Parameters",
+            Category.ANALYZE,
+            subtitle=(
+                "Adjust parameters and click Recompute to re-run feeding/tasting extraction "
+                "without re-reading CSVs. Changes do NOT modify flic_config.yaml."
+            ),
+        )
         form = QtWidgets.QFormLayout()
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         for name, label, lo, hi, step, default, decimals in self._PARAM_FIELDS:
             sb = QtWidgets.QDoubleSpinBox()
             sb.setRange(float(lo), float(hi))
@@ -957,10 +936,15 @@ class ParamsTab(QtWidgets.QWidget):
             sb.setValue(float(default))
             self._spins[name] = sb
             form.addRow(label + ":", sb)
-        root.addLayout(form)
+        params_card.add_body(form)
+        root.addWidget(params_card)
 
         btn_row = QtWidgets.QHBoxLayout()
-        self._btn_recompute = QtWidgets.QPushButton("Recompute")
+        btn_row.setSpacing(8)
+        self._btn_recompute = ActionButton(
+            "Recompute", Category.ANALYZE, icon_name="basic", primary=True
+        )
+        self._btn_recompute.setFixedWidth(150)
         self._btn_recompute.clicked.connect(self._on_recompute)
         btn_row.addWidget(self._btn_recompute)
         self._status = QtWidgets.QLabel("")
@@ -1027,15 +1011,27 @@ class MainWindow(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         root_layout = QtWidgets.QVBoxLayout(central)
-        root_layout.setContentsMargins(4, 4, 4, 4)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        # ── Top bar ───────────────────────────────────────────────────
+        self._top_bar = TopBar("FLIC QC Viewer")
+        self._btn_theme = QToolButton()
+        self._btn_theme.setIcon(icon("theme_dark" if resolved_mode() == "light" else "theme_light"))
+        self._btn_theme.setIconSize(QSize(18, 18))
+        self._btn_theme.setToolTip("Toggle light / dark theme")
+        self._btn_theme.setAutoRaise(True)
+        self._btn_theme.clicked.connect(self._toggle_theme)
+        self._top_bar.add_right(self._btn_theme)
+        root_layout.addWidget(self._top_bar)
 
         self._tabs = QtWidgets.QTabWidget()
-        root_layout.addWidget(self._tabs)
+        root_layout.addWidget(self._tabs, 1)
 
         # ── Load tab (always first) ───────────────────────────────────
         self._load_tab = LoadTab(project_dir)
         self._load_tab.experiment_loaded.connect(self._on_experiment_loaded)
-        self._tabs.addTab(self._load_tab, "Load")
+        self._tabs.addTab(self._load_tab, icon("load"), "Load")
 
     # ------------------------------------------------------------------
     # After experiment is loaded
@@ -1045,6 +1041,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._exp = exp
         self._project_dir = exp.project_dir
         self.setWindowTitle(f"FLIC QC Viewer  —  {self._project_dir}")
+        self._top_bar.set_title(f"FLIC QC Viewer — {self._project_dir.name}")
 
         # Remove any previously-loaded tabs (keep only Load tab at index 0)
         while self._tabs.count() > 1:
@@ -1077,7 +1074,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._feeding_tab.auto_filter_requested.connect(self._on_auto_filter)
         self._feeding_tab.view_criteria_requested.connect(self._on_view_filter_criteria)
         self._feeding_tab.save_requested.connect(self._on_save_exclusions)
-        self._tabs.addTab(self._feeding_tab, "Feeding Summary")
+        self._tabs.addTab(self._feeding_tab, icon("feeding", category=Category.PLOTS), "Feeding Summary")
 
         # Params tab (live recompute)
         self._params_tab = ParamsTab()
@@ -1086,7 +1083,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if first_dfm is not None:
             self._params_tab.populate_from_params(first_dfm.params)
         self._params_tab.recompute_requested.connect(self._on_params_recompute)
-        self._tabs.addTab(self._params_tab, "Params")
+        self._tabs.addTab(self._params_tab, icon("sensitivity", category=Category.ANALYZE), "Params")
 
         # DFM tabs — convert excluded chamber numbers to well numbers
         if self._initial_qc_dir is not None:
@@ -1109,7 +1106,7 @@ class MainWindow(QtWidgets.QMainWindow):
             tab.exclusion_changed.connect(self._on_dfm_exclusion_changed)
             tab._tabs.currentChanged.connect(self._on_subtab_changed)
             self._dfm_tab_widgets[dfm_id] = tab
-            self._tabs.addTab(tab, f"DFM {dfm_id}")
+            self._tabs.addTab(tab, icon("qc", category=Category.QC), f"DFM {dfm_id}")
 
         self._tabs.currentChanged.connect(self._on_top_tab_changed)
 
@@ -1368,6 +1365,18 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             self.statusBar().showMessage(f"Could not write remove_chambers.csv: {exc}")
 
+    def _toggle_theme(self) -> None:
+        from .ui import theme as _theme
+
+        new_mode = "light" if _theme.resolved_mode() == "dark" else "dark"
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            apply_theme(app, mode=new_mode)
+        ui_settings.set_value("theme", new_mode)
+        self._btn_theme.setIcon(
+            icon("theme_dark" if _theme.resolved_mode() == "light" else "theme_light")
+        )
+
 
 # ───────────────────────────────────────────────────────────────────────────
 # Entry point
@@ -1389,16 +1398,7 @@ def main() -> None:
 
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("FLIC QC Viewer")
-
-    # Apply the shared pyflic theme.
-    try:
-        from .ui import apply_theme
-        from .ui import settings as ui_settings
-
-        apply_theme(app, mode=ui_settings.get("theme", "auto"))
-    except Exception:  # noqa: BLE001
-        pass
-
+    apply_theme(app, mode=ui_settings.get("theme", "auto"))
     win = MainWindow(project_dir, qc_dir=qc_dir)
     win.show()
     sys.exit(app.exec())
