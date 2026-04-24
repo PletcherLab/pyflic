@@ -48,8 +48,8 @@ jobs:
         if: steps.commits.outputs.has_commits == 'true'
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: '--max-turns 30 --model claude-opus-4-7'
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--max-turns 60 --model claude-sonnet-4-6'
           prompt: |
             You are updating this repository's documentation in the "docs" directory based on yesterday's commits to the main branch.
 
