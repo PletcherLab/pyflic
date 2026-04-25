@@ -530,7 +530,7 @@ pyflic clear-cache /path/to/project
 Creates and edits `flic_config.yaml` without hand-editing YAML. The editor provides:
 
 - **Experiment settings** -- chamber size, experiment type, well names
-- **Global parameters** -- all detection parameters with labeled fields
+- **Global parameters** -- all detection parameters with labeled fields, displayed side-by-side with Experiment Settings
 - **Experimental design factors** -- define factorial designs with factor names and levels
 - **Per-DFM tabs** -- parameter overrides, chamber-to-treatment assignments, chamber exclusions
 - **Constants** -- QC cutoff values
@@ -545,12 +545,13 @@ The primary GUI for running analyses. The hub is organized as cards (Project, Lo
 - Project folder + config selector (`*.yaml` in the directory)
 - **Run action for every YAML config** toggle (batch mode)
 - **YAML info...** popup summarizing type/chamber size/scripts/exclusions per YAML
+- **Edit config…** -- launch the Config Editor for the active YAML
+- **QC viewer…** -- open the QC Viewer for the current project
 
 **Load card:**
 - Time range, parallel-load toggle, and bin size
 - **Load experiment**
 - **Remove chambers** (applies `general` group from `remove_chambers.csv`)
-- Launchers for Config Editor and QC Viewer
 
 **Scripts card:**
 - Script dropdown (single-yaml mode) or union of script names (batch mode)
@@ -589,7 +590,7 @@ All outputs (CSVs, PNGs, PDFs) are written to `project_dir/<config_stem>_results
 
 ### QC Viewer (`pyflic qc`)
 
-Interactive dashboard for inspecting QC results and managing chamber exclusions.
+Interactive dashboard for inspecting QC results and managing chamber exclusions. A **theme toggle** button in the top bar switches between light and dark mode.
 
 **Load tab:**
 - Project directory, time range, and parallelism options
@@ -600,14 +601,14 @@ Interactive dashboard for inspecting QC results and managing chamber exclusions.
 - Exclusion checkboxes per chamber (bidirectionally synced with DFM tabs)
 - Auto-filter button (applies `constants`-based cutoffs)
 
+**DFM tabs** (one per loaded DFM):
+- Sub-tabs: Integrity, Data Breaks, Simultaneous Feeding, Bleeding, Raw Signal, Baselined Signal, Cumulative Licks
+- Per-well exclusion checkboxes (synced with Feeding Summary)
+
 **Params tab (live recompute):**
 - Spinboxes for `baseline_window_minutes`, `feeding_threshold`, `feeding_minimum`, `tasting_minimum`, `tasting_maximum`, `feeding_event_link_gap`, and `feeding_minevents`
 - **Recompute** button that re-runs the feeding/tasting detection pipeline on all loaded DFMs without re-reading data files, then refreshes the Feeding Summary tab
 - Changes are *not* written to `flic_config.yaml` -- this is for interactive exploration only
-
-**DFM tabs** (one per loaded DFM):
-- Sub-tabs: Integrity, Data Breaks, Simultaneous Feeding, Bleeding, Raw Signal, Baselined Signal, Cumulative Licks
-- Per-well exclusion checkboxes (synced with Feeding Summary)
 
 Exclusions are managed in-memory while reviewing, and can be persisted to `remove_chambers.csv` via **Save removed chambers...** under a named group.
 
@@ -678,7 +679,7 @@ binned = exp.binned_feeding_summary(binsize_min=30)
 
 ```python
 fig = exp.plot_feeding_summary()
-fig = exp.plot_binned_metric_by_treatment(metric="Licks", binsize_min=30)
+p = exp.plot_binned_metric_by_treatment(metric="Licks", binsize_min=30)
 fig = exp.plot_dot_metric_by_treatment(metric="MedDuration")
 fig = exp.plot_cumulative_licks_chamber(dfm_id=1, chamber=1)
 ```
