@@ -48,6 +48,7 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     "compare_cfg":("fa5s.exchange-alt",        Category.TOOLS),
     "clear":      ("fa5s.trash-alt",           Category.TOOLS),
     "config":     ("fa5s.sliders-h",           Category.TOOLS),
+    "reload":     ("fa5s.sync-alt",            Category.TOOLS),
     # File menu
     "open":       ("fa5s.folder-open",         Category.NEUTRAL),
     "save":       ("fa5s.save",                Category.LOAD),

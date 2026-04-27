@@ -510,6 +510,10 @@ class AnalysisHubWindow(QMainWindow):
                                        "per-YAML details for this project.")
         self._btn_yaml_info.clicked.connect(self._show_yaml_info)
         info_row.addWidget(self._btn_yaml_info)
+        self._btn_qc = ActionButton("QC viewer…", category=Category.QC,
+                                    icon_name="qc")
+        self._btn_qc.clicked.connect(self._launch_qc_viewer)
+        info_row.addWidget(self._btn_qc)
         info_row.addStretch(1)
         card.add_body(info_row)
 
@@ -519,10 +523,14 @@ class AnalysisHubWindow(QMainWindow):
                                         icon_name="config")
         self._btn_config.clicked.connect(self._launch_config_editor)
         tools_row.addWidget(self._btn_config)
-        self._btn_qc = ActionButton("QC viewer…", category=Category.QC,
-                                    icon_name="qc")
-        self._btn_qc.clicked.connect(self._launch_qc_viewer)
-        tools_row.addWidget(self._btn_qc)
+        self._btn_reload = ActionButton("Reload config", category=Category.TOOLS,
+                                        icon_name="reload")
+        self._btn_reload.setToolTip(
+            "Drop the cached experiment and re-read project metadata so the "
+            "next action picks up edits made to the YAML."
+        )
+        self._btn_reload.clicked.connect(self._action_reload_config)
+        tools_row.addWidget(self._btn_reload)
         tools_row.addStretch(1)
         card.add_body(tools_row)
 
@@ -1240,6 +1248,20 @@ class AnalysisHubWindow(QMainWindow):
         self._spin_end.setValue(end)
         self._spin_start.blockSignals(False)
         self._spin_end.blockSignals(False)
+
+    def _action_reload_config(self) -> None:
+        """Drop the cached experiment and re-read project metadata.
+
+        Called after the user edits the YAML externally (e.g. via the config
+        editor subprocess) so that the next analysis action sees the updated
+        config without changing project / range / parallel selections.
+        """
+        p = self._project_dir()
+        if not p.is_dir():
+            QMessageBox.warning(self, "Invalid path", "Choose a valid project directory.")
+            return
+        self._refresh_meta()
+        print(f"Reloaded config: {self._active_config}", flush=True)
 
     def _launch_config_editor(self) -> None:
         p = self._project_dir()
