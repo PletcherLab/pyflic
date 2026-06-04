@@ -784,6 +784,67 @@ class DFM:
             parts.append(summ)
         return pd.concat(parts, ignore_index=True)
 
+    def moving_window_feeding_summary(
+        self,
+        *,
+        window_min: float = 60.0,
+        step_min: float = 30.0,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Full feeding-summary metrics computed over a sliding window.
+
+        Identical in column layout to :meth:`binned_feeding_summary`, but the
+        timeline is swept with a window *window_min* minutes wide advanced in
+        *step_min* increments, so successive windows may overlap.  Each window
+        spans ``(a, a + window_min]`` and is labelled by its right edge
+        (``a + window_min``) in the ``Minutes`` column — matching the
+        convention used by :meth:`moving_median_duration`.
+
+        Because every metric is produced by the same per-window
+        :meth:`feeding_summary` call, downstream code can extract any feeding
+        metric (Licks, PI, MedDuration, intervals, …) for a moving-window plot
+        exactly as it does for binned plots.
+
+        Parameters
+        ----------
+        window_min:
+            Width of the moving window in minutes (default 60.0).
+        step_min:
+            Distance the window advances each step, in minutes (default 30.0).
+        range_minutes:
+            ``(start, end)`` window the sweep is bounded to.  ``(0, 0)`` (the
+            default) sweeps from 0 to the end of this DFM's recording.
+        transform_licks:
+            Apply the fourth-root lick transform (see :meth:`feeding_summary`).
+        """
+        if window_min <= 0:
+            raise ValueError("window_min must be positive.")
+        if step_min <= 0:
+            raise ValueError("step_min must be positive.")
+        if range_is_specified(range_minutes):
+            m_min, m_max = float(range_minutes[0]), float(range_minutes[1])
+        else:
+            m_min, m_max = 0.0, float(self.raw_df["Minutes"].max())
+        if m_min >= m_max:
+            raise ValueError(f"range start ({m_min}) must be less than end ({m_max}).")
+
+        starts = np.arange(m_min, m_max, step_min, dtype=float)
+        if starts.size == 0:
+            starts = np.array([m_min], dtype=float)
+
+        parts: list[pd.DataFrame] = []
+        for a in starts:
+            b = a + float(window_min)
+            summ = self.feeding_summary(
+                range_minutes=(float(a), float(b)), transform_licks=transform_licks
+            )
+            summ.insert(0, "Minutes", float(b))  # label by the window's right edge
+            summ.insert(0, "Interval", f"({a:g},{b:g}]")
+            parts.append(summ)
+        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
     def interval_data(self, *, range_minutes: Sequence[float] = (0, 0)) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         for well in range(1, 13):

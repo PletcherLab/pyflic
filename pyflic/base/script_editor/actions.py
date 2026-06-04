@@ -352,6 +352,26 @@ ACTIONS: list[Action] = [
         ],
     ),
     Action(
+        action="plot_moving_window",
+        label="Moving window metric (treatments)",
+        blurb="Treatment mean ± SEM of any feeding metric over a sliding window.",
+        icon="plot", category=Category.PLOTS, produces="figure",
+        params=[
+            Param(key="metric", label="Metric", type="metric",
+                  note="Which metric to plot.",
+                  default="MedDuration", required=True),
+            Param(key="mode", label="Mode", type="choice",
+                  choices=["total", "A", "B", "mean_ab"],
+                  note="Which well/aggregation.",
+                  default=None, derived_from="metric"),
+            _MM_WINDOW, _MM_STEP, _START, _END,
+        ],
+        notes="The moving-window counterpart to the binned plot: the same "
+              "metric set, but values are computed over overlapping windows "
+              "(see 'window'/'step') rather than disjoint bins, giving a "
+              "smoother time course. Per-treatment mean ± SEM across chambers.",
+    ),
+    Action(
         action="plot_moving_median_chambers",
         label="Moving median duration (chambers)",
         blurb="Time-dependent median bout duration, one line per chamber, by treatment.",

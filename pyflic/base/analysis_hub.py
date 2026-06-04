@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 import yaml
-from PyQt6.QtCore import QObject, QSize, QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QSize, QThread, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -265,6 +266,29 @@ class _SignalWriter:
             self._buf = ""
 
 
+class _WheelToScroll(QObject):
+    """Event filter that redirects wheel events to a scroll area.
+
+    Closed combo boxes and spin boxes accept the mouse wheel by default and
+    change their value on scroll, which makes scrolling a tall control panel
+    jump values under the cursor.  Installed on those widgets, this filter
+    forwards their wheel events to the scroll area's vertical scrollbar and
+    swallows them at the widget, so the wheel always scrolls the panel no
+    matter where the cursor sits.  An open combo-box popup is a separate
+    top-level widget and is not affected, so list scrolling still works.
+    """
+
+    def __init__(self, scroll_area: QScrollArea) -> None:
+        super().__init__(scroll_area)
+        self._scroll = scroll_area
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Wheel:
+            QApplication.sendEvent(self._scroll.verticalScrollBar(), event)
+            return True
+        return False
+
+
 class AnalysisWorker(QObject):
     """Runs a callable in a worker thread; streams stdout/stderr to the log.
 
@@ -387,6 +411,9 @@ class AnalysisHubWindow(QMainWindow):
         # than the column.  Show a horizontal scrollbar only if some control
         # genuinely overflows, so nothing is clipped out of reach.
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Redirect wheel events from combo boxes / spin boxes to the panel so
+        # the wheel always scrolls instead of changing the hovered control.
+        self._wheel_guard = _WheelToScroll(self._scroll)
         cards_host = QWidget()
         cards_host.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self._cards_lay = QVBoxLayout(cards_host)
@@ -418,6 +445,7 @@ class AnalysisHubWindow(QMainWindow):
         # later by ``_refresh_script_dropdown``.  Analyze / Plots / Tools are
         # rebuilt dynamically after meta is known.
         self._build_card_scripts()
+        self._install_wheel_guards()
 
         # ── Output / Plot dock ────────────────────────────────────────────
         self._log = OutputLog()
@@ -925,6 +953,18 @@ class AnalysisHubWindow(QMainWindow):
         self._rebuild_card_plots(exp_type, chamber_size)
         self._rebuild_card_tools()
         self._update_data_buttons()
+        self._install_wheel_guards()
+
+    def _install_wheel_guards(self) -> None:
+        """Install the wheel-redirect filter on every combo box / spin box in
+        the scrollable panel.
+
+        Idempotent — Qt ignores a filter that is already installed — so it is
+        safe to call after each dynamic card rebuild to cover freshly created
+        controls.
+        """
+        for w in self._scroll.findChildren((QComboBox, QAbstractSpinBox)):
+            w.installEventFilter(self._wheel_guard)
 
     def _rebuild_card_analyze(self, exp_type: str | None, chamber_size: int | None) -> None:
         card = self._cards["analyze"]
@@ -1013,6 +1053,20 @@ class AnalysisHubWindow(QMainWindow):
         lay.addLayout(dot_row)
         self._data_buttons.append(b_dot)
 
+        # Well A vs B (two-well only) — sits directly under the dot row.
+        if is_two_well:
+            cmp_row = QHBoxLayout()
+            cmp_row.addWidget(QLabel("Well A vs B:"))
+            self._cmb_well_cmp = _shrinky_combo()
+            for m in _WELL_CMP_METRICS:
+                self._cmb_well_cmp.addItem(m)
+            cmp_row.addWidget(self._cmb_well_cmp, 1)
+            b_cmp = ActionButton("Plot", category=Category.PLOTS, icon_name="well")
+            b_cmp.clicked.connect(self._action_plot_well_cmp)
+            cmp_row.addWidget(b_cmp)
+            lay.addLayout(cmp_row)
+            self._data_buttons.append(b_cmp)
+
         # Binned
         binned_row = QHBoxLayout()
         binned_row.addWidget(QLabel("Binned:"))
@@ -1026,11 +1080,13 @@ class AnalysisHubWindow(QMainWindow):
         lay.addLayout(binned_row)
         self._data_buttons.append(b_binned)
 
-        # Moving median bout duration (sliding window) — optional, non-standard.
-        # Every row is built from shrinkable widgets (short labels, expanding
-        # spinboxes, single-button rows) so the controls can always collapse to
-        # the column width instead of forcing the left panel wider.
-        card.add_section_label("— Moving median —")
+        # Moving-window metric (sliding window) — optional, non-standard.
+        # Mirrors the binned row: pick any feeding metric and plot its
+        # treatment mean ± SEM over an overlapping sliding window.  Every row is
+        # built from shrinkable widgets (short labels, expanding spinboxes,
+        # single-button rows) so the controls can always collapse to the column
+        # width instead of forcing the left panel wider.
+        card.add_section_label("— Moving window —")
 
         def _flex_spin(value: float, tip: str) -> QDoubleSpinBox:
             sp = QDoubleSpinBox()
@@ -1051,42 +1107,22 @@ class AnalysisHubWindow(QMainWindow):
         mm_ctrl.addWidget(self._spin_mm_step, 1)
         lay.addLayout(mm_ctrl)
 
-        if is_two_well:
-            mm_mode_row = QHBoxLayout()
-            mm_mode_row.addWidget(QLabel("Wells:"))
-            self._cmb_mm_mode = _shrinky_combo()
-            self._cmb_mm_mode.addItem("Mean A/B", userData="mean_ab")
-            self._cmb_mm_mode.addItem("Well A", userData="A")
-            self._cmb_mm_mode.addItem("Well B", userData="B")
-            mm_mode_row.addWidget(self._cmb_mm_mode, 1)
-            lay.addLayout(mm_mode_row)
-        else:
-            self._cmb_mm_mode = None
-
-        b_mm_ch = ActionButton("MedDuration by chamber", category=Category.PLOTS, icon_name="binned")
-        b_mm_ch.setToolTip("Median bout duration over a sliding window, one line per chamber, coloured by treatment.")
-        b_mm_ch.clicked.connect(self._action_plot_moving_median_chambers)
-        lay.addWidget(b_mm_ch)
-        b_mm_tr = ActionButton("MedDuration by treatment", category=Category.PLOTS, icon_name="plot")
-        b_mm_tr.setToolTip("Treatment mean ± SEM of the sliding-window median bout duration.")
-        b_mm_tr.clicked.connect(self._action_plot_moving_median_treatment)
-        lay.addWidget(b_mm_tr)
-        self._data_buttons.append(b_mm_ch)
+        mm_row = QHBoxLayout()
+        mm_row.addWidget(QLabel("Moving:"))
+        self._cmb_mm_metric = _shrinky_combo()
+        for label, metric, mode in metrics:
+            self._cmb_mm_metric.addItem(label, userData=(metric, mode))
+        mm_row.addWidget(self._cmb_mm_metric, 1)
+        b_mm_tr = ActionButton("Plot", category=Category.PLOTS, icon_name="plot")
+        b_mm_tr.setToolTip("Treatment mean ± SEM of the chosen metric over a sliding window.")
+        b_mm_tr.clicked.connect(self._action_plot_moving_window)
+        mm_row.addWidget(b_mm_tr)
+        lay.addLayout(mm_row)
         self._data_buttons.append(b_mm_tr)
 
-        # Well A vs B (two-well only)
-        if is_two_well:
-            cmp_row = QHBoxLayout()
-            cmp_row.addWidget(QLabel("Well A vs B:"))
-            self._cmb_well_cmp = _shrinky_combo()
-            for m in _WELL_CMP_METRICS:
-                self._cmb_well_cmp.addItem(m)
-            cmp_row.addWidget(self._cmb_well_cmp, 1)
-            b_cmp = ActionButton("Plot", category=Category.PLOTS, icon_name="well")
-            b_cmp.clicked.connect(self._action_plot_well_cmp)
-            cmp_row.addWidget(b_cmp)
-            lay.addLayout(cmp_row)
-            self._data_buttons.append(b_cmp)
+        # Closing rule so the moving-window block reads as its own group,
+        # matching the dim section-label styling used for its header.
+        card.add_section_label("─" * 24)
 
         # Hedonic
         if exp_type == "hedonic":
@@ -1688,58 +1724,30 @@ class AnalysisHubWindow(QMainWindow):
 
         self._start_worker(task)
 
-    def _mm_params(self) -> tuple[float, float, str]:
-        """Return (window_min, step_min, two_well_mode) from the moving-median controls."""
+    def _action_plot_moving_window(self) -> None:
+        rm = self._range_minutes()
         win = float(self._spin_mm_window.value())
         step = float(self._spin_mm_step.value())
-        mode = "mean_ab"
-        if getattr(self, "_cmb_mm_mode", None) is not None:
-            mode = str(self._cmb_mm_mode.currentData())
-        return win, step, mode
-
-    def _action_plot_moving_median_chambers(self) -> None:
-        rm = self._range_minutes()
-        win, step, mode = self._mm_params()
+        metric, mode = self._cmb_mm_metric.currentData()
 
         def task() -> tuple[str, Any]:
             exp = self._load_exp()
-            fig = exp.plot_moving_median_duration_by_chamber(
+            fig = exp.plot_moving_window_metric_by_treatment(
+                metric=metric,
+                two_well_mode=mode,
                 window_min=win,
                 step_min=step,
-                two_well_mode=mode,
                 range_minutes=rm,
             )
-            out = exp.analysis_dir / "moving_median_duration_chambers.png"
+            safe = metric.replace("/", "_")
+            out = exp.analysis_dir / f"moving_window_{safe}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
             if hasattr(fig, "save"):
                 fig.save(str(out), dpi=300)
             else:
                 fig.savefig(str(out), dpi=300, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
-            return "Moving MedDuration: chambers", fig
-
-        self._start_worker(task)
-
-    def _action_plot_moving_median_treatment(self) -> None:
-        rm = self._range_minutes()
-        win, step, mode = self._mm_params()
-
-        def task() -> tuple[str, Any]:
-            exp = self._load_exp()
-            fig = exp.plot_moving_median_duration_by_treatment(
-                window_min=win,
-                step_min=step,
-                two_well_mode=mode,
-                range_minutes=rm,
-            )
-            out = exp.analysis_dir / "moving_median_duration_treatments.png"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            if hasattr(fig, "save"):
-                fig.save(str(out), dpi=300)
-            else:
-                fig.savefig(str(out), dpi=300, bbox_inches="tight")
-            print(f"Wrote: {out}", flush=True)
-            return "Moving MedDuration: treatments", fig
+            return f"Moving window: {metric}", fig
 
         self._start_worker(task)
 
@@ -1759,7 +1767,10 @@ class AnalysisHubWindow(QMainWindow):
             safe = metric.replace("/", "_")
             out = exp.analysis_dir / f"binned_{safe}.png"
             out.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(str(out), dpi=300, bbox_inches="tight")
+            if hasattr(fig, "save"):
+                fig.save(str(out), dpi=300)
+            else:
+                fig.savefig(str(out), dpi=300, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
             return f"Binned: {metric}", fig
 
@@ -2509,7 +2520,10 @@ class AnalysisHubWindow(QMainWindow):
                         safe = metric.replace("/", "_")
                         out = e.analysis_dir / f"binned_{safe}.png"
                         out.parent.mkdir(parents=True, exist_ok=True)
-                        fig.savefig(str(out), dpi=300, bbox_inches="tight")
+                        if hasattr(fig, "save"):
+                            fig.save(str(out), dpi=300)
+                        else:
+                            fig.savefig(str(out), dpi=300, bbox_inches="tight")
                         print(f"Wrote: {out}", flush=True)
                         figures.append((f"Binned: {metric}", fig))
                     else:
@@ -2525,6 +2539,26 @@ class AnalysisHubWindow(QMainWindow):
                             fig.savefig(str(out), dpi=300, bbox_inches="tight")
                         print(f"Wrote: {out}", flush=True)
                         figures.append((f"Dot: {metric}", fig))
+
+                elif action == "plot_moving_window":
+                    metric = str(step.get("metric", "MedDuration"))
+                    mode = str(step.get("mode", _METRIC_DEFAULT_MODE.get(metric, "mean_ab")))
+                    win = float(step.get("window", 60.0))
+                    mm_step = float(step.get("step", 30.0))
+                    e = _ensure_exp(rm)
+                    fig = e.plot_moving_window_metric_by_treatment(
+                        metric=metric, two_well_mode=mode,
+                        window_min=win, step_min=mm_step, range_minutes=rm,
+                    )
+                    safe = metric.replace("/", "_")
+                    out = e.analysis_dir / f"moving_window_{safe}.png"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    if hasattr(fig, "save"):
+                        fig.save(str(out), dpi=300)
+                    else:
+                        fig.savefig(str(out), dpi=300, bbox_inches="tight")
+                    print(f"Wrote: {out}", flush=True)
+                    figures.append((f"Moving window: {metric}", fig))
 
                 elif action in ("plot_moving_median_chambers", "plot_moving_median_treatment"):
                     win = float(step.get("window", 60.0))

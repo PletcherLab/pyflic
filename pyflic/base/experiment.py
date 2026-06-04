@@ -982,9 +982,10 @@ class Experiment:
 
         # If caller didn't specify a range but the experiment was loaded with one, use it.
         effective_range = range_minutes
-        if (not range_is_specified_local(range_minutes)) and self.range_minutes is not None:
-            if range_is_specified_local(self.range_minutes):
-                effective_range = self.range_minutes
+        exp_range = getattr(self, "range_minutes", None)
+        if (not range_is_specified_local(range_minutes)) and exp_range is not None:
+            if range_is_specified_local(exp_range):
+                effective_range = exp_range
 
         # Cache binned summary per DFM so we don't recompute repeatedly per treatment.
         binned_by_dfm: dict[int, pd.DataFrame] = {}
@@ -995,6 +996,59 @@ class Experiment:
                 transform_licks=bool(transform_licks),
             )
 
+        return self._assemble_treatment_table(binned_by_dfm)
+
+    def _moving_window_table_by_treatment(
+        self,
+        *,
+        window_min: float = 60.0,
+        step_min: float = 30.0,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Long table of moving-window feeding-summary rows for treatment chambers.
+
+        The moving-window analogue of :meth:`_binned_licks_table_by_treatment`;
+        each DFM's :meth:`DFM.moving_window_feeding_summary` is computed once and
+        the rows for treatment-assigned chambers are stacked.  Output columns
+        match the binned table (Treatment, DFM, Chamber, Interval, Minutes, …
+        feeding-summary metrics), so the same metric-extraction path applies.
+        """
+        def range_is_specified_local(r: Sequence[float]) -> bool:
+            try:
+                return not (float(r[0]) == 0.0 and float(r[1]) == 0.0)
+            except Exception:  # noqa: BLE001
+                return False
+
+        effective_range = range_minutes
+        exp_range = getattr(self, "range_minutes", None)
+        if (not range_is_specified_local(range_minutes)) and exp_range is not None:
+            if range_is_specified_local(exp_range):
+                effective_range = exp_range
+
+        summary_by_dfm: dict[int, pd.DataFrame] = {}
+        for dfm_id, dfm in self.dfms.items():
+            summary_by_dfm[int(dfm_id)] = dfm.moving_window_feeding_summary(
+                window_min=float(window_min),
+                step_min=float(step_min),
+                range_minutes=effective_range,
+                transform_licks=bool(transform_licks),
+            )
+
+        return self._assemble_treatment_table(summary_by_dfm)
+
+    def _assemble_treatment_table(
+        self, summary_by_dfm: dict[int, pd.DataFrame]
+    ) -> pd.DataFrame:
+        """
+        Stack per-DFM feeding-summary rows into a treatment-labelled long table.
+
+        Given a mapping of ``dfm_id -> per-chamber summary rows`` (binned or
+        moving-window), select the chambers assigned to each treatment, tag them
+        with the treatment name, and append design-factor columns.  Shared by
+        the binned and moving-window by-treatment table builders.
+        """
         parts: list[pd.DataFrame] = []
         for trt_name, trt in self.design.treatments.items():
             if not trt.chambers:
@@ -1006,11 +1060,11 @@ class Experiment:
                 by_dfm.setdefault(int(tc.dfm_id), set()).add(int(tc.chamber_index))
 
             for dfm_id, chamber_idxs in by_dfm.items():
-                binned = binned_by_dfm.get(int(dfm_id))
-                if binned is None or binned.empty or "Chamber" not in binned.columns:
+                summary = summary_by_dfm.get(int(dfm_id))
+                if summary is None or summary.empty or "Chamber" not in summary.columns:
                     continue
 
-                tmp = binned[binned["Chamber"].astype(int).isin(chamber_idxs)].copy()
+                tmp = summary[summary["Chamber"].astype(int).isin(chamber_idxs)].copy()
                 if tmp.empty:
                     continue
 
@@ -1111,6 +1165,89 @@ class Experiment:
         """
         if transform_licks is None:
             transform_licks = self.transform_licks
+
+        df = self._binned_licks_table_by_treatment(
+            binsize_min=binsize_min, range_minutes=range_minutes, transform_licks=transform_licks
+        )
+        return self._metric_lines_by_treatment(
+            df,
+            metric=metric,
+            two_well_mode=two_well_mode,
+            transform_licks=bool(transform_licks),
+            title=f"Binned {metric} by treatment (mean ± SEM)",
+            empty_label="Binned metric by treatment (no data)",
+            show_sem=show_sem,
+            show_individual_chambers=show_individual_chambers,
+            figsize=figsize,
+        )
+
+    def plot_moving_window_metric_by_treatment(
+        self,
+        *,
+        metric: str = "MedDuration",
+        two_well_mode: Literal["total", "mean_ab", "A", "B"] = "mean_ab",
+        window_min: float = 60.0,
+        step_min: float = 30.0,
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool | None = None,
+        show_sem: bool = True,
+        show_individual_chambers: bool = False,
+        figsize: tuple[float, float] = (10, 4),
+    ) -> Any:
+        """
+        Plot mean ± SEM of a feeding-summary metric by treatment over a sliding
+        window.
+
+        The moving-window counterpart to :meth:`plot_binned_metric_by_treatment`:
+        the same metric set is available, but values are computed over
+        overlapping windows (*window_min* wide, advanced by *step_min*) rather
+        than disjoint bins, giving a smoother time course.  Each window is
+        plotted at its right edge.  Returns a plotnine ggplot object.
+        """
+        if transform_licks is None:
+            transform_licks = self.transform_licks
+
+        df = self._moving_window_table_by_treatment(
+            window_min=window_min,
+            step_min=step_min,
+            range_minutes=range_minutes,
+            transform_licks=transform_licks,
+        )
+        return self._metric_lines_by_treatment(
+            df,
+            metric=metric,
+            two_well_mode=two_well_mode,
+            transform_licks=bool(transform_licks),
+            title=f"Moving-window {metric} by treatment (mean ± SEM)",
+            empty_label="Moving-window metric by treatment (no data)",
+            show_sem=show_sem,
+            show_individual_chambers=show_individual_chambers,
+            figsize=figsize,
+        )
+
+    def _metric_lines_by_treatment(
+        self,
+        df: pd.DataFrame,
+        *,
+        metric: str,
+        two_well_mode: str,
+        transform_licks: bool,
+        title: str,
+        empty_label: str,
+        show_sem: bool = True,
+        show_individual_chambers: bool = False,
+        figsize: tuple[float, float] = (10, 4),
+    ) -> Any:
+        """
+        Render a per-treatment mean ± SEM line plot of a metric over time.
+
+        Takes a long table with feeding-summary columns plus a ``Minutes``
+        column (as produced by the binned or moving-window by-treatment table
+        builders), extracts *metric* via :meth:`_metric_series_from_binned_rows`,
+        and draws one mean line (with SEM ribbon) per treatment.  Shared by the
+        binned and moving-window by-treatment plots so both stay visually
+        identical.
+        """
         from plotnine import (
             aes,
             annotate,
@@ -1125,13 +1262,10 @@ class Experiment:
             theme_classic,
         )
 
-        df = self._binned_licks_table_by_treatment(
-            binsize_min=binsize_min, range_minutes=range_minutes, transform_licks=transform_licks
-        )
         if df.empty:
             return (
                 ggplot()
-                + annotate("text", x=0, y=0, label="Binned metric by treatment (no data)")
+                + annotate("text", x=0, y=0, label=empty_label)
                 + theme_classic()
             )
 
@@ -1141,6 +1275,12 @@ class Experiment:
         df["Minutes"] = pd.to_numeric(df["Minutes"], errors="coerce")
         df["MetricValue"] = pd.to_numeric(df["MetricValue"], errors="coerce")
         df = df.dropna(subset=["Minutes", "MetricValue"])
+        if df.empty:
+            return (
+                ggplot()
+                + annotate("text", x=0, y=0, label=empty_label)
+                + theme_classic()
+            )
 
         df, group_col = self._resolve_group_col(df)
         treatments = sorted(df[group_col].unique().tolist())
@@ -1195,7 +1335,7 @@ class Experiment:
             + scale_color_manual(values=label_palette)
             + scale_fill_manual(values=label_palette)
             + labs(
-                title=f"Binned {metric} by treatment (mean ± SEM)",
+                title=title,
                 x="Minutes",
                 y=ylabel,
                 color="",

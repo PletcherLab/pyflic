@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('pyflic/base/analysis_hub.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "Bash(.venv/Scripts/python.exe -c \"from pyflic.base import analysis_hub; print\\('import OK'\\); print\\('has _collect_batch_targets:', hasattr\\(analysis_hub.AnalysisHubWindow, '_collect_batch_targets'\\)\\); print\\('has _run_batch_targets:', hasattr\\(analysis_hub.AnalysisHubWindow, '_run_batch_targets'\\)\\)\")"
+      "Bash(.venv/Scripts/python.exe -c \"from pyflic.base import analysis_hub; print\\('import OK'\\); print\\('has _collect_batch_targets:', hasattr\\(analysis_hub.AnalysisHubWindow, '_collect_batch_targets'\\)\\); print\\('has _run_batch_targets:', hasattr\\(analysis_hub.AnalysisHubWindow, '_run_batch_targets'\\)\\)\")",
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\), f\\) for f in \\('pyflic/base/dfm.py','pyflic/base/experiment.py','pyflic/base/analysis_hub.py'\\)]; print\\('syntax OK'\\)\")",
+      "Bash(python -c \"from pyflic.base.experiment import Experiment; from pyflic.base.dfm import DFM; assert hasattr\\(DFM,'moving_window_feeding_summary'\\); assert hasattr\\(Experiment,'plot_moving_window_metric_by_treatment'\\); assert hasattr\\(Experiment,'_moving_window_table_by_treatment'\\); assert hasattr\\(Experiment,'_assemble_treatment_table'\\); assert hasattr\\(Experiment,'_metric_lines_by_treatment'\\); print\\('import + attrs OK'\\)\")",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python -c ' *)",
+      "Bash(python -m pytest tests/test_parity_r.py -q --collect-only)",
+      "Bash(break)",
+      "Bash(QT_QPA_PLATFORM=offscreen python /tmp/hub_smoke.py)"
     ]
   }
 }
