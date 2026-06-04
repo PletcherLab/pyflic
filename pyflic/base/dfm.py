@@ -822,6 +822,123 @@ class DFM:
             frames.append(tmp)
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
+    def moving_median_duration(
+        self,
+        *,
+        window_min: float = 60.0,
+        step_min: float = 30.0,
+        range_minutes: Sequence[float] = (0, 0),
+    ) -> pd.DataFrame:
+        """
+        Median feeding-bout duration (seconds) over a sliding window.
+
+        The timeline is swept with a window *window_min* minutes wide, advanced
+        in *step_min* increments.  Each window spans ``(a, a + window_min]`` and
+        is labelled by its endpoint (``a + window_min``) in the ``Minutes``
+        column.  ``MedDuration`` columns are ``NaN`` (and the matching
+        ``Events`` column is 0) for windows containing no feeding events.
+
+        The column layout mirrors :meth:`feeding_summary` for the DFM's chamber
+        type, with one row per (chamber, window):
+
+        * **single-well (12-well)** — ``Chamber`` is the 1-based well::
+
+              DFM, Chamber, Minutes, MedDuration, Events
+
+        * **two-well (6-well)** — well A and well B are reported separately
+          (A/B follow ``pi_direction``), just like ``MedDurationA`` /
+          ``MedDurationB`` in the feeding summary::
+
+              DFM, Chamber, Minutes, MedDurationA, MedDurationB, EventsA, EventsB
+
+        Parameters
+        ----------
+        window_min:
+            Width of the moving window in minutes (default 60.0).
+        step_min:
+            Distance the window advances each step, in minutes (default 30.0).
+        range_minutes:
+            ``(start, end)`` window the sweep is bounded to.  ``(0, 0)`` (the
+            default) sweeps from 0 to the end of this DFM's recording.
+        """
+        if window_min <= 0:
+            raise ValueError("window_min must be positive.")
+        if step_min <= 0:
+            raise ValueError("step_min must be positive.")
+        if range_is_specified(range_minutes):
+            m_min, m_max = float(range_minutes[0]), float(range_minutes[1])
+        else:
+            m_min, m_max = 0.0, float(self.raw_df["Minutes"].max())
+        if m_min >= m_max:
+            raise ValueError(f"range start ({m_min}) must be less than end ({m_max}).")
+
+        starts = np.arange(m_min, m_max, step_min, dtype=float)
+        if starts.size == 0:
+            starts = np.array([m_min], dtype=float)
+        ends = starts + float(window_min)
+        # Each window is labelled by its endpoint (right edge).
+        labels = ends
+
+        def _well_series(well: int) -> tuple[np.ndarray, np.ndarray]:
+            """Per-window (median duration, event count) for one physical well."""
+            dur = self.durations.get(f"W{well}", 0)
+            med = np.full(starts.shape, np.nan, dtype=float)
+            cnt = np.zeros(starts.shape, dtype=int)
+            if not isinstance(dur, pd.DataFrame) or dur.empty:
+                return med, cnt
+            mins = dur["Minutes"].to_numpy(dtype=float)
+            secs = dur["Duration"].to_numpy(dtype=float)
+            order = np.argsort(mins, kind="stable")
+            mins, secs = mins[order], secs[order]
+            # Events with Minutes in (a, b]: count(<= b) excluding count(<= a).
+            lo = np.searchsorted(mins, starts, side="right")
+            hi = np.searchsorted(mins, ends, side="right")
+            for i in range(starts.size):
+                if hi[i] > lo[i]:
+                    seg = secs[lo[i]:hi[i]]
+                    med[i] = float(np.median(seg))
+                    cnt[i] = int(seg.size)
+            return med, cnt
+
+        if self.params.chamber_size == 1:
+            frames: list[pd.DataFrame] = []
+            for well in range(1, 13):
+                med, cnt = _well_series(well)
+                frames.append(pd.DataFrame({
+                    "DFM": self.id,
+                    "Chamber": well,
+                    "Minutes": labels,
+                    "MedDuration": med,
+                    "Events": cnt,
+                }))
+            return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        if self.params.chamber_size == 2:
+            frames = []
+            for chamber in range(self.params.chamber_sets.shape[0]):
+                w1 = int(self.params.chamber_sets[chamber, 0])
+                w2 = int(self.params.chamber_sets[chamber, 1])
+                if self.params.pi_direction == "left":
+                    well_a, well_b = w1, w2
+                elif self.params.pi_direction == "right":
+                    well_a, well_b = w2, w1
+                else:
+                    raise ValueError(f"Invalid pi_direction: {self.params.pi_direction!r}")
+                med_a, cnt_a = _well_series(well_a)
+                med_b, cnt_b = _well_series(well_b)
+                frames.append(pd.DataFrame({
+                    "DFM": self.id,
+                    "Chamber": chamber + 1,
+                    "Minutes": labels,
+                    "MedDurationA": med_a,
+                    "MedDurationB": med_b,
+                    "EventsA": cnt_a,
+                    "EventsB": cnt_b,
+                }))
+            return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        raise NotImplementedError("Moving median duration not implemented for this DFM type.")
+
     # ---- Plots ----
     def _well_label(self, side: str) -> str:
         """Return display name for well 'A' or 'B', falling back to 'WellA'/'WellB'."""

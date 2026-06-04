@@ -383,8 +383,10 @@ class AnalysisHubWindow(QMainWindow):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        # Long button labels can't push the cards past the column width.
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Button labels shrink (min-width 0), so they never push the cards wider
+        # than the column.  Show a horizontal scrollbar only if some control
+        # genuinely overflows, so nothing is clipped out of reach.
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         cards_host = QWidget()
         cards_host.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self._cards_lay = QVBoxLayout(cards_host)
@@ -903,6 +905,12 @@ class AnalysisHubWindow(QMainWindow):
 
     def _rebuild_dynamic_groups(self, exp_type: str | None, chamber_size: int | None) -> None:
         self._data_buttons.clear()
+        # Re-register persistent data-gated buttons that live in static cards
+        # (only Remove chambers, built once in the Load card). Without this they
+        # are orphaned by the clear above and never re-enabled on load.
+        btn_remove = getattr(self, "_btn_remove_chambers", None)
+        if btn_remove is not None and not _is_deleted(btn_remove):
+            self._data_buttons.append(btn_remove)
         # Drop dead/dynamic-card buttons; static buttons (Load, Run Script,
         # Edit Config, QC viewer) stay in self._load_buttons.
         analyze_card = self._cards.get("analyze")
@@ -987,6 +995,11 @@ class AnalysisHubWindow(QMainWindow):
             )
             return cmb
 
+        def _shrinky(spin):
+            spin.setMinimumWidth(70)
+            spin.setMaximumWidth(140)
+            return spin
+
         # Dot
         dot_row = QHBoxLayout()
         dot_row.addWidget(QLabel("Dot plot:"))
@@ -1012,6 +1025,54 @@ class AnalysisHubWindow(QMainWindow):
         binned_row.addWidget(b_binned)
         lay.addLayout(binned_row)
         self._data_buttons.append(b_binned)
+
+        # Moving median bout duration (sliding window) — optional, non-standard.
+        # Every row is built from shrinkable widgets (short labels, expanding
+        # spinboxes, single-button rows) so the controls can always collapse to
+        # the column width instead of forcing the left panel wider.
+        card.add_section_label("— Moving median —")
+
+        def _flex_spin(value: float, tip: str) -> QDoubleSpinBox:
+            sp = QDoubleSpinBox()
+            sp.setRange(0.1, 1_000_000)
+            sp.setDecimals(1)
+            sp.setValue(value)
+            sp.setToolTip(tip)
+            sp.setMinimumWidth(44)
+            sp.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            return sp
+
+        mm_ctrl = QHBoxLayout()
+        mm_ctrl.addWidget(QLabel("Win"))
+        self._spin_mm_window = _flex_spin(60.0, "Sliding window width (minutes).")
+        mm_ctrl.addWidget(self._spin_mm_window, 1)
+        mm_ctrl.addWidget(QLabel("Step"))
+        self._spin_mm_step = _flex_spin(30.0, "Window step / stride (minutes).")
+        mm_ctrl.addWidget(self._spin_mm_step, 1)
+        lay.addLayout(mm_ctrl)
+
+        if is_two_well:
+            mm_mode_row = QHBoxLayout()
+            mm_mode_row.addWidget(QLabel("Wells:"))
+            self._cmb_mm_mode = _shrinky_combo()
+            self._cmb_mm_mode.addItem("Mean A/B", userData="mean_ab")
+            self._cmb_mm_mode.addItem("Well A", userData="A")
+            self._cmb_mm_mode.addItem("Well B", userData="B")
+            mm_mode_row.addWidget(self._cmb_mm_mode, 1)
+            lay.addLayout(mm_mode_row)
+        else:
+            self._cmb_mm_mode = None
+
+        b_mm_ch = ActionButton("MedDuration by chamber", category=Category.PLOTS, icon_name="binned")
+        b_mm_ch.setToolTip("Median bout duration over a sliding window, one line per chamber, coloured by treatment.")
+        b_mm_ch.clicked.connect(self._action_plot_moving_median_chambers)
+        lay.addWidget(b_mm_ch)
+        b_mm_tr = ActionButton("MedDuration by treatment", category=Category.PLOTS, icon_name="plot")
+        b_mm_tr.setToolTip("Treatment mean ± SEM of the sliding-window median bout duration.")
+        b_mm_tr.clicked.connect(self._action_plot_moving_median_treatment)
+        lay.addWidget(b_mm_tr)
+        self._data_buttons.append(b_mm_ch)
+        self._data_buttons.append(b_mm_tr)
 
         # Well A vs B (two-well only)
         if is_two_well:
@@ -1168,11 +1229,61 @@ class AnalysisHubWindow(QMainWindow):
         if figure is None:
             return
         try:
-            self._plot_dock.add_figure(
+            size = self._plot_dock.add_figure(
                 title, figure, interactive=self._chk_interactive.isChecked()
             )
         except Exception as exc:  # noqa: BLE001
             self._append_log(f"[plot] Failed to embed {title!r}: {exc}")
+            return
+        if isinstance(size, QSize) and size.isValid():
+            self._fit_window_to_plot(size.width(), size.height())
+
+    def _fit_window_to_plot(self, content_w: int, content_h: int) -> None:
+        """Grow the window so the plot pane can show a *content_w*×*content_h*
+        figure without scrolling, capped at the monitor's available area.
+
+        The window only ever grows (so a later, smaller plot never shrinks it),
+        the extra width is given to the plot pane rather than the cards column,
+        and the window is nudged back on-screen if growth pushed it past an
+        edge.
+        """
+        if content_w <= 0 or content_h <= 0:
+            return
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        split = self._main_split
+        # Chrome = the window area outside the splitter (menus, margins, log).
+        chrome_w = max(0, self.width() - split.width())
+        chrome_h = max(0, self.height() - split.height())
+        sizes = split.sizes()
+        left_w = sizes[0] if len(sizes) == 2 else self._scroll.width()
+        handle = split.handleWidth()
+        # Padding for the dock's tab bar and the scroll-area viewport.
+        PAD_W, PAD_H = 30, 72
+        want_w = chrome_w + left_w + handle + content_w + PAD_W
+        want_h = chrome_h + content_h + PAD_H
+        new_w = min(max(self.width(), want_w), avail.width())
+        new_h = min(max(self.height(), want_h), avail.height())
+        if new_w != self.width() or new_h != self.height():
+            self.resize(new_w, new_h)
+        # Hand the extra width to the plot pane; keep the cards column as-is.
+        inner_w = max(0, new_w - chrome_w - handle)
+        min_plot = self._plot_dock.minimumWidth()
+        min_left = self._scroll.minimumWidth()
+        left_keep = max(min_left, min(left_w, inner_w - min_plot))
+        plot_w = max(min_plot, inner_w - left_keep)
+        split.setSizes([left_keep, plot_w])
+        # Keep the (possibly grown) window fully on screen.
+        fg = self.frameGeometry()
+        nx, ny = self.x(), self.y()
+        if fg.right() > avail.right():
+            nx = max(avail.left(), avail.right() - fg.width())
+        if fg.bottom() > avail.bottom():
+            ny = max(avail.top(), avail.bottom() - fg.height())
+        if (nx, ny) != (self.x(), self.y()):
+            self.move(nx, ny)
 
     def _toggle_theme(self) -> None:
         from .ui import theme as _theme
@@ -1574,6 +1685,61 @@ class AnalysisHubWindow(QMainWindow):
                 fig.savefig(str(out), dpi=300, bbox_inches="tight")
             print(f"Wrote: {out}", flush=True)
             return "Feeding Summary", fig
+
+        self._start_worker(task)
+
+    def _mm_params(self) -> tuple[float, float, str]:
+        """Return (window_min, step_min, two_well_mode) from the moving-median controls."""
+        win = float(self._spin_mm_window.value())
+        step = float(self._spin_mm_step.value())
+        mode = "mean_ab"
+        if getattr(self, "_cmb_mm_mode", None) is not None:
+            mode = str(self._cmb_mm_mode.currentData())
+        return win, step, mode
+
+    def _action_plot_moving_median_chambers(self) -> None:
+        rm = self._range_minutes()
+        win, step, mode = self._mm_params()
+
+        def task() -> tuple[str, Any]:
+            exp = self._load_exp()
+            fig = exp.plot_moving_median_duration_by_chamber(
+                window_min=win,
+                step_min=step,
+                two_well_mode=mode,
+                range_minutes=rm,
+            )
+            out = exp.analysis_dir / "moving_median_duration_chambers.png"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if hasattr(fig, "save"):
+                fig.save(str(out), dpi=300)
+            else:
+                fig.savefig(str(out), dpi=300, bbox_inches="tight")
+            print(f"Wrote: {out}", flush=True)
+            return "Moving MedDuration: chambers", fig
+
+        self._start_worker(task)
+
+    def _action_plot_moving_median_treatment(self) -> None:
+        rm = self._range_minutes()
+        win, step, mode = self._mm_params()
+
+        def task() -> tuple[str, Any]:
+            exp = self._load_exp()
+            fig = exp.plot_moving_median_duration_by_treatment(
+                window_min=win,
+                step_min=step,
+                two_well_mode=mode,
+                range_minutes=rm,
+            )
+            out = exp.analysis_dir / "moving_median_duration_treatments.png"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if hasattr(fig, "save"):
+                fig.save(str(out), dpi=300)
+            else:
+                fig.savefig(str(out), dpi=300, bbox_inches="tight")
+            print(f"Wrote: {out}", flush=True)
+            return "Moving MedDuration: treatments", fig
 
         self._start_worker(task)
 
@@ -2359,6 +2525,33 @@ class AnalysisHubWindow(QMainWindow):
                             fig.savefig(str(out), dpi=300, bbox_inches="tight")
                         print(f"Wrote: {out}", flush=True)
                         figures.append((f"Dot: {metric}", fig))
+
+                elif action in ("plot_moving_median_chambers", "plot_moving_median_treatment"):
+                    win = float(step.get("window", 60.0))
+                    mm_step = float(step.get("step", 30.0))
+                    mode = str(step.get("mode", "mean_ab"))
+                    e = _ensure_exp(rm)
+                    if action == "plot_moving_median_chambers":
+                        fig = e.plot_moving_median_duration_by_chamber(
+                            window_min=win, step_min=mm_step,
+                            two_well_mode=mode, range_minutes=rm,
+                        )
+                        out = e.analysis_dir / "moving_median_duration_chambers.png"
+                        title = "Moving MedDuration: chambers"
+                    else:
+                        fig = e.plot_moving_median_duration_by_treatment(
+                            window_min=win, step_min=mm_step,
+                            two_well_mode=mode, range_minutes=rm,
+                        )
+                        out = e.analysis_dir / "moving_median_duration_treatments.png"
+                        title = "Moving MedDuration: treatments"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    if hasattr(fig, "save"):
+                        fig.save(str(out), dpi=300)
+                    else:
+                        fig.savefig(str(out), dpi=300, bbox_inches="tight")
+                    print(f"Wrote: {out}", flush=True)
+                    figures.append((title, fig))
 
                 elif action == "plot_well_comparison":
                     from pyflic import TwoWellExperiment

@@ -1209,6 +1209,235 @@ class Experiment:
         )
         return p
 
+    def _moving_median_table(
+        self,
+        *,
+        window_min: float,
+        step_min: float,
+        range_minutes: Sequence[float],
+        two_well_mode: Literal["mean_ab", "A", "B"],
+    ) -> tuple[pd.DataFrame, str]:
+        """
+        Build a per-chamber, per-time table of moving-window median bout
+        duration for treatment-assigned chambers.
+
+        Returns ``(df, group_col)`` where *df* has one row per
+        (group, DFM, Chamber, Minutes) with a single ``MedDuration`` column,
+        and *group_col* is the treatment/factor grouping column (see
+        :meth:`_resolve_group_col`).  For two-well designs the per-chamber
+        ``MedDurationA``/``MedDurationB`` columns are reduced according to
+        *two_well_mode*: ``mean_ab`` averages wells A and B (NaN-skipping),
+        ``A``/``B`` keep a single well.
+        """
+        raw = self.moving_median_duration(
+            window_min=window_min,
+            step_min=step_min,
+            range_minutes=range_minutes,
+            save=False,
+        )
+        if raw.empty:
+            return raw, "Treatment"
+        df = raw.copy()
+        # Two-well summaries carry MedDurationA/MedDurationB; single-well a
+        # single MedDuration column.
+        if "MedDurationA" in df.columns:
+            mode = (two_well_mode or "mean_ab").lower()
+            if mode in ("a", "wella"):
+                df["MedDuration"] = df["MedDurationA"]
+            elif mode in ("b", "wellb"):
+                df["MedDuration"] = df["MedDurationB"]
+            else:  # mean_ab — average the two wells, skipping NaN.
+                df["MedDuration"] = df[["MedDurationA", "MedDurationB"]].mean(axis=1)
+        df, group_col = self._resolve_group_col(df)
+        keys = [k for k in (group_col, "DFM", "Chamber", "Minutes") if k in df.columns]
+        collapsed = df.groupby(keys, as_index=False)["MedDuration"].mean()
+        return collapsed, group_col
+
+    def plot_moving_median_duration_by_chamber(
+        self,
+        *,
+        window_min: float = 60.0,
+        step_min: float = 30.0,
+        range_minutes: Sequence[float] = (0, 0),
+        two_well_mode: Literal["mean_ab", "A", "B"] = "mean_ab",
+        figsize: tuple[float, float] = (10, 4),
+    ) -> Any:
+        """
+        Plot the time-dependent moving-window median bout duration of every
+        treatment-assigned chamber as a separate line, coloured by treatment.
+
+        Each chamber's median bout duration is computed over a sliding window
+        of *window_min* minutes advanced in *step_min* increments (see
+        :meth:`moving_median_duration`).  Returns a plotnine ggplot object.
+        """
+        from plotnine import (
+            aes,
+            annotate,
+            element_line,
+            geom_line,
+            ggplot,
+            labs,
+            scale_color_manual,
+            theme,
+            theme_classic,
+        )
+
+        df, group_col = self._moving_median_table(
+            window_min=window_min,
+            step_min=step_min,
+            range_minutes=range_minutes,
+            two_well_mode=two_well_mode,
+        )
+        if df.empty:
+            return (
+                ggplot()
+                + annotate("text", x=0, y=0, label="Moving median duration (no data)")
+                + theme_classic()
+            )
+
+        df = df.copy()
+        df["Minutes"] = pd.to_numeric(df["Minutes"], errors="coerce")
+        df["MedDuration"] = pd.to_numeric(df["MedDuration"], errors="coerce")
+        df = df.dropna(subset=["Minutes", "MedDuration"])
+        if df.empty:
+            return (
+                ggplot()
+                + annotate("text", x=0, y=0, label="Moving median duration (no data)")
+                + theme_classic()
+            )
+
+        treatments = sorted(df[group_col].unique().tolist())
+        n_t = len(treatments)
+        palette = (_OKABE_ITO * ((n_t // len(_OKABE_ITO)) + 1))[:n_t]
+        color_map = {t: palette[i] for i, t in enumerate(treatments)}
+        n_cham = {
+            t: int(df.loc[df[group_col] == t, ["DFM", "Chamber"]].drop_duplicates().shape[0])
+            for t in treatments
+        }
+        label_map = {t: f"{t} (n={n_cham[t]})" for t in treatments}
+        label_palette = {label_map[t]: color_map[t] for t in treatments}
+
+        df["_ChamberKey"] = df["DFM"].astype(str) + "_" + df["Chamber"].astype(str)
+        df["_Label"] = df[group_col].map(label_map)
+
+        p = (
+            ggplot(df, aes(x="Minutes", y="MedDuration", color="_Label", group="_ChamberKey"))
+            + geom_line(alpha=0.7, size=0.8)
+            + scale_color_manual(values=label_palette)
+            + labs(
+                title="Time-dependent median bout duration by chamber",
+                x="Minutes",
+                y="Median bout duration (s)",
+                color="",
+            )
+            + theme_classic(base_size=11)
+            + theme(
+                axis_line=element_line(color="black", size=0.7),
+                figure_size=figsize,
+            )
+        )
+        return p
+
+    def plot_moving_median_duration_by_treatment(
+        self,
+        *,
+        window_min: float = 60.0,
+        step_min: float = 30.0,
+        range_minutes: Sequence[float] = (0, 0),
+        two_well_mode: Literal["mean_ab", "A", "B"] = "mean_ab",
+        show_sem: bool = True,
+        figsize: tuple[float, float] = (10, 4),
+    ) -> Any:
+        """
+        Plot the treatment-level mean (± SEM across chambers) of the
+        time-dependent moving-window median bout duration.
+
+        At each window position the per-chamber median bout durations are
+        averaged within each treatment; the shaded ribbon shows ± 1 standard
+        error of the mean across chambers.  Returns a plotnine ggplot object.
+        """
+        from plotnine import (
+            aes,
+            annotate,
+            element_line,
+            geom_line,
+            geom_ribbon,
+            ggplot,
+            labs,
+            scale_color_manual,
+            scale_fill_manual,
+            theme,
+            theme_classic,
+        )
+
+        df, group_col = self._moving_median_table(
+            window_min=window_min,
+            step_min=step_min,
+            range_minutes=range_minutes,
+            two_well_mode=two_well_mode,
+        )
+        if df.empty:
+            return (
+                ggplot()
+                + annotate("text", x=0, y=0, label="Moving median duration (no data)")
+                + theme_classic()
+            )
+
+        df = df.copy()
+        df["Minutes"] = pd.to_numeric(df["Minutes"], errors="coerce")
+        df["MedDuration"] = pd.to_numeric(df["MedDuration"], errors="coerce")
+        df = df.dropna(subset=["Minutes", "MedDuration"])
+        if df.empty:
+            return (
+                ggplot()
+                + annotate("text", x=0, y=0, label="Moving median duration (no data)")
+                + theme_classic()
+            )
+
+        treatments = sorted(df[group_col].unique().tolist())
+        n_t = len(treatments)
+        palette = (_OKABE_ITO * ((n_t // len(_OKABE_ITO)) + 1))[:n_t]
+        color_map = {t: palette[i] for i, t in enumerate(treatments)}
+
+        agg = (
+            df.groupby([group_col, "Minutes"], as_index=False)["MedDuration"]
+            .agg(mean="mean", std="std", n="count")
+            .rename(columns={"mean": "Mean", "std": "Std", "n": "N"})
+        )
+        agg["SEM"] = agg["Std"] / np.sqrt(agg["N"].clip(lower=1))
+        agg["Lower"] = agg["Mean"] - agg["SEM"]
+        agg["Upper"] = agg["Mean"] + agg["SEM"]
+
+        label_map = {
+            t: f"{t} (n={int(agg.loc[agg[group_col] == t, 'N'].max())})"
+            for t in treatments
+        }
+        label_palette = {label_map[t]: color_map[t] for t in treatments}
+        agg["_Label"] = agg[group_col].map(label_map)
+
+        p = ggplot(agg, aes(x="Minutes", y="Mean", color="_Label", fill="_Label"))
+        p = p + geom_line(size=1.2)
+        if show_sem:
+            p = p + geom_ribbon(aes(ymin="Lower", ymax="Upper"), alpha=0.2, color=None)
+        p = (
+            p
+            + scale_color_manual(values=label_palette)
+            + scale_fill_manual(values=label_palette)
+            + labs(
+                title="Time-dependent median bout duration by treatment (mean ± SEM)",
+                x="Minutes",
+                y="Median bout duration (s)",
+                color="",
+                fill="",
+            )
+            + theme_classic(base_size=11)
+            + theme(
+                axis_line=element_line(color="black", size=0.7),
+                figure_size=figsize,
+            )
+        )
+        return p
+
     def plot_dot_metric_by_treatment(
         self,
         *,
@@ -1736,6 +1965,82 @@ class Experiment:
                         "path must be provided when no project_dir is set on the Experiment."
                     )
                 path = self.analysis_dir / "binned_feeding_summary.csv"
+            out = Path(path).expanduser().resolve()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(out, index=False)
+
+        return df
+
+    def moving_median_duration(
+        self,
+        *,
+        window_min: float = 60.0,
+        step_min: float = 30.0,
+        range_minutes: Sequence[float] = (0, 0),
+        path: str | Path | None = None,
+        save: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Median feeding-bout duration over a moving window, for every treatment-
+        assigned chamber across all DFMs.
+
+        Each DFM is swept with an *window_min*-minute window advanced in
+        *step_min* increments (see :meth:`DFM.moving_median_duration`); the
+        per-DFM results are stacked into a single frame whose columns follow the
+        feeding-summary convention for the chamber type, with a ``Treatment``
+        column (and any factor columns) prepended::
+
+            single-well: Treatment, DFM, Chamber, Minutes, MedDuration, Events
+            two-well:    Treatment, DFM, Chamber, Minutes,
+                         MedDurationA, MedDurationB, EventsA, EventsB
+
+        For two-well (6-well) designs well A and well B are reported separately,
+        just like ``MedDurationA``/``MedDurationB`` in :meth:`feeding_summary`.
+        ``Minutes`` is the window endpoint (right edge) and the ``MedDuration*``
+        columns are ``NaN`` for windows with no feeding events.  Only chambers
+        assigned to a treatment are included.
+
+        By default the result is also saved to
+        ``project_dir/analysis/moving_median_duration.csv`` (or *path* if
+        provided).  Pass ``save=False`` to suppress file output.
+
+        Parameters
+        ----------
+        window_min:
+            Width of the moving window in minutes (default 60.0).
+        step_min:
+            Distance the window advances each step, in minutes (default 30.0).
+        range_minutes:
+            ``(start, end)`` window the sweep is bounded to.  ``(0, 0)`` (the
+            default) sweeps from 0 to the end of each DFM's recording.
+        path:
+            Explicit output CSV path.  When ``None`` (the default) the file is
+            written to ``project_dir/analysis/moving_median_duration.csv``.
+            Ignored when ``save=False``.
+        save:
+            Write the result to a CSV file (default ``True``).
+        """
+        dfm_ids = sorted({
+            tc.dfm_id
+            for trt in self.design.treatments.values()
+            for tc in trt.chambers
+        })
+        per_dfm: dict[int, pd.DataFrame] = {}
+        for did in dfm_ids:
+            per_dfm[did] = self.dfms[did].moving_median_duration(
+                window_min=window_min,
+                step_min=step_min,
+                range_minutes=range_minutes,
+            )
+        df = self._assemble_from_dfm_summaries(per_dfm)
+
+        if save:
+            if path is None:
+                if self.analysis_dir is None:
+                    raise ValueError(
+                        "path must be provided when no project_dir is set on the Experiment."
+                    )
+                path = self.analysis_dir / "moving_median_duration.csv"
             out = Path(path).expanduser().resolve()
             out.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(out, index=False)

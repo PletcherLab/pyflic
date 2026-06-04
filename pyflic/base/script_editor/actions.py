@@ -113,6 +113,16 @@ _BINSIZE = Param(
     note="Time-bin width in minutes.",
     default=None, unit="min", inheritable=True,
 )
+_MM_WINDOW = Param(
+    key="window", label="Window", type="float",
+    note="Sliding-window width in minutes.",
+    default=60.0, unit="min", required=True,
+)
+_MM_STEP = Param(
+    key="step", label="Step", type="float",
+    note="Distance the window advances each step, in minutes.",
+    default=30.0, unit="min", required=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +350,42 @@ ACTIONS: list[Action] = [
                   default=None, derived_from="metric"),
             _START, _END,
         ],
+    ),
+    Action(
+        action="plot_moving_median_chambers",
+        label="Moving median duration (chambers)",
+        blurb="Time-dependent median bout duration, one line per chamber, by treatment.",
+        icon="binned", category=Category.PLOTS, produces="figure",
+        params=[
+            _MM_WINDOW, _MM_STEP,
+            Param(key="mode", label="Mode", type="choice",
+                  choices=["mean_ab", "A", "B"],
+                  note="Two-well only: average wells A/B or pick one. "
+                       "Ignored for single-well designs.",
+                  default="mean_ab"),
+            _START, _END,
+        ],
+        notes="Median feeding-bout duration computed over a sliding window "
+              "(see 'window'/'step'), drawn as one trajectory per chamber and "
+              "coloured by treatment. Not part of any standard analysis.",
+    ),
+    Action(
+        action="plot_moving_median_treatment",
+        label="Moving median duration (treatments)",
+        blurb="Treatment mean ± SEM of the time-dependent median bout duration.",
+        icon="plot", category=Category.PLOTS, produces="figure",
+        params=[
+            _MM_WINDOW, _MM_STEP,
+            Param(key="mode", label="Mode", type="choice",
+                  choices=["mean_ab", "A", "B"],
+                  note="Two-well only: average wells A/B or pick one. "
+                       "Ignored for single-well designs.",
+                  default="mean_ab"),
+            _START, _END,
+        ],
+        notes="Per-treatment mean (± SEM across chambers) of the sliding-window "
+              "median feeding-bout duration at each time point. Not part of any "
+              "standard analysis.",
     ),
     Action(
         action="plot_well_comparison",

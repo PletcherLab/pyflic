@@ -331,10 +331,13 @@ class PlotDock(QTabWidget):
         if w is not None:
             w.deleteLater()
 
-    def add_figure(self, title: str, figure: Any, *, interactive: bool = False) -> None:
+    def add_figure(self, title: str, figure: Any, *, interactive: bool = False) -> QSize:
         """Embed *figure* (a matplotlib ``Figure``) as a new tab.
 
         Plotnine ggplot objects are accepted too — they're drawn first.
+
+        Returns the natural pixel size of the embedded content (figure plus any
+        toolbar), so callers can grow the window to show it without scrolling.
 
         Parameters
         ----------
@@ -369,6 +372,11 @@ class PlotDock(QTabWidget):
                 host._mpl_cursor = cursor  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001
                 pass
+            w_in, h_in = figure.get_size_inches()
+            content_size = QSize(
+                int(round(w_in * figure.dpi)),
+                int(round(h_in * figure.dpi)) + toolbar.sizeHint().height(),
+            )
         else:
             import io as _io
 
@@ -392,6 +400,8 @@ class PlotDock(QTabWidget):
             scroll.setWidget(label)
             scroll.setWidgetResizable(False)
             lay.addWidget(scroll, 1)
+            content_size = QSize(pix.width(), pix.height())
 
         idx = self.addTab(host, icon("plots", category=Category.PLOTS), title)
         self.setCurrentIndex(idx)
+        return content_size
