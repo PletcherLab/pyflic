@@ -188,7 +188,12 @@ class Card(QFrame):
             f"  padding-left: 8px;"
             f"}}"
         )
-        title_row.addWidget(self._title_lbl, 1)
+        title_row.addWidget(self._title_lbl, 0)
+        # Extra title-row widgets (the help button) are inserted here, right
+        # after the title text, so they stay visible when the card is narrow.
+        self._title_insert_at = title_row.count()
+        title_row.addStretch(1)
+        self._title_row = title_row
 
         outer.addLayout(title_row)
 
@@ -209,6 +214,18 @@ class Card(QFrame):
         pal.setColor(QPalette.ColorRole.Window, bg)
         self.setAutoFillBackground(True)
         self.setPalette(pal)
+
+    def add_title_widget(self, widget: QWidget) -> None:
+        """Add *widget* to the title row, immediately after the title text.
+
+        Used for the card's help button.  Placed beside the title rather than
+        right-aligned so it cannot be clipped when the cards column is narrow.
+        The card itself knows nothing about help; it just offers the slot.
+        """
+        self._title_row.insertWidget(
+            self._title_insert_at, widget, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self._title_insert_at += 1
 
     def body_layout(self) -> QVBoxLayout:
         return self._body

@@ -6,10 +6,14 @@ Dispatches to subcommands::
     pyflic config [project_dir]   -- launch the config editor GUI
     pyflic qc <project_dir>       -- launch the QC viewer
     pyflic hub  [project_dir]     -- launch the analysis hub GUI
+    pyflic help [topic]           -- open the help window
     pyflic lint <project_or_yaml> -- schema-lint a flic_config.yaml
     pyflic clear-cache <project>  -- remove project_dir/.pyflic_cache
     pyflic report <project_dir>   -- write a PDF experiment report
     pyflic version                -- print the installed version
+
+Use ``pyflic --help`` (or ``-h``) for this list; ``pyflic help`` opens the
+graphical help.
 
 Existing entry points (``pyflic-config``, ``pyflic-qc``, ``pyflic-hub``)
 remain available.
@@ -28,12 +32,33 @@ def _print_help() -> None:
     print(__doc__ or "pyflic CLI")
 
 
+def _launch_help(topic: str | None) -> None:
+    """Open the help window as a standalone application."""
+    from PyQt6.QtWidgets import QApplication
+
+    from pyflic.base.ui import apply_theme
+    from pyflic.base.ui import settings as ui_settings
+    from pyflic.help import open_help
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    apply_theme(app, mode=ui_settings.get("theme", "auto"))
+    win = open_help(topic)
+    if win is None:
+        print("could not open the help window", file=sys.stderr)
+        raise SystemExit(1)
+    app.exec()
+
+
 def main() -> None:
     argv = sys.argv[1:]
-    if not argv or argv[0] in ("-h", "--help", "help"):
+    if not argv or argv[0] in ("-h", "--help"):
         _print_help()
         return
     cmd, *rest = argv
+
+    if cmd == "help":
+        _launch_help(rest[0] if rest else None)
+        return
 
     if cmd == "version":
         from pyflic import __version__

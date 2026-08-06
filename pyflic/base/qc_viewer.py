@@ -885,6 +885,27 @@ class DfmTab(QtWidgets.QWidget):
 # Main window
 # ───────────────────────────────────────────────────────────────────────────
 
+def _param_help_button(key: str, parent: QtWidgets.QWidget | None = None):
+    """A ``?`` opening the parameter reference at *key*, or ``None``."""
+    try:
+        from ..help import HelpButton
+    except Exception:  # noqa: BLE001 - help is optional, the viewer is not
+        return None
+    return HelpButton(
+        f"reference-parameters#{key}", parent,
+        tooltip=f"What does {key} do?",
+    )
+
+
+def _add_card_help(card: Card, ref: str) -> None:
+    """Put a ``?`` in *card*'s title row, if help is available."""
+    try:
+        from ..help import HelpButton
+    except Exception:  # noqa: BLE001
+        return
+    card.add_title_widget(HelpButton(ref, card))
+
+
 class ParamsTab(QtWidgets.QWidget):
     """
     Live parameter editor: tweak feeding/tasting thresholds and link gap,
@@ -935,7 +956,18 @@ class ParamsTab(QtWidgets.QWidget):
             sb.setDecimals(int(decimals))
             sb.setValue(float(default))
             self._spins[name] = sb
-            form.addRow(label + ":", sb)
+            help_btn = _param_help_button(name, self)
+            if help_btn is None:
+                form.addRow(label + ":", sb)
+            else:
+                row = QtWidgets.QWidget()
+                rl = QtWidgets.QHBoxLayout(row)
+                rl.setContentsMargins(0, 0, 0, 0)
+                rl.setSpacing(4)
+                rl.addWidget(sb, 1)
+                rl.addWidget(help_btn)
+                form.addRow(label + ":", row)
+        _add_card_help(params_card, "reference-parameters")
         params_card.add_body(form)
         root.addWidget(params_card)
 
@@ -1022,10 +1054,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._btn_theme.setToolTip("Toggle light / dark theme")
         self._btn_theme.setAutoRaise(True)
         self._btn_theme.clicked.connect(self._toggle_theme)
+        self._install_help_button()
         self._top_bar.add_right(self._btn_theme)
         root_layout.addWidget(self._top_bar)
 
         self._tabs = QtWidgets.QTabWidget()
+        self._tabs.currentChanged.connect(self._on_tab_changed_for_help)
         root_layout.addWidget(self._tabs, 1)
 
         # ── Load tab (always first) ───────────────────────────────────
@@ -1376,6 +1410,45 @@ class MainWindow(QtWidgets.QMainWindow):
         self._btn_theme.setIcon(
             icon("theme_dark" if _theme.resolved_mode() == "light" else "theme_light")
         )
+
+    # ──────────────────────────────────────────────────────────────────
+    # Help
+    # ──────────────────────────────────────────────────────────────────
+
+    def _install_help_button(self) -> None:
+        """Add the top-bar ``?`` and bind F1 to the current tab's topic."""
+        self._help_ref = "app-qc-viewer"
+        try:
+            from ..help import open_help
+            from PyQt6.QtGui import QKeySequence, QShortcut
+        except Exception:  # noqa: BLE001 - help is optional, the viewer is not
+            return
+        from .ui.icons import help_color
+
+        btn = QToolButton()
+        btn.setIcon(icon("help", color=help_color()))
+        btn.setIconSize(QSize(22, 22))
+        btn.setToolTip("Open help for the current tab  (F1)")
+        btn.setAutoRaise(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda: open_help(self._help_ref))
+        self._top_bar.add_right(btn)
+
+        sc = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
+        sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        sc.activated.connect(lambda: open_help(self._help_ref))
+
+    def _on_tab_changed_for_help(self, index: int) -> None:
+        """Point the help button at the topic for the tab now showing."""
+        label = self._tabs.tabText(index) if index >= 0 else ""
+        if label.startswith("DFM"):
+            self._help_ref = "app-qc-viewer#what-to-look-for"
+        elif label == "Params":
+            self._help_ref = "app-qc-viewer#the-params-tab"
+        elif label == "Feeding Summary":
+            self._help_ref = "concepts-metrics"
+        else:
+            self._help_ref = "app-qc-viewer"
 
 
 # ───────────────────────────────────────────────────────────────────────────

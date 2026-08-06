@@ -89,8 +89,11 @@ class ScriptEditorWindow(QMainWindow):
         self._btn_theme.setAutoRaise(True)
         self._btn_theme.setToolTip("Toggle light / dark theme")
         self._btn_theme.clicked.connect(self._toggle_theme)
+        self._install_help_button()
         self._top_bar.add_right(self._btn_theme)
         outer.addWidget(self._top_bar)
+
+        self._install_help_shortcut()
 
         # Subtitle bar (file path + dirty indicator)
         sub = QFrame()
@@ -485,6 +488,34 @@ class ScriptEditorWindow(QMainWindow):
         self._btn_theme.setIcon(
             icon("theme_dark" if _theme.resolved_mode() == "light" else "theme_light")
         )
+
+    # ==================================================================
+    # Help
+    # ==================================================================
+
+    def _install_help_button(self) -> None:
+        """Add the top-bar ``?``.  Silently skipped if help is unavailable."""
+        try:
+            from ...help import open_help
+        except Exception:  # noqa: BLE001 - help is optional, the editor is not
+            return
+        from ..ui.icons import help_color
+
+        btn = QToolButton()
+        btn.setIcon(icon("help", color=help_color()))
+        btn.setIconSize(QSize(22, 22))
+        btn.setAutoRaise(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setToolTip("Help for the script editor  (F1)")
+        btn.clicked.connect(lambda: open_help("scripts-editor"))
+        self._top_bar.add_right(btn)
+
+    def _install_help_shortcut(self) -> None:
+        try:
+            from ...help import install_help_shortcut
+        except Exception:  # noqa: BLE001
+            return
+        install_help_shortcut(self, "scripts-editor")
 
     # ==================================================================
     # Close handling

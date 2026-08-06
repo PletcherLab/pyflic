@@ -57,6 +57,7 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     # Misc
     "warning":    ("fa5s.exclamation-triangle",Category.QC),
     "info":       ("fa5s.info-circle",         Category.NEUTRAL),
+    "help":       ("fa5s.question-circle",     None),
     "play":       ("fa5s.play",                Category.LOAD),
     "stop":       ("fa5s.stop",                Category.QC),
     "browse":     ("fa5s.ellipsis-h",          Category.NEUTRAL),
@@ -70,16 +71,28 @@ def _tint_for(category: Category | None) -> str:
     return category_color(category)
 
 
-def icon(name: str, category: Category | None = None) -> QIcon:
+#: Amber used for help affordances, light/dark.  Matches the dirty-state
+#: colour already used by the script editor.
+HELP_COLOR: dict[str, str] = {"light": "#d97706", "dark": "#fbbf24"}
+
+
+def help_color() -> str:
+    """The amber that help buttons use in the current theme."""
+    return HELP_COLOR[resolved_mode()]
+
+
+def icon(name: str, category: Category | None = None, color: str | None = None) -> QIcon:
     """Return a themed QIcon for *name*.
 
     *name* is either a logical key (``"load"``) or an explicit qtawesome
     glyph (``"fa5s.folder-open"``).  *category* overrides the default
-    tint registered for that key.
+    tint registered for that key; *color* overrides both with an explicit
+    CSS colour, for affordances that sit outside the category palette.
     """
     if name in _GLYPHS:
         glyph, default_category = _GLYPHS[name]
     else:
         glyph, default_category = name, None
-    color = _tint_for(category if category is not None else default_category)
+    if color is None:
+        color = _tint_for(category if category is not None else default_category)
     return qta.icon(glyph, color=color)

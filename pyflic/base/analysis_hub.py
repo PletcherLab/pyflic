@@ -401,7 +401,20 @@ class AnalysisHubWindow(QMainWindow):
             self._sidebar.add_item(key, label, icon_name, category=cat)
             self._sidebar_keys.append(key)
         self._sidebar.add_stretch()
-        self._sidebar.itemSelected.connect(self._scroll_to_card)
+        self._sidebar.add_separator()
+        _help_item = self._sidebar.add_item(
+            "help", "Help", "help",
+            category=Category.NEUTRAL,
+            tooltip="Open the pyflic help window  (F1)",
+        )
+        # Amber, matching the [?] buttons on the cards.
+        from .ui.icons import help_color as _help_color
+
+        _help_item.setIcon(icon("help", color=_help_color()))
+        # Help opens a window rather than scrolling to a card, so it must not
+        # take the sidebar's checked state away from the current section.
+        _help_item.setCheckable(False)
+        self._sidebar.itemSelected.connect(self._on_sidebar_selected)
 
         # ── Cards (built once; Analyze / Plots get rebuilt on meta refresh)
         self._scroll = QScrollArea()
@@ -446,6 +459,7 @@ class AnalysisHubWindow(QMainWindow):
         # rebuilt dynamically after meta is known.
         self._build_card_scripts()
         self._install_wheel_guards()
+        self._install_card_help()
 
         # ── Output / Plot dock ────────────────────────────────────────────
         self._log = OutputLog()
@@ -498,6 +512,42 @@ class AnalysisHubWindow(QMainWindow):
         avail = max(900, self.width() - 180)  # subtract sidebar
         cards_w = avail // 3
         self._main_split.setSizes([cards_w, avail - cards_w])
+
+    # ------------------------------------------------------------------
+    # Help
+    # ------------------------------------------------------------------
+
+    #: Card key → help topic reference.  Adding a card means adding a line
+    #: here; ``tests/test_help_refs.py`` fails if a reference goes stale.
+    _CARD_HELP: dict[str, str] = {
+        "project": "app-hub#project-card",
+        "load": "app-hub#load-card",
+        "analyze": "app-hub#analyze-card",
+        "plots": "plots-catalog",
+        "scripts": "scripts-overview",
+        "tools": "app-hub#tools-card",
+    }
+
+    def _install_card_help(self) -> None:
+        """Put a ``?`` in each card's title row and bind F1.
+
+        Help is imported here rather than at module scope so a failure in the
+        help package can never stop the hub from starting.
+        """
+        try:
+            from ..help import HelpButton, install_help_shortcut
+        except Exception:  # noqa: BLE001 - help is optional, the hub is not
+            return
+        for key, ref in self._CARD_HELP.items():
+            card = self._cards.get(key)
+            if card is not None:
+                card.add_title_widget(HelpButton(ref, card))
+        install_help_shortcut(self, "app-hub")
+
+    def _open_help(self) -> None:
+        from ..help import open_help
+
+        open_help("getting-started")
 
     # ------------------------------------------------------------------
     # Card builders
@@ -1332,6 +1382,12 @@ class AnalysisHubWindow(QMainWindow):
         self._btn_theme.setIcon(
             icon("theme_dark" if _theme.resolved_mode() == "light" else "theme_light")
         )
+
+    def _on_sidebar_selected(self, key: str) -> None:
+        if key == "help":
+            self._open_help()
+            return
+        self._scroll_to_card(key)
 
     def _scroll_to_card(self, key: str) -> None:
         card = self._cards.get(key)

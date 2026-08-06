@@ -168,6 +168,22 @@ def _set_param_value(widget: QWidget, value: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _param_help_button(key: str, parent: QWidget | None = None):
+    """A ``?`` opening the parameter reference at *key*, or ``None``.
+
+    Returns ``None`` if the help package is unavailable, so the config editor
+    keeps working with no help installed.
+    """
+    try:
+        from ..help import HelpButton
+    except Exception:  # noqa: BLE001 - help is optional, the editor is not
+        return None
+    return HelpButton(
+        f"reference-parameters#{key}", parent,
+        tooltip=f"What does {key} do?",
+    )
+
+
 class ParamsForm(QWidget):
     """
     A QFormLayout-based widget for all non-chamber_size Parameters fields.
@@ -219,6 +235,8 @@ class ParamsForm(QWidget):
                 if key in ("pi_direction", "correct_for_dual_feeding"):
                     self._two_well_rows.append((form, row_idx))
 
+                help_btn = _param_help_button(key, self)
+
                 if override_mode:
                     cb = QCheckBox()
                     cb.setChecked(False)
@@ -233,6 +251,16 @@ class ParamsForm(QWidget):
                     rl.addWidget(cb)
                     rl.addWidget(widget)
                     rl.addStretch()
+                    if help_btn is not None:
+                        rl.addWidget(help_btn)
+                    form.addRow(label, row)
+                elif help_btn is not None:
+                    row = QWidget()
+                    rl = QHBoxLayout(row)
+                    rl.setContentsMargins(0, 0, 0, 0)
+                    rl.setSpacing(4)
+                    rl.addWidget(widget, 1)
+                    rl.addWidget(help_btn)
                     form.addRow(label, row)
                 else:
                     form.addRow(label, widget)
@@ -641,7 +669,32 @@ class FLICConfigEditor(QMainWindow):
 
         self._build_menu()
         self._build_ui()
+        self._install_help()
         self._auto_load(initial_path)
+
+    def _install_help(self) -> None:
+        """Add the Help menu and the F1 shortcut.
+
+        Guarded so the editor still starts if the help package is missing.
+        """
+        try:
+            from ..help import install_help_shortcut, open_help
+        except Exception:  # noqa: BLE001 - help is optional, the editor is not
+            return
+        install_help_shortcut(self, "app-config-editor")
+        help_menu = self.menuBar().addMenu("&Help")
+        act_this = QAction(icon("info"), "Config Editor &help", self)
+        act_this.setShortcut("F1")
+        act_this.triggered.connect(lambda: open_help("app-config-editor"))
+        help_menu.addAction(act_this)
+        act_params = QAction(icon("sensitivity", category=Category.ANALYZE),
+                             "&Parameter reference", self)
+        act_params.triggered.connect(lambda: open_help("reference-parameters"))
+        help_menu.addAction(act_params)
+        help_menu.addSeparator()
+        act_start = QAction(icon("home"), "&Getting started", self)
+        act_start.triggered.connect(lambda: open_help("getting-started"))
+        help_menu.addAction(act_start)
 
     # ------------------------------------------------------------------
     # Menu
