@@ -1,7 +1,11 @@
 """
 Unified ``pyflic`` CLI entry.
 
-Dispatches to subcommands::
+Run with no arguments to launch the analysis hub::
+
+    pyflic                        -- launch the analysis hub GUI
+
+Or dispatch to a subcommand::
 
     pyflic config [project_dir]   -- launch the config editor GUI
     pyflic qc <project_dir>       -- launch the QC viewer
@@ -32,27 +36,69 @@ def _print_help() -> None:
     print(__doc__ or "pyflic CLI")
 
 
+_NO_DISPLAY_HINT = (
+    "pyflic help needs a graphical display.\n"
+    "On a headless machine, read the topics as plain text instead:\n"
+    "  python -c \"from pyflic.help import load; print(load('getting-started').source)\"\n"
+    "Topic names are listed by:\n"
+    "  python -c \"from pyflic.help import all_topic_ids; print(*all_topic_ids(), sep=chr(10))\""
+)
+
+
 def _launch_help(topic: str | None) -> None:
-    """Open the help window as a standalone application."""
-    from PyQt6.QtWidgets import QApplication
+    """Open the help window as a standalone application.
+
+    Note that a missing or unusable Qt platform plugin aborts inside Qt
+    itself (``qFatal``) before Python regains control, so that particular
+    failure cannot be turned into a friendly message here.  Everything that
+    *is* catchable gets one.
+    """
+    try:
+        from PyQt6.QtWidgets import QApplication
+    except Exception as exc:  # noqa: BLE001
+        print(f"could not load the Qt GUI toolkit: {exc}", file=sys.stderr)
+        print(_NO_DISPLAY_HINT, file=sys.stderr)
+        raise SystemExit(1) from exc
 
     from pyflic.base.ui import apply_theme
     from pyflic.base.ui import settings as ui_settings
-    from pyflic.help import open_help
+    from pyflic.help import available, open_help
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    if topic is not None and topic not in available():
+        print(f"unknown help topic: {topic!r}", file=sys.stderr)
+        print("available topics:", file=sys.stderr)
+        for name in available():
+            print(f"  {name}", file=sys.stderr)
+        raise SystemExit(2)
+
+    try:
+        app = QApplication.instance() or QApplication(sys.argv)
+    except Exception as exc:  # noqa: BLE001
+        print(f"could not start a graphical session: {exc}", file=sys.stderr)
+        print(_NO_DISPLAY_HINT, file=sys.stderr)
+        raise SystemExit(1) from exc
+
     apply_theme(app, mode=ui_settings.get("theme", "auto"))
     win = open_help(topic)
     if win is None:
         print("could not open the help window", file=sys.stderr)
+        print(_NO_DISPLAY_HINT, file=sys.stderr)
         raise SystemExit(1)
     app.exec()
 
 
 def main() -> None:
     argv = sys.argv[1:]
-    if not argv or argv[0] in ("-h", "--help"):
+    if argv and argv[0] in ("-h", "--help"):
         _print_help()
+        return
+    if not argv:
+        # Bare ``pyflic`` launches the analysis hub — the same thing
+        # ``pyflic-hub`` does.  Subcommands below are unaffected, and
+        # ``pyflic --help`` still prints the command list.
+        from pyflic.base.analysis_hub import main as hub_main
+        sys.argv = ["pyflic-hub"]
+        hub_main()
         return
     cmd, *rest = argv
 

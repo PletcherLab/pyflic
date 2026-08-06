@@ -7,7 +7,7 @@ GUI → help, so removing this package breaks only its call sites.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QToolButton, QWidget
 
@@ -42,23 +42,56 @@ class HelpButton(QToolButton):
     ) -> None:
         super().__init__(parent)
         self._topic_id, self._anchor = _topics.parse_ref(ref)
-        col = help_color()
-        self.setIcon(icon("help", color=col))
+        self._size = size
+        self._color: str | None = None
+        self._restyling = False
         self.setIconSize(QSize(size - 4, size - 4))
         self.setFixedSize(size, size)
         self.setAutoRaise(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setToolTip(tooltip or "Open help for this section")
-        self.setStyleSheet(
-            f"QToolButton {{"
-            f"  border: none;"
-            f"  border-radius: {size // 2}px;"
-            f"  background: transparent;"
-            f"}}"
-            f"QToolButton:hover {{ background: {col}; }}"
-        )
+        self._apply_theme()
         self.clicked.connect(self._open)
+
+    def _apply_theme(self) -> None:
+        """Re-resolve the amber for the theme currently in force."""
+        if self._restyling:
+            return
+        col = help_color()
+        if col == self._color:
+            return
+        self._color = col
+        self._restyling = True
+        try:
+            self.setIcon(icon("help", color=col))
+            self.setStyleSheet(
+                f"QToolButton {{"
+                f"  border: none;"
+                f"  border-radius: {self._size // 2}px;"
+                f"  background: transparent;"
+                f"}}"
+                f"QToolButton:hover {{ background: {col}; }}"
+            )
+        finally:
+            self._restyling = False
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Re-tint when the application theme changes.
+
+        The hub and QC viewer both toggle light/dark at runtime.  Resolving
+        the colour once in ``__init__`` left every help button showing the
+        previous theme's amber until the app was restarted.
+
+        Only palette changes are watched.  ``StyleChange`` would recurse —
+        :meth:`_apply_theme` calls ``setStyleSheet``, which emits it.
+        """
+        if event.type() in (
+            QEvent.Type.PaletteChange,
+            QEvent.Type.ApplicationPaletteChange,
+        ):
+            self._apply_theme()
+        super().changeEvent(event)
 
     @property
     def ref(self) -> str:

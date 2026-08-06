@@ -57,6 +57,7 @@ Both working means the package and its GUI dependencies are installed correctly.
 
 | Command | What it does |
 |---|---|
+| `pyflic` | Analysis Hub — the same as `pyflic hub` |
 | `pyflic hub [project]` | Analysis Hub |
 | `pyflic config [project]` | Config Editor |
 | `pyflic qc <project>` | QC Viewer |

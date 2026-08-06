@@ -1,5 +1,13 @@
 # Help topics are the single source of user prose; guides are derived
 
+> **Status:** accepted; amended in part by [ADR-0004](0004-help-rendering-and-reference-validation.md) after implementation.
+>
+> - The **build-time markdown → HTML step** specified below is superseded for the app's rendering path: topics are rendered at runtime via `QTextBrowser.setMarkdown`, with no build step and no generated artefact.
+> - The **web-output requirement stands unchanged** — install and security-bypass instructions must be readable before the app will open. It is unimplemented, and is owned by `DEPLOYMENT-PLAN.md` Phase 3.2.
+> - **`doc/` was deleted rather than repopulated** with derived guides. Guides now exist only as orderings in `pyflic/help/toc.py`, and the README links into `pyflic/help/content/`, which GitHub renders. The hand-maintained PDFs had drifted a month behind their sources.
+>
+> The topic model itself — one topic per file, single source, guides never authored directly — is unchanged and in force.
+
 ## Context
 
 User-facing prose lives in `doc/` as four long documents — `USAGE.md` (1,007 lines), `SCRIPTS.md`, `PLOTS.md`, `INSTALL.md` — plus generated PDFs. `CONTEXT.md` already defines a **help topic** as *"one addressable, self-contained piece of user-facing explanation"* and requires that *"the topic is the only copy of the text"*, but no help system exists in the code and none of the four documents satisfies that definition. `USAGE.md` alone spans the ten-step event-detection algorithm, the full YAML schema, the script reference and the CLI.

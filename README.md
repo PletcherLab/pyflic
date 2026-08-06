@@ -80,6 +80,7 @@ pyflic report my_experiment/
 
 | Command | Description |
 |---|---|
+| `pyflic` | Launch the analysis hub GUI (same as `pyflic hub`) |
 | `pyflic config` | Launch the config editor GUI |
 | `pyflic hub [project]` | Launch the analysis hub GUI |
 | `pyflic qc <project>` | Launch the QC viewer |

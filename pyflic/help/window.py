@@ -71,6 +71,7 @@ class HelpWindow(QMainWindow):
         self._history: list[tuple[str, str | None, str | None]] = []
         self._pos = -1
         self._syncing = False
+        self._nav_generation = 0
 
         self._build_toolbar()
         self._build_body()
@@ -246,6 +247,8 @@ class HelpWindow(QMainWindow):
         return None
 
     def _render(self, topic_id: str, anchor: str | None, guide_id: str | None) -> None:
+        # Bumped on every render so queued work can tell whether it is stale.
+        self._nav_generation += 1
         topic = _topics.load(topic_id)
         source = topic.source if topic else _MISSING_MD.format(topic_id=topic_id)
 
@@ -260,7 +263,14 @@ class HelpWindow(QMainWindow):
             # before ``show()``, and a document that has not been laid out
             # yet reports the wrong cursor rect, landing the reader a couple
             # of sections off target.
-            QTimer.singleShot(0, lambda a=anchor: self._scroll_to_heading(a))
+            #
+            # The generation guard matters: navigating away before the timer
+            # fires would otherwise scroll the *new* topic to a heading that
+            # happens to share the old topic's anchor.
+            generation = self._nav_generation
+            QTimer.singleShot(
+                0, lambda a=anchor, g=generation: self._scroll_if_current(a, g)
+            )
 
         self._sync_tree(topic_id, guide_id)
         self._sync_footer(topic_id, guide_id)
@@ -284,33 +294,62 @@ class HelpWindow(QMainWindow):
         ``setMarkdown`` builds the document directly rather than parsing HTML,
         so ``setDefaultStyleSheet`` never applies to it.  Formatting is applied
         by walking the blocks instead — the same walk anchors use.
+
+        The selection is made explicitly from start-of-block to end-of-block.
+        ``SelectionType.BlockUnderCursor`` looks equivalent but also spans the
+        *preceding* block separator, which propagates the heading's block
+        format onto the paragraph above it — giving ordinary paragraphs a
+        non-zero ``headingLevel()`` and corrupting the metadata that
+        :meth:`_scroll_to_heading` matches against.
         """
         doc = self._view.document()
         base = self._view.font().pointSizeF()
         if base <= 0:
             base = 10.0
 
-        cursor = QTextCursor(doc)
-        cursor.beginEditBlock()
+        # Collect first: mutating block formats while iterating the document
+        # invalidates the blocks we are walking.
+        targets: list[tuple[int, int]] = []
         block = doc.begin()
         while block.isValid():
             level = block.blockFormat().headingLevel()
             if level:
+                targets.append((block.position(), level))
+            block = block.next()
+
+        if not targets:
+            return
+
+        cursor = QTextCursor(doc)
+        cursor.beginEditBlock()
+        try:
+            for position, level in targets:
                 scale, space_above = self._HEADING_STYLE.get(level, (1.0, 8))
                 char = QTextCharFormat()
                 char.setFontPointSize(base * scale)
                 char.setFontWeight(QFont.Weight.Bold)
 
-                blk = QTextBlockFormat(block.blockFormat())
+                c = QTextCursor(doc)
+                c.setPosition(position)
+                blk = QTextBlockFormat(c.blockFormat())
                 blk.setTopMargin(space_above)
                 blk.setBottomMargin(4)
+                c.setBlockFormat(blk)
 
-                c = QTextCursor(block)
-                c.select(QTextCursor.SelectionType.BlockUnderCursor)
+                c.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                c.movePosition(
+                    QTextCursor.MoveOperation.EndOfBlock,
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
                 c.mergeCharFormat(char)
-                c.mergeBlockFormat(blk)
-            block = block.next()
-        cursor.endEditBlock()
+        finally:
+            cursor.endEditBlock()
+
+    def _scroll_if_current(self, anchor: str, generation: int) -> bool:
+        """Scroll to *anchor* only if no navigation has happened since."""
+        if generation != self._nav_generation:
+            return False
+        return self._scroll_to_heading(anchor)
 
     def _scroll_to_heading(self, anchor: str) -> bool:
         """Scroll so the heading matching *anchor* sits at the top of the view.

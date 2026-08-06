@@ -84,22 +84,40 @@ def _content_path(topic_id: str) -> Path:
 
 
 @lru_cache(maxsize=None)
+def _read(topic_id: str, _stamp: tuple[int, int]) -> Topic | None:
+    """Read and parse one topic.  ``_stamp`` participates in the cache key."""
+    try:
+        return Topic(
+            id=topic_id,
+            source=_content_path(topic_id).read_text(encoding="utf-8"),
+        )
+    except OSError:
+        return None
+
+
 def load(topic_id: str) -> Topic | None:
     """Return the topic, or ``None`` when it does not exist or is unreadable.
 
     Never raises: a missing or corrupt topic degrades to ``None`` so a help
     button can never take down the app that hosts it.
+
+    Results are cached against the file's size and modification time, so an
+    edited topic is picked up without restarting — the shipped content never
+    changes at runtime, but authoring one with the app open is routine.
     """
     # Reject anything that could escape the content directory.
     if not topic_id or "/" in topic_id or "\\" in topic_id or topic_id.startswith("."):
         return None
-    path = _content_path(topic_id)
     try:
-        if not path.is_file():
-            return None
-        return Topic(id=topic_id, source=path.read_text(encoding="utf-8"))
+        stat = _content_path(topic_id).stat()
     except OSError:
         return None
+    return _read(topic_id, (stat.st_size, stat.st_mtime_ns))
+
+
+def clear_cache() -> None:
+    """Drop cached topic content.  Intended for tests and authoring tools."""
+    _read.cache_clear()
 
 
 def available() -> list[str]:
@@ -126,57 +144,83 @@ class SearchHit:
     snippet: str
 
 
-def search(query: str, *, limit: int = 60) -> list[SearchHit]:
-    """Case-insensitive substring search across every topic.
+#: Ranks, lowest first.  A whole-word match always beats a mid-word one, so a
+#: search for "pi" ranks the preference-index topics above "python-api".
+_RANK_TITLE_WORD, _RANK_HEADING_WORD, _RANK_BODY_WORD = 0, 1, 2
+_RANK_TITLE_SUB, _RANK_HEADING_SUB, _RANK_BODY_SUB = 3, 4, 5
 
-    Hits are attributed to the nearest preceding heading so a result can be
-    opened at the right place, and ranked so title matches surface first.
+#: Most hits to return from any single topic.  Without a cap, one long topic
+#: that mentions a common word fills the whole result list.
+_MAX_HITS_PER_TOPIC = 3
+
+
+def _snippet(text: str, q: str) -> str:
+    idx = text.lower().find(q)
+    start = max(0, idx - 40)
+    return ("…" if start else "") + text[start:start + 160]
+
+
+def search(query: str, *, limit: int = 60) -> list[SearchHit]:
+    """Case-insensitive search across every topic.
+
+    Hits are attributed to the nearest preceding heading so a result opens at
+    the right place.  Whole-word matches outrank mid-word ones, headings
+    outrank body text, and no single topic may dominate the results.
     """
     q = query.strip().lower()
     if len(q) < 2:
         return []
+    word_re = re.compile(rf"\b{re.escape(q)}", re.IGNORECASE)
 
-    hits: list[tuple[int, SearchHit]] = []
+    ranked: list[tuple[int, SearchHit]] = []
+
     for topic_id in available():
         topic = load(topic_id)
         if topic is None:
             continue
+
+        per_topic: list[tuple[int, SearchHit]] = []
+
+        # The title contributes at most one hit — not one per line, which
+        # previously let a title match promote a whole topic's worth of lines
+        # above everything else.
+        if q in topic.title.lower():
+            rank = _RANK_TITLE_WORD if word_re.search(topic.title) else _RANK_TITLE_SUB
+            per_topic.append(
+                (rank, SearchHit(topic_id, topic.title, None, topic.title))
+            )
+
         current: str | None = None
         for line in topic.source.splitlines():
-            m = _HEADING_RE.match(line)
-            if m:
-                current = m.group(2).strip()
+            heading = _HEADING_RE.match(line)
+            if heading:
+                current = heading.group(2).strip()
             if q not in line.lower():
                 continue
             text = line.strip().lstrip("#").strip()
             if not text:
                 continue
-            # Rank: title match beats heading match beats body match.
-            if q in topic.title.lower():
-                rank = 0
-            elif m:
-                rank = 1
+            is_word = bool(word_re.search(text))
+            if heading:
+                rank = _RANK_HEADING_WORD if is_word else _RANK_HEADING_SUB
             else:
-                rank = 2
-            idx = text.lower().find(q)
-            start = max(0, idx - 40)
-            snippet = ("…" if start else "") + text[start:start + 160]
-            hits.append(
-                (rank, SearchHit(topic_id, topic.title, current, snippet))
+                rank = _RANK_BODY_WORD if is_word else _RANK_BODY_SUB
+            per_topic.append(
+                (rank, SearchHit(topic_id, topic.title, current, _snippet(text, q)))
             )
-            if len(hits) >= limit * 3:
+
+        # Keep only this topic's strongest hits, one per heading.
+        per_topic.sort(key=lambda pair: pair[0])
+        seen_headings: set[str | None] = set()
+        kept = 0
+        for rank, hit in per_topic:
+            if hit.heading in seen_headings:
+                continue
+            seen_headings.add(hit.heading)
+            ranked.append((rank, hit))
+            kept += 1
+            if kept >= _MAX_HITS_PER_TOPIC:
                 break
 
-    hits.sort(key=lambda pair: pair[0])
-    # Collapse duplicates from the same heading of the same topic.
-    seen: set[tuple[str, str | None]] = set()
-    out: list[SearchHit] = []
-    for _, hit in hits:
-        key = (hit.topic_id, hit.heading)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(hit)
-        if len(out) >= limit:
-            break
-    return out
+    ranked.sort(key=lambda pair: pair[0])
+    return [hit for _, hit in ranked[:limit]]

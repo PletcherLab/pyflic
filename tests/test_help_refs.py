@@ -174,6 +174,55 @@ def test_gui_help_references_resolve():
     assert seen > 0, "found no help call sites — has the regex drifted from the code?"
 
 
+def test_hub_card_help_map_resolves():
+    """Every value in the hub's card → topic map must resolve.
+
+    These never appear as a literal inside a ``HelpButton(...)`` call, so the
+    source scan above cannot see them.
+    """
+    pytest.importorskip("PyQt6")
+    from pyflic.base.analysis_hub import AnalysisHubWindow
+
+    mapping = AnalysisHubWindow._CARD_HELP
+    assert mapping, "_CARD_HELP is empty — has it moved?"
+
+    problems: list[str] = []
+    for card_key, ref in mapping.items():
+        topic_id, anchor = _topics.parse_ref(ref)
+        topic = _topics.load(topic_id)
+        if topic is None:
+            problems.append(f"card {card_key!r}: unknown topic {topic_id!r}")
+        elif anchor and not topic.has_anchor(anchor):
+            problems.append(f"card {card_key!r}: {topic_id}#{anchor} — no such heading")
+
+    assert not problems, "dangling card help refs:\n  " + "\n  ".join(problems)
+
+
+def test_assigned_help_refs_resolve():
+    """``self._help_ref = "..."`` assignments must resolve too.
+
+    The QC viewer retargets its help button per tab this way rather than
+    through a call site.
+    """
+    pattern = re.compile(r"_help_ref\s*=\s*[\"'](?P<ref>[a-z0-9\-]+(?:\#[^\"']+)?)[\"']")
+    problems: list[str] = []
+    seen = 0
+
+    for path in _iter_gui_sources():
+        for m in pattern.finditer(path.read_text(encoding="utf-8")):
+            seen += 1
+            topic_id, anchor = _topics.parse_ref(m.group("ref"))
+            topic = _topics.load(topic_id)
+            rel = path.relative_to(_GUI_ROOT.parent)
+            if topic is None:
+                problems.append(f"{rel}: unknown topic {topic_id!r}")
+            elif anchor and not topic.has_anchor(anchor):
+                problems.append(f"{rel}: {topic_id}#{anchor} — no such heading")
+
+    assert not problems, "dangling assigned help refs:\n  " + "\n  ".join(problems)
+    assert seen > 0, "found no _help_ref assignments — has the QC viewer changed?"
+
+
 def test_every_gui_parameter_has_a_reference_heading():
     """Each parameter control's ``?`` must land on a real heading.
 
@@ -220,3 +269,46 @@ def test_search_finds_a_known_term():
     hits = _topics.search("link gap")
     assert hits, "expected search to find the link gap"
     assert any(h.topic_id in ("concepts-licks-events", "reference-parameters") for h in hits)
+
+
+def test_search_prefers_whole_word_matches():
+    """A search for "pi" must not be dominated by "python-api"."""
+    hits = _topics.search("pi")
+    assert hits
+    top = [h.topic_id for h in hits[:4]]
+    assert "python-api" not in top[:1], (
+        f"mid-word match ranked first: {top}"
+    )
+
+
+def test_search_does_not_let_one_topic_dominate():
+    for query in ("feeding", "licks", "chamber"):
+        hits = _topics.search(query)
+        if not hits:
+            continue
+        counts: dict[str, int] = {}
+        for hit in hits:
+            counts[hit.topic_id] = counts.get(hit.topic_id, 0) + 1
+        worst = max(counts.values())
+        assert worst <= 3, (
+            f"query {query!r}: one topic contributed {worst} hits"
+        )
+        assert len(counts) > 1, f"query {query!r} returned only one topic"
+
+
+def test_topic_cache_notices_edits(tmp_path, monkeypatch):
+    """An edited topic is picked up without restarting."""
+    content = _topics.CONTENT_DIR
+    probe = content / "_cache_probe.md"
+    probe.write_text("# One\n\nfirst\n", encoding="utf-8")
+    try:
+        first = _topics.load("_cache_probe")
+        assert first is not None and first.title == "One"
+        # Same size would still be a distinct mtime; change both to be sure.
+        probe.write_text("# Two\n\nsecond body\n", encoding="utf-8")
+        second = _topics.load("_cache_probe")
+        assert second is not None
+        assert second.title == "Two", "stale content served after edit"
+    finally:
+        probe.unlink(missing_ok=True)
+        _topics.clear_cache()

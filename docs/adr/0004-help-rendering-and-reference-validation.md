@@ -39,15 +39,52 @@ three points where the implementation currently diverges from 0003.
   analysis pipeline cannot be affected. A missing topic renders a "topic not available"
   page rather than raising into the host app.
 
+- **`pyflic/__init__.py` imports its public API lazily (PEP 562).** The isolation above is
+  otherwise defeated by Python itself: importing *any* subpackage runs the parent
+  `__init__`, so `import pyflic.help` used to load the entire analysis stack — measured,
+  `pyflic.base.dfm`, `pyflic.base.algorithms.*`, pandas, numpy, statsmodels and plotnine
+  were all imported. `from pyflic import load_experiment_yaml` is unchanged; the modules
+  load on first attribute access. This also cut cold CLI startup from **5.8 s to 0.2 s**,
+  since `pyflic --help`, `pyflic version` and `pyflic help` never needed the numerical
+  stack.
+
+- **Help affordances are built only when help imports.** The hub queries
+  `_help_available()` before adding the sidebar Help item, so a broken or absent help
+  package leaves no dead control behind; `_open_help` stays guarded regardless.
+
+- **Deferred scrolls carry a navigation generation.** The anchor scroll is queued, so
+  navigating away before it fires would otherwise scroll the *newly opened* topic to a
+  heading it happens to share with the old one — `scripts-actions` and `plots-catalog`
+  both have "Sliding-window plots". The queued call is discarded if the generation
+  moved on.
+
+- **Heading formatting selects start-of-block to end-of-block explicitly.**
+  `QTextCursor.SelectionType.BlockUnderCursor` also spans the *preceding* block
+  separator, which propagated the heading's block format onto the paragraph above it.
+  Measured on `reference-parameters`: 16 real headings became 31 blocks reporting a
+  non-zero `headingLevel()` — corrupting the very metadata anchor resolution matches
+  against. `tests/test_help_window.py` asserts the document's heading set equals the
+  markdown's, for every topic.
+
+- **Help buttons re-tint on palette change.** `changeEvent` watches `PaletteChange` and
+  `ApplicationPaletteChange` only — never `StyleChange`, which `setStyleSheet` itself
+  emits and which recurses.
+
+- **Topic content is cached against file size and mtime,** so editing a topic with the app
+  open is picked up without a restart.
+
 - **A declarative auto-injecting registry was rejected** — matching on `objectName`
   strings that nothing validates fails silently when a widget is renamed, and is far
   harder to trace than an explicit call site.
 
 - **References are validated by test.** Topic ids and anchors are plain strings at every
   call site. `tests/test_help_refs.py` resolves all of them — TOC entries, guide members,
-  cross-topic links, same-page anchors, and the parameter key lists behind the runtime-built
-  refs — and fails on any dangling reference or any topic missing from the TOC. This is what
-  makes the content safe to rewrite.
+  cross-topic links, same-page anchors, the hub's `_CARD_HELP` map, the QC viewer's
+  per-tab `_help_ref` assignments, and the parameter key lists behind the runtime-built
+  refs — and fails on any dangling reference or any topic missing from the TOC. This is
+  what makes the content safe to rewrite. Note the shape of the gap this closed: a
+  literal-scanning regex silently sees *fewer* call sites than exist, and reports success.
+  Any new indirection needs its own check.
 
 - **`pyflic help` opens the help window.** It previously printed CLI usage; `-h` and
   `--help` still do, per the convention that flags carry usage and subcommands carry

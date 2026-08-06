@@ -134,6 +134,19 @@ _BATCH_SKIP_DIR_NAMES = frozenset({
 })
 
 
+def _help_available() -> bool:
+    """Whether the optional help package can be imported.
+
+    Help affordances are only built when this is true, so a missing or broken
+    ``pyflic.help`` leaves no dead controls behind in the UI.
+    """
+    try:
+        import pyflic.help  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 def _parse_scripts(cfg: dict) -> list[dict]:
     """Return list of script dicts from YAML config, or [] if none defined."""
     raw = cfg.get("scripts") or []
@@ -401,19 +414,21 @@ class AnalysisHubWindow(QMainWindow):
             self._sidebar.add_item(key, label, icon_name, category=cat)
             self._sidebar_keys.append(key)
         self._sidebar.add_stretch()
-        self._sidebar.add_separator()
-        _help_item = self._sidebar.add_item(
-            "help", "Help", "help",
-            category=Category.NEUTRAL,
-            tooltip="Open the pyflic help window  (F1)",
-        )
-        # Amber, matching the [?] buttons on the cards.
-        from .ui.icons import help_color as _help_color
+        if _help_available():
+            self._sidebar.add_separator()
+            _help_item = self._sidebar.add_item(
+                "help", "Help", "help",
+                category=Category.NEUTRAL,
+                tooltip="Open the pyflic help window  (F1)",
+            )
+            # Amber, matching the [?] buttons on the cards.
+            from .ui.icons import help_color as _help_color
 
-        _help_item.setIcon(icon("help", color=_help_color()))
-        # Help opens a window rather than scrolling to a card, so it must not
-        # take the sidebar's checked state away from the current section.
-        _help_item.setCheckable(False)
+            _help_item.setIcon(icon("help", color=_help_color()))
+            # Help opens a window rather than scrolling to a card, so it must
+            # not take the sidebar's checked state away from the current
+            # section.
+            _help_item.setCheckable(False)
         self._sidebar.itemSelected.connect(self._on_sidebar_selected)
 
         # ── Cards (built once; Analyze / Plots get rebuilt on meta refresh)
@@ -545,8 +560,15 @@ class AnalysisHubWindow(QMainWindow):
         install_help_shortcut(self, "app-hub")
 
     def _open_help(self) -> None:
-        from ..help import open_help
+        """Open the help window.  A no-op if the help package is unavailable.
 
+        The sidebar item is only added when help imports, but this stays
+        guarded so no other caller can raise into the GUI.
+        """
+        try:
+            from ..help import open_help
+        except Exception:  # noqa: BLE001 - help is optional, the hub is not
+            return
         open_help("getting-started")
 
     # ------------------------------------------------------------------

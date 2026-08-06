@@ -156,6 +156,26 @@ for issue in lint_flic_config("project/flic_config.yaml"):
     print(issue.format())
 ```
 
+## Jupyter notebooks
+
+A set of tutorial notebooks exists in the repository under `doc/ToBeDepricated/`:
+
+| Notebook | Covers |
+|---|---|
+| `01_GettingStarted.ipynb` | Loading experiments; the detection pipeline |
+| `02_GroupedAnalysis.ipynb` | Treatment groups and factorial designs |
+| `03_ChoiceChamberAnalysis.ipynb` | Two-well choice experiments and PI |
+| `HedonicFeeding.ipynb` | Hedonic feeding experiments |
+| `ProgressiveRatio.ipynb` | Progressive-ratio experiments |
+
+They are **deprecated** and will be removed in a future release. They exist for
+continuity with the original R workflow, and they are not updated alongside the code — if
+one disagrees with this help, the help is right.
+
+They are also not installed: they live in the repository, not in the package. Everything
+they demonstrate is covered by the hub, the [scripting system](scripts-overview.md), and
+the API above. New work should start there.
+
 ---
 
 Related: [Summary metrics](concepts-metrics.md) ·
