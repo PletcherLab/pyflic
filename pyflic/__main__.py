@@ -29,7 +29,8 @@ import sys
 from pathlib import Path
 
 
-_COMMANDS = ("config", "qc", "hub", "lint", "clear-cache", "report", "version", "help")
+_COMMANDS = ("config", "qc", "hub", "lint", "clear-cache", "report", "version",
+             "help", "selftest")
 
 
 def _print_help() -> None:
@@ -88,6 +89,12 @@ def _launch_help(topic: str | None) -> None:
 
 
 def main() -> None:
+    # Before anything else: a windowed frozen build has no console, and on
+    # Windows ``sys.stdout`` is ``None``, so the first stray ``print()``
+    # anywhere below would raise.  Cheap, and imports no Qt.
+    from pyflic.base.diagnostics import install as _install_diagnostics
+    _install_diagnostics(gui=True)
+
     argv = sys.argv[1:]
     if argv and argv[0] in ("-h", "--help"):
         _print_help()
@@ -106,9 +113,21 @@ def main() -> None:
         _launch_help(rest[0] if rest else None)
         return
 
+    if cmd == "selftest":
+        from pyflic.base.diagnostics import selftest
+        ok, lines = selftest()
+        for line in lines:
+            print(line)
+        print("\nPASS" if ok else "\nFAIL — send this output to the maintainers")
+        raise SystemExit(0 if ok else 1)
+
     if cmd == "version":
         from pyflic import __version__
-        print(__version__)
+        if rest and rest[0] in ("-v", "--verbose"):
+            from pyflic.base.diagnostics import env_summary_for_cli
+            print(env_summary_for_cli())
+        else:
+            print(__version__)
         return
 
     if cmd == "config":

@@ -8,7 +8,6 @@ QC viewer in separate processes. Runs analysis in a background thread.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import traceback
@@ -53,6 +52,7 @@ from .ui import (
     resolved_mode,
 )
 from .ui import settings as ui_settings
+from .utils import resolve_app_command as _resolve_cli
 
 # ---------------------------------------------------------------------------
 # Metric definitions for plot controls
@@ -248,11 +248,7 @@ def read_project_meta(project_dir: Path, config_name: str = "flic_config.yaml") 
     }
 
 
-def _resolve_cli(name: str, module: str) -> list[str]:
-    exe = shutil.which(name)
-    if exe:
-        return [exe]
-    return [sys.executable, "-m", module]
+from .utils import resolve_app_command as _resolve_cli
 
 
 # ---------------------------------------------------------------------------
@@ -1626,7 +1622,7 @@ class AnalysisHubWindow(QMainWindow):
         if not p.is_dir():
             QMessageBox.warning(self, "Invalid path", "Choose a valid project directory.")
             return
-        cmd = _resolve_cli("pyflic-config", "pyflic.base.config_editor")
+        cmd = _resolve_cli("pyflic-config", "pyflic.base.config_editor", "config")
         # Prefer opening the currently-selected config file directly; fall back
         # to the project directory so the editor's auto-load can find a default.
         target = p / self._active_config
@@ -1671,7 +1667,7 @@ class AnalysisHubWindow(QMainWindow):
         if not p.is_dir():
             QMessageBox.warning(self, "Invalid path", "Choose a valid project directory.")
             return
-        cmd = _resolve_cli("pyflic-qc", "pyflic.base.qc_viewer")
+        cmd = _resolve_cli("pyflic-qc", "pyflic.base.qc_viewer", "qc")
         cmd = [*cmd, str(p), str(self._qc_dir_for_range())]
         try:
             subprocess.Popen(cmd, cwd=str(p))  # noqa: S603
@@ -2819,6 +2815,8 @@ class AnalysisHubWindow(QMainWindow):
 
 
 def main() -> None:
+    from .diagnostics import install as _install_diagnostics
+    _install_diagnostics(gui=True)
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("pyflic Analysis Hub")
     apply_theme(app, mode=ui_settings.get("theme", "auto"))

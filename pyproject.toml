@@ -37,3 +37,7 @@ dev = [
     "ipykernel>=7.2.0",
     "pytest>=9.0.2",
 ]
+packaging = [
+    "pillow>=12.2.0",
+    "pyinstaller>=6.21.0",
+]

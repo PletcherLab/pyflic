@@ -49,7 +49,6 @@ from PyQt6.QtWidgets import QToolButton
 _Checked   = Qt.CheckState.Checked
 _Unchecked = Qt.CheckState.Unchecked
 
-import shutil
 import subprocess
 
 import pandas as pd
@@ -60,18 +59,7 @@ from .ui import (
     apply_theme, icon, resolved_mode,
 )
 from .ui import settings as ui_settings
-
-
-# ───────────────────────────────────────────────────────────────────────────
-# Utility
-# ───────────────────────────────────────────────────────────────────────────
-
-def _resolve_cli(name: str, module: str) -> list[str]:
-    """Return a command list for *name*, falling back to ``python -m module``."""
-    exe = shutil.which(name)
-    if exe:
-        return [exe]
-    return [sys.executable, "-m", module]
+from .utils import resolve_app_command as _resolve_cli
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -459,7 +447,7 @@ class LoadTab(QtWidgets.QWidget):
         if not p.is_dir():
             self._status_label.setText(f"Not a directory: {p}")
             return
-        cmd = _resolve_cli("pyflic-config", "pyflic.base.config_editor")
+        cmd = _resolve_cli("pyflic-config", "pyflic.base.config_editor", "config")
         try:
             subprocess.Popen(cmd, cwd=str(p))   # noqa: S603
             self._status_label.setText(f"Launched pyflic-config in {p.name}/")
@@ -1456,6 +1444,9 @@ class MainWindow(QtWidgets.QMainWindow):
 # ───────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    from .diagnostics import install as _install_diagnostics
+    _install_diagnostics(gui=True)
+
     if len(sys.argv) > 3:
         print("Usage: pyflic-qc [project_dir [qc_dir]]", file=sys.stderr)
         sys.exit(1)

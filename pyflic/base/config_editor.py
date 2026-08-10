@@ -1302,6 +1302,9 @@ def launch() -> None:
     ``flic_config.yaml``).  When omitted, looks for ``flic_config.yaml`` in
     the current working directory.
     """
+    from .diagnostics import install as _install_diagnostics
+    _install_diagnostics(gui=True)
+
     app = QApplication.instance() or QApplication(sys.argv)
     apply_theme(app, mode=ui_settings.get("theme", "auto"))
     initial_path = sys.argv[1] if len(sys.argv) > 1 else None

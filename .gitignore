@@ -210,3 +210,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Written by the packaging build (packaging/build.py) just before freezing.
+pyflic/_version.py

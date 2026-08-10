@@ -11,7 +11,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-_CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "pyflic"
+from ..utils import config_dir as _config_dir
+
+_CONFIG_DIR = _config_dir()
 _CONFIG_FILE = _CONFIG_DIR / "ui.json"
 
 _DEFAULTS: dict[str, Any] = {

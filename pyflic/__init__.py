@@ -20,7 +20,16 @@ from typing import TYPE_CHECKING, Any
 try:
     __version__: str = _pkg_version("pyflic")
 except PackageNotFoundError:
-    __version__ = "unknown"
+    # A frozen bundle has no ``.dist-info`` unless the build explicitly copies
+    # it, so ``_version.py`` — written by the packaging build just before
+    # freezing — is the fallback.  Without one of the two, every frozen build
+    # reports "unknown", which is worthless on a bug report: there is no update
+    # mechanism, so the version a user reads back is the only thing identifying
+    # what they are running.
+    try:
+        from ._version import __version__  # type: ignore[no-redef]
+    except ImportError:
+        __version__ = "unknown"
 
 if TYPE_CHECKING:  # pragma: no cover - for type checkers and IDEs only
     from .base.analytics import (
