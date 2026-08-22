@@ -160,7 +160,7 @@ def write_experiment_report(
     if path is None:
         out_dir = experiment.analysis_dir
         if out_dir is None:
-            raise ValueError("path must be given when experiment has no project_dir")
+            raise ValueError("path must be given when experiment has no experiment_dir")
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / "experiment_report.pdf"
     path = Path(path)

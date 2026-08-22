@@ -1,28 +1,74 @@
-# Experiment types
+# Experiment types and chamber layouts
 
-`global.experiment_type` selects which analysis pyflic runs. All four share the same
-signal processing and bout detection; they differ in what they compute *afterwards* and
-which plots they can draw.
+Two things used to be one setting, and separating them is the biggest change in how a
+config is written.
+
+- An **Experiment Type** is the *assay* — the top-level thing a scientist chooses. It
+  selects a chamber layout and constrains everything else: the required `well_names`, the
+  facet cutoffs and phase names, the default quality cutoffs, which analyses run, which
+  plots the report contains.
+- A **Chamber Layout** is the *hardware* — how many wells a chamber has. `single_well` or
+  `two_well`. Several different assays share one layout.
+
+`two_well` was never an assay. It described a plate, which is why a hedonic experiment had
+to be "a kind of two-well experiment" to exist at all. Now it is what it always was.
+
+## What a config says
+
+A **typed** config names its type and says nothing about the layout — the type owns it,
+and the value is derived rather than written to disk:
 
 ```yaml
 global:
-  experiment_type: two_well
+  experiment_type: Hedonic
+  well_names: {A: S5, B: S5Y5}
 ```
 
-If you omit it, pyflic chooses based on `chamber_size` — `1` gives single-well, `2` gives
-two-well. Set it explicitly anyway: hedonic and progressive-ratio experiments both use
-`chamber_size: 2` and cannot be inferred.
+Stating `chamber_layout` or `params.chamber_size` in a typed config is an error. There is no
+longer a check that the two agree, because they can no longer disagree — the config does not
+get a vote.
 
-## The four types
+A **Custom** experiment is the absence of a chosen type. It states its layout directly:
 
-| Value | Chamber size | Use it when |
+```yaml
+global:
+  chamber_layout: two_well
+```
+
+A config with no `experiment_type` key **is** a Custom Experiment. That is today's freeform
+mode, with no type-level constraints applied.
+
+## The shipped types
+
+| `experiment_type` | Layout | Use it when |
 |---|---|---|
-| `single_well` | 1 | 12 independent wells per DFM, one food source each |
-| `two_well` | 2 | Choice assays — two options per fly, preference index |
-| `hedonic` | 2 | Two-well designs where bout *duration* is the measure of interest |
-| `progressive_ratio` | 2 | Progressive-ratio schedules with a breakpoint |
+| *(omitted)* / `Custom` | as stated | No type-level constraints wanted |
+| `Hedonic` | `two_well` | Two-well choice designs where bout duration matters |
+| `ProgressiveRatio` | `two_well` | Progressive-ratio schedules with a breakpoint |
 
-## `single_well`
+## Migrating
+
+`experiment_type: two_well` and `experiment_type: single_well` are no longer experiment
+types. A config using either fails to load with the replacement spelled out:
+
+```yaml
+# before
+global:
+  experiment_type: two_well
+  params: {chamber_size: 2}
+
+# after
+global:
+  chamber_layout: two_well
+```
+
+Run `pyflic lint` on a folder to see every config that needs this.
+
+## The layouts
+
+### `single_well`
+
+
 
 The simplest case. Each of the 12 wells is its own chamber with its own fly and its own
 treatment, giving 12 chambers per DFM. There is no preference index — with one food source
@@ -31,7 +77,7 @@ there is no neighbouring well to bleed in.
 
 Use it for consumption assays: how much did each treatment group eat.
 
-## `two_well`
+### `two_well`
 
 Wells are paired into 6 chambers per DFM, each holding one fly with two options.
 Everything single-well reports is reported per well, plus the **preference index**. This
@@ -41,7 +87,7 @@ The details that matter here — `pi_direction`, counterbalancing, and dual-feed
 correction — are covered in
 [Two-well choice and the preference index](concepts-two-well-pi.md).
 
-## `hedonic`
+### Hedonic
 
 A two-well design analysed with attention to **how long** bouts last rather than how many
 there are. The reasoning is that palatability shows up in bout duration: a fly presented
@@ -65,7 +111,7 @@ how much it actually observed.
 Hedonic experiments also get a dedicated plot contrasting Well A and Well B median
 durations, faceted by treatment.
 
-## `progressive_ratio`
+### Progressive Ratio
 
 A schedule in which the effort required for each reward increases over the session. The
 measure of interest is the **breakpoint** — the point at which the fly stops working for

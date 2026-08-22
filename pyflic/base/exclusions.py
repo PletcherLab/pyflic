@@ -23,13 +23,13 @@ _FILENAME = "remove_chambers.csv"
 _FIELDNAMES = ["group", "dfm_id", "chamber", "note"]
 
 
-def read_exclusions(project_dir: str | Path) -> dict[str, dict[int, list[int]]]:
+def read_exclusions(experiment_dir: str | Path) -> dict[str, dict[int, list[int]]]:
     """Read ``remove_chambers.csv`` and return ``{group: {dfm_id: [chamber, ...]}}``.
 
     Returns an empty dict if the file does not exist or cannot be parsed.
     Chamber lists within each group/DFM are sorted ascending.
     """
-    path = Path(project_dir) / _FILENAME
+    path = Path(experiment_dir) / _FILENAME
     if not path.exists():
         return {}
     result: dict[str, dict[int, list[int]]] = {}
@@ -58,7 +58,7 @@ def read_exclusions(project_dir: str | Path) -> dict[str, dict[int, list[int]]]:
 
 
 def write_exclusions(
-    project_dir: str | Path,
+    experiment_dir: str | Path,
     group: str,
     exclusions_by_dfm: dict[int, list[int]],
     notes: dict[tuple[int, int], str] | None = None,
@@ -71,7 +71,7 @@ def write_exclusions(
 
     Parameters
     ----------
-    project_dir:
+    experiment_dir:
         Project root directory (``remove_chambers.csv`` lives here).
     group:
         Name of the exclusion group to update (e.g. ``"general"``).
@@ -86,7 +86,7 @@ def write_exclusions(
     Path
         Absolute path to the written ``remove_chambers.csv``.
     """
-    path = Path(project_dir) / _FILENAME
+    path = Path(experiment_dir) / _FILENAME
     notes = notes or {}
 
     # Preserve rows that belong to other groups

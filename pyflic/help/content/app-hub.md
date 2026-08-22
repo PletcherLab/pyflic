@@ -3,110 +3,82 @@
 The main pyflic application, and where most work happens.
 
 ```bash
-pyflic hub my_experiment/
+pyflic hub my_project/
 ```
 
-The project argument is optional — run `pyflic hub` and choose a folder from the Project
-card.
+The argument is optional — run `pyflic hub` and choose a folder from the Project panel.
+Whatever you pass, pyflic works out what it is from its marker file: a `project.yaml` means
+a Project, a `flic_config.yaml` means an Experiment Directory, and a folder of Projects is
+a Batch.
 
 ## Layout
 
-A navigation rail on the left jumps to six cards on the right; the output panel and plot
-tabs sit alongside. Cards appear only when they apply, so a single-well experiment shows no
-preference-index controls and only a hedonic experiment shows the hedonic plot.
+A horizontal **tile strip** runs across the top: Batch · Project · Analyze · Plots ·
+Scripts · AI · Tools, with a **status readout** filling the strip to their right. Below it
+is a full-width output and plots area.
 
-| Card | What it holds |
-|---|---|
-| **Project** | Choose the project directory, pick the active configuration, batch toggles |
-| **Load** | Load the experiment, remove chambers |
-| **Analyze** | Summaries, CSV exports, statistics |
-| **Plots** | Interactive figures |
-| **Scripts** | Run a script, run all scripts |
-| **Tools** | Lint, compare configurations, clear the cache |
+Each tile shows only live status — how many replicates, which one is loaded, how many
+scripts. All the *controls* live in the tile's **anchored panel**, which drops down when
+you click the tile. One panel is open at a time; click the tile again, click anywhere in
+the background, or press Esc to close it.
 
-## Project card
+**Tiles never move or hide.** A tile that does not apply yet is *dimmed* — Analyze is dim
+until a replicate is loaded — but it stays clickable, because its panel holds the control
+that fixes the missing state. The strip is a map, not a menu that rearranges itself.
 
-Sets the project directory and the **active configuration** — the YAML currently driving
-the hub. If your project holds several configurations, this dropdown is how you switch
-between them.
+## Project-first
 
-- **YAML info** — a summary of every configuration in the folder: experiment type, chamber
-  size, DFM count, factors, and the scripts each one defines. Useful for finding out what
-  a project contains without opening files.
-- **Reload config** — re-read the YAML after editing it elsewhere.
-- **Edit config** / **QC viewer** — launch the other applications on this project.
+The Hub is **Project-first**. The selection names the working container — a Batch or a
+Project — and does only that one job.
 
-The two batch toggles live here. They are mutually exclusive, and both are described in
-[Running many projects at once](scripts-batch.md).
+An experiment is loaded **only** by double-clicking its row in the Project panel's
+replicates table. There is no Load tile: the load options (parallel loading, worker count)
+sit in the Project panel beside the table that triggers the load, so there is exactly one
+route to a loaded replicate and one place the Hub can be asked what is loaded.
 
-## Load card
+## Batch panel
 
-**Load experiment** reads the CSVs, subtracts baselines, and runs detection. This is the
-slow step; everything downstream reuses its result.
+Lists the Projects directly beneath the chosen folder, with each one's replicate count and
+whether it has been analysed and reported. Pick a Project Script and press **Run Batch** to
+run it in every Project, continue-on-error.
 
-Start and end minute controls restrict the analysis to a time window. `end: 0` means
-through the end of the recording. Ranged loads write into their own suffixed output folders
-so they do not overwrite whole-experiment results.
+Double-clicking a row is an ordinary selection change down to that Project — there is no
+drill-in state and no up-button. See [Running many projects at once](scripts-batch.md).
 
-**Remove chambers** applies the `general` exclusion group from `remove_chambers.csv` — see
-[exclusions](config-dfms-chambers.md#excluding-chambers).
+## Project panel
 
-## Analyze card
+The replicates table is the centre of the Hub: one row per replicate, with its DFM count,
+chamber count, and whether it has been analysed and reported. Double-click a row to load
+it.
 
-| Button | Produces |
-|---|---|
-| Run full basic analysis | QC reports, `summary.txt`, feeding summary, summary plot |
-| Write feeding summary CSV | Per-chamber metrics |
-| Write binned feeding summary CSV | Metrics in time bins |
-| Write weighted duration summary | Hedonic experiments only |
-| Tidy events CSV | One row per bout |
-| Bootstrap CIs (metric)… | Bootstrap confidence intervals |
-| Compare treatments (ANOVA / LMM)… | Statistical comparison |
-| Light-phase summary CSV | Split by light and dark phase |
-| Parameter sensitivity sweep… | Metrics across a range of one parameter |
-| Bout transition matrix | Transition probabilities |
-| Write PDF report | Everything bundled into one PDF |
+- **Open a Project** / **New Project here** — choose an existing Project, or write a
+  `project.yaml` into a folder to make it one.
+- **Scaffold pending replicates** — lights up when a subfolder holds DFM CSVs but has no
+  `flic_config.yaml`. See [Projects and replicates](concepts-project.md).
+- **Analyze all** / **Combine** / **Create report** — the project-level actions.
 
-These are the same operations available as [script actions](scripts-actions.md). Use the
-buttons while exploring; move to a script once you know the sequence you want.
+## Analyze panel
 
-## Plots card
+Actions on the **loaded replicate**: basic analysis, the summary CSVs, the faceted summary,
+binned CSVs, tidy events, and the per-replicate PDF report.
 
-Each plot row has its own metric and mode selectors. **Mode** decides how the two wells of
-a chamber combine — total, Well A, Well B, or their mean; see
-[metric and mode](scripts-actions.md#metric-and-mode).
+## Plots panel
 
-The **Moving window** section has its own window and step controls, both in minutes, for
-the sliding-window plots. Everything drawn is catalogued in
-[Plot catalogue](plots-catalog.md).
+Quick figures for the loaded replicate, and the entry point to the Plot Editor for the
+Project's publication figures. See [Plot catalogue](plots-catalog.md) and
+[Plot Editor](app-plot-editor.md).
 
-The **Interactive plots** checkbox in the top bar controls how figures are embedded.
-Interactive gives you pan, zoom and hover tooltips; unchecked renders a static image, which
-is faster to paint and lighter on memory. Turn it off when generating many figures at once.
+## Scripts panel
 
-## Scripts card
+Both script levels, kept visibly apart: Project Scripts from `project.yaml` above,
+Experiment Scripts for the loaded replicate below. See [Scripts](scripts-overview.md).
 
-**Run Script** runs the script chosen in the dropdown; **Run All Scripts** runs every
-script in the active configuration in sequence. In subdir-batch mode the button changes to
-show how many batch targets were found — check that count before starting a long run.
+## AI panel
 
-## Tools card
+An optional AI-written narrative of the Combined Analysis. Dimmed until an API key is
+present. See [AI summary](concepts-ai-summary.md).
 
-- **Lint config** — validate the active configuration and report problems with line numbers
-- **Compare two configs…** — diff two configurations, for tracking down why two analyses of
-  the same data differ
-- **Clear disk cache** — remove `.pyflic_cache/`
+## Tools panel
 
-The cache is keyed by input, so clearing it is never required for correctness — it is a
-disk-space operation.
-
-## Output panel
-
-Everything a run prints appears here in real time, and figures open as additional tabs
-beside it. When something fails, the message here is the first place to look; it usually
-names the problem directly.
-
----
-
-Related: [QC Viewer](app-qc-viewer.md) · [Config Editor](app-config-editor.md) ·
-[Troubleshooting](troubleshooting.md)
+The config editor, the QC viewer, the linter and its migration checks, cache clearing, the
+theme toggle, and this help.

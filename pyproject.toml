@@ -16,7 +16,9 @@ dependencies = [
     "plotnine>=0.15.3",
     "pyqt6>=6.10.2",
     "pyqtdarktheme>=2.1.0",
+    "python-dotenv>=1.0.1",
     "pyyaml>=6.0.3",
+    "scipy>=1.14.0",
     "qtawesome>=1.4.2",
     "statsmodels>=0.14.6",
 ]
@@ -25,7 +27,8 @@ dependencies = [
 pyflic = "pyflic.__main__:main"
 pyflic-config = "pyflic.base.config_editor:launch"
 pyflic-qc = "pyflic.base.qc_viewer:main"
-pyflic-hub = "pyflic.base.analysis_hub:main"
+pyflic-hub = "pyflic.base.hub:main"
+pyflic-plots = "pyflic.base.plot_editor:main"
 pyflic-lint = "pyflic.base.yaml_lint:main_cli"
 
 [tool.hatch.version]

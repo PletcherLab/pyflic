@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0006
+---
+
 # Subdir-batch traverses arbitrary depth, all qualifiers run
 
 ## Context

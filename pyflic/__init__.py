@@ -41,6 +41,9 @@ if TYPE_CHECKING:  # pragma: no cover - for type checkers and IDEs only
     from .base.progressive_ratio_experiment import ProgressiveRatioExperiment
     from .base.single_well_experiment import SingleWellExperiment
     from .base.treatment import Treatment, TreatmentChamber
+    from .base.batch import Batch
+    from .base.project import Project
+    from .base.project_report import write_project_report
     from .base.two_well_experiment import TwoWellExperiment
     from .base.yaml_config import load_experiment_yaml
     from .base.yaml_lint import lint_flic_config
@@ -59,6 +62,9 @@ _LAZY: dict[str, str] = {
     "TreatmentChamber": ".base.treatment",
     "TwoWellExperiment": ".base.two_well_experiment",
     "load_experiment_yaml": ".base.yaml_config",
+    # Project / Batch (ADR-0005, ADR-0006)
+    "Project": ".base.project",
+    "Batch": ".base.batch",
     # Analytics
     "bootstrap_metric": ".base.analytics",
     "bout_transition_matrix": ".base.analytics",
@@ -69,6 +75,7 @@ _LAZY: dict[str, str] = {
     "tidy_events": ".base.analytics",
     # Reporting / validation
     "write_experiment_report": ".base.pdf_report",
+    "write_project_report": ".base.project_report",
     "lint_flic_config": ".base.yaml_lint",
 }
 
@@ -84,6 +91,8 @@ __all__ = [
     "HedonicFeedingExperiment",
     "ProgressiveRatioExperiment",
     "load_experiment_yaml",
+    "Project",
+    "Batch",
     # Analytics
     "tidy_events",
     "bootstrap_metric",
@@ -93,6 +102,7 @@ __all__ = [
     "bout_transition_matrix",
     "compare_configs",
     "write_experiment_report",
+    "write_project_report",
     "lint_flic_config",
 ]
 

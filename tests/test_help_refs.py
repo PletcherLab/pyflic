@@ -174,17 +174,17 @@ def test_gui_help_references_resolve():
     assert seen > 0, "found no help call sites — has the regex drifted from the code?"
 
 
-def test_hub_card_help_map_resolves():
-    """Every value in the hub's card → topic map must resolve.
+def test_hub_tile_help_map_resolves():
+    """Every value in the hub's tile → topic map must resolve.
 
     These never appear as a literal inside a ``HelpButton(...)`` call, so the
     source scan above cannot see them.
     """
     pytest.importorskip("PyQt6")
-    from pyflic.base.analysis_hub import AnalysisHubWindow
+    from pyflic.base.hub import AnalysisHubWindow
 
-    mapping = AnalysisHubWindow._CARD_HELP
-    assert mapping, "_CARD_HELP is empty — has it moved?"
+    mapping = AnalysisHubWindow._TILE_HELP
+    assert mapping, "_TILE_HELP is empty — has it moved?"
 
     problems: list[str] = []
     for card_key, ref in mapping.items():
@@ -195,7 +195,7 @@ def test_hub_card_help_map_resolves():
         elif anchor and not topic.has_anchor(anchor):
             problems.append(f"card {card_key!r}: {topic_id}#{anchor} — no such heading")
 
-    assert not problems, "dangling card help refs:\n  " + "\n  ".join(problems)
+    assert not problems, "dangling tile help refs:\n  " + "\n  ".join(problems)
 
 
 def test_assigned_help_refs_resolve():

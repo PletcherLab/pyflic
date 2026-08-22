@@ -1,11 +1,11 @@
 """
 Tiny on-disk feeding-summary cache for ``Experiment``.
 
-Cache entries live in ``project_dir/.pyflic_cache/`` and are keyed by:
+Cache entries live in ``experiment_dir/.pyflic_cache/`` and are keyed by:
 
   - SHA-256 of the canonicalised ``flic_config.yaml`` text
   - SHA-256 of the sorted ``(filename, mtime_ns, size)`` tuple of every
-    DFM CSV under ``project_dir/data/``
+    DFM CSV under ``experiment_dir/data/``
   - The (range_minutes, transform_licks) request
 
 Cache hits skip the per-DFM feeding/tasting recomputation entirely.
@@ -31,15 +31,15 @@ def _hash_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()[:16]
 
 
-def _config_hash(project_dir: Path) -> str:
-    cfg = project_dir / "flic_config.yaml"
+def _config_hash(experiment_dir: Path) -> str:
+    cfg = experiment_dir / "flic_config.yaml"
     if not cfg.is_file():
         return "noconfig"
     return _hash_bytes(cfg.read_bytes())
 
 
-def _data_hash(project_dir: Path) -> str:
-    data_dir = project_dir / "data"
+def _data_hash(experiment_dir: Path) -> str:
+    data_dir = experiment_dir / "data"
     if not data_dir.is_dir():
         return "nodata"
     rows: list[tuple[str, int, int]] = []
@@ -50,7 +50,7 @@ def _data_hash(project_dir: Path) -> str:
 
 
 def feeding_summary_key(
-    project_dir: Path,
+    experiment_dir: Path,
     *,
     range_minutes: Sequence[float],
     transform_licks: bool,
@@ -58,41 +58,41 @@ def feeding_summary_key(
     a, b = float(range_minutes[0]), float(range_minutes[1])
     parts = [
         f"v{_CACHE_VERSION}",
-        _config_hash(project_dir),
-        _data_hash(project_dir),
+        _config_hash(experiment_dir),
+        _data_hash(experiment_dir),
         f"r{a:g}_{b:g}",
         f"tx{int(bool(transform_licks))}",
     ]
     return "_".join(parts)
 
 
-def cache_dir(project_dir: Path) -> Path:
-    d = project_dir / _CACHE_DIR_NAME
+def cache_dir(experiment_dir: Path) -> Path:
+    d = experiment_dir / _CACHE_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def feeding_summary_path(
-    project_dir: Path,
+    experiment_dir: Path,
     *,
     range_minutes: Sequence[float],
     transform_licks: bool,
 ) -> Path:
     key = feeding_summary_key(
-        project_dir, range_minutes=range_minutes, transform_licks=transform_licks,
+        experiment_dir, range_minutes=range_minutes, transform_licks=transform_licks,
     )
-    return cache_dir(project_dir) / f"feeding_summary_{key}.csv"
+    return cache_dir(experiment_dir) / f"feeding_summary_{key}.csv"
 
 
 def load_feeding_summary(
-    project_dir: Path,
+    experiment_dir: Path,
     *,
     range_minutes: Sequence[float],
     transform_licks: bool,
 ) -> pd.DataFrame | None:
     """Return cached feeding summary, or ``None`` if no entry."""
     p = feeding_summary_path(
-        project_dir,
+        experiment_dir,
         range_minutes=range_minutes,
         transform_licks=transform_licks,
     )
@@ -110,13 +110,13 @@ def load_feeding_summary(
 
 def save_feeding_summary(
     df: pd.DataFrame,
-    project_dir: Path,
+    experiment_dir: Path,
     *,
     range_minutes: Sequence[float],
     transform_licks: bool,
 ) -> Path:
     p = feeding_summary_path(
-        project_dir,
+        experiment_dir,
         range_minutes=range_minutes,
         transform_licks=transform_licks,
     )
@@ -124,9 +124,9 @@ def save_feeding_summary(
     return p
 
 
-def clear(project_dir: Path) -> int:
-    """Remove all cache files under *project_dir*.  Returns count removed."""
-    d = project_dir / _CACHE_DIR_NAME
+def clear(experiment_dir: Path) -> int:
+    """Remove all cache files under *experiment_dir*.  Returns count removed."""
+    d = experiment_dir / _CACHE_DIR_NAME
     if not d.is_dir():
         return 0
     n = 0

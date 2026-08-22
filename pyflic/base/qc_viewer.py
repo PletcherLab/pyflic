@@ -7,11 +7,11 @@ managing per-chamber exclusions that are persisted back to ``flic_config.yaml``.
 
 Usage
 -----
-    pyflic-qc [project_dir]
+    pyflic-qc [experiment_dir]
 
 Workflow
 --------
-1. **Load tab** — enter the project directory, time range, and parallelism
+1. **Load tab** — enter the experiment directory, time range, and parallelism
    options, then click "Load".  Loading runs in a background thread and its
    progress (stdout from pyflic) is streamed into the log window.
 2. **Feeding Summary tab** — after loading a table of all chambers is shown.
@@ -25,7 +25,7 @@ in the Feeding Summary tab updates the corresponding well checkbox in the DFM
 tab and vice versa.
 
 "Save to YAML" writes the current exclusion state back to
-``project_dir/flic_config.yaml`` under ``excluded_chambers:`` for each DFM.
+``experiment_dir/flic_config.yaml`` under ``excluded_chambers:`` for each DFM.
 """
 
 from __future__ import annotations
@@ -300,13 +300,13 @@ class _LoadWorker(QtCore.QObject):
 
     def __init__(
         self,
-        project_dir: Path,
+        experiment_dir: Path,
         range_minutes: tuple[float, float],
         parallel: bool,
         parent: QtCore.QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._project_dir  = project_dir
+        self._experiment_dir  = experiment_dir
         self._range_minutes = range_minutes
         self._parallel     = parallel
 
@@ -316,7 +316,7 @@ class _LoadWorker(QtCore.QObject):
         with _LogRedirect(self.logged.emit):
             try:
                 exp = load_experiment_yaml(
-                    self._project_dir,
+                    self._experiment_dir,
                     range_minutes=self._range_minutes,
                     parallel=self._parallel,
                     exclusion_group=None,
@@ -349,9 +349,9 @@ class LoadTab(QtWidgets.QWidget):
 
     experiment_loaded = pyqtSignal(object)
 
-    def __init__(self, project_dir: Path, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, experiment_dir: Path, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self._project_dir = project_dir
+        self._experiment_dir = experiment_dir
         self._thread: QtCore.QThread | None = None
         self._worker: _LoadWorker | None = None
         self._build()
@@ -372,7 +372,7 @@ class LoadTab(QtWidgets.QWidget):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setContentsMargins(0, 0, 0, 0)
 
-        self._project_edit = QtWidgets.QLineEdit(str(self._project_dir))
+        self._project_edit = QtWidgets.QLineEdit(str(self._experiment_dir))
         browse_btn = ActionButton("Browse…", Category.TOOLS, icon_name="browse")
         browse_btn.setMaximumWidth(110)
         browse_btn.clicked.connect(self._browse_project)
@@ -445,17 +445,17 @@ class LoadTab(QtWidgets.QWidget):
 
     def _browse_project(self) -> None:
         d = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "Select project directory", str(self._project_dir)
+            self, "Select experiment directory", str(self._experiment_dir)
         )
         if d:
             self._project_edit.setText(d)
 
-    def _current_project_dir(self) -> Path:
+    def _current_experiment_dir(self) -> Path:
         return Path(self._project_edit.text().strip()).expanduser().resolve()
 
     def _on_edit_config(self) -> None:
-        """Launch pyflic-config in the current project directory."""
-        p = self._current_project_dir()
+        """Launch pyflic-config in the current experiment directory."""
+        p = self._current_experiment_dir()
         if not p.is_dir():
             self._status_label.setText(f"Not a directory: {p}")
             return
@@ -468,7 +468,7 @@ class LoadTab(QtWidgets.QWidget):
 
     def _on_reload_config(self) -> None:
         """Re-read flic_config.yaml and print a summary to the log."""
-        p = self._current_project_dir()
+        p = self._current_experiment_dir()
         config_path = p / "flic_config.yaml"
         if not config_path.exists():
             self._append_log(f"[Reload] flic_config.yaml not found in {p}")
@@ -503,12 +503,12 @@ class LoadTab(QtWidgets.QWidget):
         self._status_label.setText("Config reloaded — see log.")
 
     def _on_load_clicked(self) -> None:
-        project_dir = self._current_project_dir()
-        if not project_dir.is_dir():
-            self._status_label.setText(f"Not a directory: {project_dir}")
+        experiment_dir = self._current_experiment_dir()
+        if not experiment_dir.is_dir():
+            self._status_label.setText(f"Not a directory: {experiment_dir}")
             return
 
-        self._project_dir = project_dir
+        self._experiment_dir = experiment_dir
         range_minutes = (float(self._start_spin.value()), float(self._end_spin.value()))
         parallel = self._parallel_cb.isChecked()
 
@@ -517,7 +517,7 @@ class LoadTab(QtWidgets.QWidget):
         self._load_btn.setEnabled(False)
         self._progress.setVisible(True)
 
-        self._worker = _LoadWorker(project_dir, range_minutes, parallel)
+        self._worker = _LoadWorker(experiment_dir, range_minutes, parallel)
         self._thread = QtCore.QThread()
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -1025,12 +1025,12 @@ class MainWindow(QtWidgets.QMainWindow):
     sync via the ``_syncing`` flag and two cross-wired signal handlers.
     """
 
-    def __init__(self, project_dir: Path, qc_dir: Path | None = None) -> None:
+    def __init__(self, experiment_dir: Path, qc_dir: Path | None = None) -> None:
         super().__init__()
         self.resize(1380, 900)
-        self.setWindowTitle(f"FLIC QC Viewer  —  {project_dir}")
+        self.setWindowTitle(f"FLIC QC Viewer  —  {experiment_dir}")
 
-        self._project_dir: Path = project_dir
+        self._experiment_dir: Path = experiment_dir
         self._initial_qc_dir: Path | None = qc_dir
         self._exp = None
         self._syncing = False                        # prevents exclusion sync feedback loops
@@ -1063,7 +1063,7 @@ class MainWindow(QtWidgets.QMainWindow):
         root_layout.addWidget(self._tabs, 1)
 
         # ── Load tab (always first) ───────────────────────────────────
-        self._load_tab = LoadTab(project_dir)
+        self._load_tab = LoadTab(experiment_dir)
         self._load_tab.experiment_loaded.connect(self._on_experiment_loaded)
         self._tabs.addTab(self._load_tab, icon("load"), "Load")
 
@@ -1073,9 +1073,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_experiment_loaded(self, exp) -> None:
         self._exp = exp
-        self._project_dir = exp.project_dir
-        self.setWindowTitle(f"FLIC QC Viewer  —  {self._project_dir}")
-        self._top_bar.set_title(f"FLIC QC Viewer — {self._project_dir.name}")
+        self._experiment_dir = exp.experiment_dir
+        self.setWindowTitle(f"FLIC QC Viewer  —  {self._experiment_dir}")
+        self._top_bar.set_title(f"FLIC QC Viewer — {self._experiment_dir.name}")
 
         # Remove any previously-loaded tabs (keep only Load tab at index 0)
         while self._tabs.count() > 1:
@@ -1117,7 +1117,7 @@ class MainWindow(QtWidgets.QMainWindow):
             qc_dir = exp.qc_dir
         else:
             # Fallback: scan the output root for any qc* directory that exists
-            root = exp._output_root or self._project_dir
+            root = exp._output_root or self._experiment_dir
             candidates = sorted(root.glob("qc*")) if root.exists() else []
             qc_dir = candidates[0] if candidates else (root / "qc")
         for dfm_id in sorted(exp.dfms.keys()):
@@ -1146,7 +1146,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         n_dfms = len(self._dfm_tab_widgets)
         self.statusBar().showMessage(
-            f"Loaded {n_dfms} DFM(s) from {self._project_dir}"
+            f"Loaded {n_dfms} DFM(s) from {self._experiment_dir}"
         )
         self._tabs.setCurrentIndex(1)   # switch to Feeding Summary
 
@@ -1365,7 +1365,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _read_excluded_from_file(self) -> dict[int, list[int]]:
         """Read the ``"general"`` exclusion group from ``remove_chambers.csv``."""
         from .exclusions import read_exclusions
-        all_excl = read_exclusions(self._project_dir)
+        all_excl = read_exclusions(self._experiment_dir)
         return all_excl.get("general", {})
 
     def _on_save_exclusions(self) -> None:
@@ -1391,7 +1391,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if excl_chambers:
                 excl_by_dfm[dfm_id] = excl_chambers
         try:
-            out = write_exclusions(self._project_dir, group, excl_by_dfm)
+            out = write_exclusions(self._experiment_dir, group, excl_by_dfm)
             total = sum(len(v) for v in excl_by_dfm.values())
             self.statusBar().showMessage(
                 f"Saved {total} chamber(s) to {out.name}  (group '{group}')"
@@ -1457,12 +1457,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main() -> None:
     if len(sys.argv) > 3:
-        print("Usage: pyflic-qc [project_dir [qc_dir]]", file=sys.stderr)
+        print("Usage: pyflic-qc [experiment_dir [qc_dir]]", file=sys.stderr)
         sys.exit(1)
 
-    project_dir = Path(sys.argv[1] if len(sys.argv) >= 2 else ".").expanduser().resolve()
-    if not project_dir.is_dir():
-        print(f"Error: not a directory: {project_dir}", file=sys.stderr)
+    experiment_dir = Path(sys.argv[1] if len(sys.argv) >= 2 else ".").expanduser().resolve()
+    if not experiment_dir.is_dir():
+        print(f"Error: not a directory: {experiment_dir}", file=sys.stderr)
         sys.exit(1)
 
     qc_dir: Path | None = None
@@ -1472,7 +1472,7 @@ def main() -> None:
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("FLIC QC Viewer")
     apply_theme(app, mode=ui_settings.get("theme", "auto"))
-    win = MainWindow(project_dir, qc_dir=qc_dir)
+    win = MainWindow(experiment_dir, qc_dir=qc_dir)
     win.show()
     sys.exit(app.exec())
 

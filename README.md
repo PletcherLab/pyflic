@@ -2,15 +2,19 @@
 
 A Python toolkit for analyzing data from **FLIC (Fly Liquid-food Interaction Counter)** experiments. pyflic detects feeding and tasting bouts from raw electrical signal data, generates quality-control reports, computes summary statistics, and produces publication-ready plots.
 
-pyflic is a complete port of the original R-based FLIC analysis pipeline (FLICFunctions.R) into Python, with a modern GUI, a YAML-based configuration system, and built-in statistical tools.
+pyflic is a complete port of the original R-based FLIC analysis pipeline (FLICFunctions.R) into Python, with a modern GUI, a YAML-based configuration system, and built-in statistical tools. Replicate recordings are grouped into **Projects**, which pool their results into combined figures, statistics, and a project report.
 
 ## Features
 
 - **Signal processing pipeline** -- baseline subtraction (running median), dual-threshold feeding detection, event linking, tasting detection, and preference index computation
-- **YAML configuration** -- define experiment structure, parameters, factorial designs, and automated analysis scripts in a single `flic_config.yaml` file
-- **Graphical tools** -- config editor, QC viewer with live parameter recompute, and an analysis hub with one-click pipelines
+- **Batch / Project / Experiment structure** -- replicates of one design live in a Project whose `design:` section is the authority for their shared settings; a Batch runs one Project Script across many Projects unattended
+- **Pooled analysis** -- replicate summaries stacked into a Combined Analysis, with pooled per-chamber tests beside a mixed model (DFM nested within Experiment)
+- **Experiment Types** -- a named assay (Hedonic, Progressive Ratio, or Custom) selects a chamber layout and constrains the facets, quality cutoffs, analyses, and report
+- **Facets** -- a time window is a column, not a directory: one `analysis/` per experiment carries every phase
+- **YAML configuration** -- experiment structure, parameters, factorial designs, and two levels of automated scripting
+- **Graphical tools** -- a tile-strip analysis hub, config editor, QC viewer, and a project-level Plot Editor
 - **Statistical analysis** -- ANOVA / linear mixed models, bootstrap confidence intervals, parameter sensitivity sweeps, light-phase summaries, and bout microstructure analysis
-- **Publication outputs** -- per-treatment dot plots, binned time-course plots, PDF experiment reports, and tidy long-format CSV exports
+- **Publication outputs** -- journal-ready vector figures (faceted metric plots and binned time courses) rendered from a saved Plot Spec + Plot Style, plus PDF experiment and project reports
 
 ## Quick start
 
@@ -30,7 +34,8 @@ uv add git+https://github.com/PletcherLab/pyflic.git
 
 ### Set up a project
 
-Organize your experiment as a directory with `flic_config.yaml` and a `data/` folder containing DFM CSV files:
+A single recording is an **Experiment Directory**: a `flic_config.yaml` and a `data/`
+folder of DFM CSVs.
 
 ```
 my_experiment/
@@ -38,8 +43,27 @@ my_experiment/
   data/
     DFM1_0.csv
     DFM2_0.csv
+```
+
+Replicates of one design go in a **Project**, whose `project.yaml` holds the shared
+settings. A replicate normally omits `global:` entirely and inherits them:
+
+```
+my_project/
+  project.yaml          <- design: + Project Scripts
+  analysis/             <- the pooled Combined Analysis
+  figures/              <- publication figures
+  plot_specs.yaml
+  my_project_report.pdf
+  rep1/
+    flic_config.yaml    <- just its dfms:
+    data/
+    analysis/
+  rep2/
     ...
 ```
+
+A folder of Projects is a **Batch** — nothing marks it, being one is structural.
 
 Create the config file interactively:
 
@@ -58,22 +82,36 @@ pyflic lint my_experiment/
 **From the GUI:**
 
 ```bash
-pyflic hub my_experiment/
+pyflic hub my_project/
 ```
 
 **From Python / Jupyter:**
 
 ```python
-from pyflic import load_experiment_yaml
+from pyflic import Project, load_experiment_yaml
 
+# one recording
 exp = load_experiment_yaml("my_experiment/")
 exp.execute_basic_analysis()
+
+# a whole project
+project = Project("my_project/")
+project.run_all()
+project.build_combined_analysis()
 ```
 
-**Generate a PDF report:**
+**Generate a PDF report** — `report` decides what to write from the marker file, so the
+same command serves both levels:
 
 ```bash
-pyflic report my_experiment/
+pyflic report my_experiment/    # experiment report
+pyflic report my_project/       # pooled project report
+```
+
+**Run a Project Script across every Project in a folder:**
+
+```bash
+pyflic batch my_study/
 ```
 
 ## CLI commands
@@ -82,13 +120,19 @@ pyflic report my_experiment/
 |---|---|
 | `pyflic` | Launch the analysis hub GUI (same as `pyflic hub`) |
 | `pyflic config` | Launch the config editor GUI |
-| `pyflic hub [project]` | Launch the analysis hub GUI |
-| `pyflic qc <project>` | Launch the QC viewer |
+| `pyflic hub [dir]` | Launch the analysis hub GUI |
+| `pyflic plots <project>` | Launch the Plot Editor (project level) |
+| `pyflic qc <dir>` | Launch the QC viewer |
 | `pyflic help [topic]` | Open the help window |
-| `pyflic lint <project>` | Validate `flic_config.yaml` against the schema |
-| `pyflic report <project>` | Generate a PDF experiment report |
-| `pyflic clear-cache <project>` | Remove cached feeding summaries |
+| `pyflic lint <dir>` | Validate configs and report needed migrations |
+| `pyflic report <dir>` | Write an experiment or project report |
+| `pyflic batch <dir>` | Run the designated Project Script in every Project |
+| `pyflic clear-cache <dir>` | Remove cached feeding summaries |
 | `pyflic version` | Print the installed version |
+
+Commands taking a directory work out what it is from its marker file — a `project.yaml`
+means Project, a `flic_config.yaml` means Experiment Directory — so no command needs a
+level flag.
 
 `pyflic --help` prints this list as text.
 

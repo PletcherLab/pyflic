@@ -7,14 +7,21 @@ Run with no arguments to launch the analysis hub::
 
 Or dispatch to a subcommand::
 
-    pyflic config [project_dir]   -- launch the config editor GUI
-    pyflic qc <project_dir>       -- launch the QC viewer
-    pyflic hub  [project_dir]     -- launch the analysis hub GUI
-    pyflic help [topic]           -- open the help window
-    pyflic lint <project_or_yaml> -- schema-lint a flic_config.yaml
-    pyflic clear-cache <project>  -- remove project_dir/.pyflic_cache
-    pyflic report <project_dir>   -- write a PDF experiment report
-    pyflic version                -- print the installed version
+    pyflic config [dir]        -- launch the config editor GUI
+    pyflic qc <dir>            -- launch the QC viewer
+    pyflic hub [dir]           -- launch the analysis hub GUI
+    pyflic plots <project>     -- launch the Plot Editor (project level)
+    pyflic help [topic]        -- open the help window
+    pyflic lint <dir>          -- validate configs and report migrations
+    pyflic clear-cache <dir>   -- remove <dir>/.pyflic_cache
+    pyflic report <dir>        -- write a PDF report
+    pyflic batch <dir>         -- run the designated Project Script in
+                                  every Project under <dir>
+    pyflic version             -- print the installed version
+
+Commands taking a directory decide what to do from its marker file: a
+``project.yaml`` means Project, a ``flic_config.yaml`` means Experiment
+Directory. No command needs a level flag.
 
 Use ``pyflic --help`` (or ``-h``) for this list; ``pyflic help`` opens the
 graphical help.
@@ -29,7 +36,26 @@ import sys
 from pathlib import Path
 
 
-_COMMANDS = ("config", "qc", "hub", "lint", "clear-cache", "report", "version", "help")
+_COMMANDS = ("config", "qc", "hub", "plots", "lint", "clear-cache", "report",
+             "batch", "version", "help")
+
+
+def _classify(path) -> str:
+    """What *path* is: ``"project"``, ``"experiment"``, ``"batch"``, or ``""``.
+
+    The marker file is the whole test (ADR-0005/0006), which is why no
+    level-aware command needs a flag.
+    """
+    from pyflic.base import batch as _batch
+    from pyflic.base import project as _project
+
+    if _project.is_project_dir(path):
+        return "project"
+    if _project.is_experiment_dir(path):
+        return "experiment"
+    if _batch.is_batch_dir(path):
+        return "batch"
+    return ""
 
 
 def _print_help() -> None:
@@ -96,7 +122,7 @@ def main() -> None:
         # Bare ``pyflic`` launches the analysis hub — the same thing
         # ``pyflic-hub`` does.  Subcommands below are unaffected, and
         # ``pyflic --help`` still prints the command list.
-        from pyflic.base.analysis_hub import main as hub_main
+        from pyflic.base.hub import main as hub_main
         sys.argv = ["pyflic-hub"]
         hub_main()
         return
@@ -124,7 +150,7 @@ def main() -> None:
         return
 
     if cmd == "hub":
-        from pyflic.base.analysis_hub import main as hub_main
+        from pyflic.base.hub import main as hub_main
         sys.argv = ["pyflic-hub", *rest]
         hub_main()
         return
@@ -138,20 +164,49 @@ def main() -> None:
     if cmd == "clear-cache":
         from pyflic.base import cache as _cache
         if not rest:
-            print("usage: pyflic clear-cache <project_dir>", file=sys.stderr)
+            print("usage: pyflic clear-cache <experiment_dir>", file=sys.stderr)
             raise SystemExit(2)
         n = _cache.clear(Path(rest[0]))
         print(f"removed {n} cache file(s) from {rest[0]}")
         return
 
+    if cmd == "plots":
+        from pyflic.base.plot_editor import main as plots_main
+        sys.argv = ["pyflic-plots", *rest]
+        plots_main()
+        return
+
+    if cmd == "batch":
+        if not rest:
+            print("usage: pyflic batch <dir> [script]", file=sys.stderr)
+            raise SystemExit(2)
+        from pyflic.base.batch import Batch
+        b = Batch(rest[0])
+        if not len(b):
+            print(f"no Projects directly under {rest[0]} "
+                  f"(a Batch scans immediate children only)", file=sys.stderr)
+            raise SystemExit(1)
+        summary = b.run(rest[1] if len(rest) > 1 else None)
+        raise SystemExit(1 if summary["failed"] else 0)
+
     if cmd == "report":
         if not rest:
-            print("usage: pyflic report <project_dir>", file=sys.stderr)
+            print("usage: pyflic report <dir>", file=sys.stderr)
             raise SystemExit(2)
-        from pyflic import load_experiment_yaml
-        from pyflic.base.pdf_report import write_experiment_report
-        exp = load_experiment_yaml(rest[0])
-        out = write_experiment_report(exp)
+        target = rest[0]
+        kind = _classify(target)
+        if kind == "project":
+            from pyflic.base.project import Project
+            from pyflic.base.project_report import write_project_report
+            out = write_project_report(Project(target))
+        elif kind == "experiment":
+            from pyflic import load_experiment_yaml
+            from pyflic.base.pdf_report import write_experiment_report
+            out = write_experiment_report(load_experiment_yaml(target))
+        else:
+            print(f"{target!r} is neither a Project (project.yaml) nor an "
+                  f"Experiment Directory (flic_config.yaml).", file=sys.stderr)
+            raise SystemExit(2)
         print(f"wrote {out}")
         return
 

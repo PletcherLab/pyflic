@@ -18,13 +18,31 @@ from .single_well_experiment import SingleWellExperiment
 from .treatment import Treatment
 from .two_well_experiment import TwoWellExperiment
 
-# Maps the `experiment_type:` YAML field value to the corresponding class.
-_EXPERIMENT_TYPE_MAP: dict[str, type[Experiment]] = {
-    "hedonic": HedonicFeedingExperiment,
-    "progressive_ratio": ProgressiveRatioExperiment,
-    "two_well": TwoWellExperiment,
+#: Chamber Layout -> the ``Experiment`` subclass that computes its metrics
+#: (ADR-0007).  This is the *data shape* map; an Experiment Type may name a
+#: further subclass via ``experiment_class`` when it brings analysis of its own.
+_LAYOUT_CLASS_MAP: dict[str, type[Experiment]] = {
     "single_well": SingleWellExperiment,
+    "two_well": TwoWellExperiment,
 }
+
+#: Per-DFM ``params:`` overrides that survive inside a Project.  These describe
+#: hardware, not analysis: which side of the chamber the reference well sits on
+#: and which wells are wired together.  Overriding anything else would
+#: reintroduce, one level lower and less visibly, the divergence the Project
+#: Design outlaws (ADR-0005).
+PHYSICAL_DFM_KEYS: frozenset[str] = frozenset({"pi_direction", "chamber_sets"})
+
+
+def _resolve_experiment_class(exp_type, chamber_layout: str) -> type[Experiment]:
+    """The ``Experiment`` subclass for *exp_type* on *chamber_layout*."""
+    dotted = getattr(exp_type, "experiment_class", None)
+    if dotted:
+        module_name, _, attr = str(dotted).partition(":")
+        import importlib
+
+        return getattr(importlib.import_module(module_name), attr)
+    return _LAYOUT_CLASS_MAP.get(chamber_layout, Experiment)
 
 
 def _norm_key(k: str) -> str:
@@ -176,7 +194,7 @@ def _load_dfm_for_config(
 
 
 def load_experiment_yaml(
-    project_dir: str | Path,
+    experiment_dir: str | Path,
     *,
     config_name: str = "flic_config.yaml",
     range_minutes: Sequence[float] = (0, 0),
@@ -186,25 +204,39 @@ def load_experiment_yaml(
     eager: bool = True,
     use_disk_cache: bool = True,
     exclusion_group: str | None = "general",
+    design_global: Mapping[str, Any] | None = None,
+    in_project: bool = False,
+    strict_type: bool = True,
 ) -> Experiment:
     """
-    Load an experiment from a project directory.
+    Load an experiment from a experiment directory.
 
-    Reads ``project_dir/<config_name>`` (default ``flic_config.yaml``) and
-    loads DFM data from ``project_dir/data``.
+    Reads ``experiment_dir/<config_name>`` (default ``flic_config.yaml``) and
+    loads DFM data from ``experiment_dir/data``.
 
     Parameters
     ----------
-    project_dir:
+    experiment_dir:
         Project root directory.  Must contain the selected config file.
-        Data is read from *project_dir/data*.  The returned ``Experiment``
+        Data is read from *experiment_dir/data*.  The returned ``Experiment``
         stores this so that downstream helpers (``write_qc_reports``,
         ``write_summary``, ``_auto_save_fig``) write to
-        ``project_dir/<config_stem>/qc`` and
-        ``project_dir/<config_stem>/analysis`` automatically.
+        ``experiment_dir/<config_stem>/qc`` and
+        ``experiment_dir/<config_stem>/analysis`` automatically.
     config_name:
-        Filename of the YAML config inside *project_dir*.  The stem of
-        this name also determines the per-config output subdirectory.
+        Filename of the YAML config inside *experiment_dir*.  An Experiment
+        Directory holds exactly one (ADR-0005); outputs always land in
+        ``experiment_dir/analysis``.
+    design_global:
+        The Project Design's ``global:`` block, supplied when loading a
+        Replicate.  A Replicate normally omits ``global:`` and inherits this;
+        keys it does state win, having already been validated by ``Project``.
+    in_project:
+        True when loading a Replicate.  Restricts per-DFM ``params:`` overrides
+        to the physical keys (ADR-0005).
+    strict_type:
+        Raise when the config violates its Experiment Type instead of warning.
+        The linter passes False so it can report every problem at once.
 
     Expected YAML structure::
 
@@ -226,27 +258,48 @@ def load_experiment_yaml(
 
     from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-    resolved_project_dir = Path(project_dir).expanduser().resolve()
-    path = resolved_project_dir / config_name
+    resolved_experiment_dir = Path(experiment_dir).expanduser().resolve()
+    path = resolved_experiment_dir / config_name
     if not path.exists():
         raise FileNotFoundError(
-            f"{config_name} not found in project directory: {resolved_project_dir}"
+            f"{config_name} not found in experiment directory: {resolved_experiment_dir}"
         )
     cfg = yaml.safe_load(path.read_text())
     if not isinstance(cfg, Mapping):
         raise ValueError("YAML root must be a mapping/object.")
 
     global_cfg = dict(cfg.get("global", {}) or {})
+    ## Design inheritance (ADR-0005): inside a Project a Replicate normally
+    ## omits `global:` entirely and inherits the Design's. A `global:` that IS
+    ## present has already been validated key-by-key by Project, so merging
+    ## here is a no-op for a conformant Replicate and simply fills the gaps for
+    ## one that states only part of the block.
+    if design_global:
+        merged = dict(design_global)
+        merged.update(global_cfg)
+        global_cfg = merged
+
+    from . import experiment_types as _experiment_types
+
+    exp_type = _experiment_types.get_experiment_type(
+        global_cfg.get("experiment_type"))
+    type_problems = exp_type.validate(global_cfg)
+    if type_problems and strict_type:
+        raise ValueError(
+            f"{path.name} does not satisfy experiment_type "
+            f"'{exp_type.name}':\n  - " + "\n  - ".join(type_problems))
+    for problem in type_problems:
+        print(f"  WARNING: {problem}", flush=True)
+    chamber_layout = exp_type.resolve_chamber_layout(global_cfg)
+    derived_chamber_size = _experiment_types.LAYOUT_CHAMBER_SIZE[chamber_layout]
+
     global_params_node = global_cfg.get("params", global_cfg.get("parameters", None))
     global_overrides = _normalize_param_overrides(global_params_node)
     global_params_present = global_params_node is not None
-    global_constants = dict(global_cfg.get("constants", {}) or {})
-    _et_raw = global_cfg.get("experiment_type") or None
+    ## The type's default cutoffs, with the yaml's values layered on top.
+    global_constants = exp_type.resolve_constants(global_cfg)
     experiment_type: str | None = (
-        str(_et_raw).strip().lower().replace("-", "_").replace(" ", "_")
-        if _et_raw is not None
-        else None
-    )
+        None if exp_type.is_custom else exp_type.name)
     factors_node = global_cfg.get("experimental_design_factors") or {}
     design_factors: list[str] = list(factors_node.keys()) if factors_node else []
     global_well_names: dict[str, str] = {
@@ -258,7 +311,7 @@ def load_experiment_yaml(
     _tl_raw = global_cfg.get("transform_licks", True)
     transform_licks_default = bool(_tl_raw)
 
-    data_dir = resolved_project_dir / "data"
+    data_dir = resolved_experiment_dir / "data"
 
     dfm_nodes = cfg.get("dfms", cfg.get("DFMs", None))
     if dfm_nodes is None:
@@ -285,7 +338,7 @@ def load_experiment_yaml(
     from .exclusions import read_exclusions as _read_exclusions
     file_excl_for_group: dict[int, list[int]] = {}
     if exclusion_group is not None:
-        _all_file_excl = _read_exclusions(resolved_project_dir)
+        _all_file_excl = _read_exclusions(resolved_experiment_dir)
         file_excl_for_group = _all_file_excl.get(exclusion_group, {})
         if file_excl_for_group:
             print(
@@ -310,18 +363,28 @@ def load_experiment_yaml(
                 f"DFM {dfm_id} must define a `params` section either under global: or under the DFM entry."
             )
 
+        ## Inside a Project only the physical keys may be overridden per DFM
+        ## (ADR-0005): pi_direction and chamber_sets describe hardware, and
+        ## already vary between DFMs of one recording. An analysis override
+        ## here would bypass the Design authority one level down.
+        if in_project:
+            illegal = sorted(set(dfm_overrides) - PHYSICAL_DFM_KEYS)
+            if illegal:
+                raise ValueError(
+                    f"DFM {dfm_id}: per-DFM params {illegal} are not allowed "
+                    f"inside a Project — the project design owns them. Only "
+                    f"{sorted(PHYSICAL_DFM_KEYS)} may vary per DFM."
+                )
+
         # Precedence: defaults < global < dfm
         overrides = {**global_overrides, **dfm_overrides}
 
-        if "chamber_size" not in overrides or overrides["chamber_size"] is None:
-            raise ValueError(
-                f"DFM {dfm_id}: `chamber_size` must be explicitly specified in params (global or dfm)."
-            )
-
-        # Choose a base preset if chamber_size is specified; otherwise default to two-well.
-        base_size = int(overrides["chamber_size"])
-        if base_size not in (1, 2):
-            raise ValueError(f"DFM {dfm_id}: unsupported chamber_size={base_size} (expected 1 or 2).")
+        ## chamber_size is owned by the Experiment Type via the Chamber Layout
+        ## (ADR-0007) and derived, never read from the config. The old
+        ## "must be explicitly specified" check and the type/size disagreement
+        ## check it fed are both gone: the two can no longer disagree.
+        overrides["chamber_size"] = derived_chamber_size
+        base_size = derived_chamber_size
         base = Parameters.single_well() if base_size == 1 else Parameters.two_well()
         params = base.with_updates(**overrides)
         chambers_raw = node.get("chambers", node.get("Chambers"))
@@ -462,41 +525,10 @@ def load_experiment_yaml(
         for chamber_index, fl in chamber_factor_levels.items():
             chamber_factors_map[(int(dfm_id), int(chamber_index))] = fl
 
-    # Select the appropriate experiment class based on chamber_size.
-    # Mixed chamber sizes across DFMs are rejected here.
-    chamber_sizes = {dfm.params.chamber_size for dfm in loaded.values()}
-    if len(chamber_sizes) > 1:
-        raise ValueError(
-            f"All DFMs in an experiment must share the same chamber_size, "
-            f"but found multiple values: {sorted(chamber_sizes)}.  "
-            f"Set a consistent chamber_size in flic_config.yaml."
-        )
-    uniform_chamber_size = next(iter(chamber_sizes)) if chamber_sizes else 2
-    _CLS: type[Experiment]
-    if experiment_type is not None:
-        if experiment_type not in _EXPERIMENT_TYPE_MAP:
-            raise ValueError(
-                f"Unknown experiment_type {experiment_type!r} in flic_config.yaml. "
-                f"Valid values: {sorted(_EXPERIMENT_TYPE_MAP)}."
-            )
-        _CLS = _EXPERIMENT_TYPE_MAP[experiment_type]
-        # Validate chamber_size compatibility.
-        if issubclass(_CLS, TwoWellExperiment) and uniform_chamber_size != 2:
-            raise ValueError(
-                f"experiment_type={experiment_type!r} requires chamber_size=2, "
-                f"but chamber_size={uniform_chamber_size} was found in flic_config.yaml."
-            )
-        if issubclass(_CLS, SingleWellExperiment) and uniform_chamber_size != 1:
-            raise ValueError(
-                f"experiment_type='single_well' requires chamber_size=1, "
-                f"but chamber_size={uniform_chamber_size} was found in flic_config.yaml."
-            )
-    elif uniform_chamber_size == 1:
-        _CLS = SingleWellExperiment
-    elif uniform_chamber_size == 2:
-        _CLS = TwoWellExperiment
-    else:
-        _CLS = Experiment
+    ## Every DFM was built with the derived chamber_size, so they cannot
+    ## disagree; the class follows from the Chamber Layout and, where the type
+    ## brings analysis of its own, from the type.
+    _CLS = _resolve_experiment_class(exp_type, chamber_layout)
 
     exp = _CLS(
         dfms=design.dfms,
@@ -507,8 +539,11 @@ def load_experiment_yaml(
         design_factors=design_factors or None,
         chamber_factors=chamber_factors_map or None,
         config_path=path,
-        project_dir=resolved_project_dir,
-        output_subdir=Path(config_name).stem + "_results",
+        experiment_dir=resolved_experiment_dir,
+        config={"global": global_cfg, **{k: v for k, v in cfg.items() if k != "global"}},
+        experiment_type=exp_type,
+        chamber_layout=chamber_layout,
+        facet_cutoffs=exp_type.resolve_facet_cutoffs(global_cfg),
         range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
         transform_licks=transform_licks_default,
         parallel=bool(parallel),
@@ -527,7 +562,7 @@ def load_experiment_yaml(
     if use_disk_cache:
         from . import cache as _cache
         cached = _cache.load_feeding_summary(
-            resolved_project_dir,
+            resolved_experiment_dir,
             range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
             transform_licks=transform_licks_default,
         )
@@ -542,7 +577,7 @@ def load_experiment_yaml(
     if use_disk_cache:
         try:
             _cache.save_feeding_summary(
-                df, resolved_project_dir,
+                df, resolved_experiment_dir,
                 range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
                 transform_licks=transform_licks_default,
             )

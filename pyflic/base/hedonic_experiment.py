@@ -24,7 +24,7 @@ class HedonicFeedingExperiment(TwoWellExperiment):
     @classmethod
     def load(
         cls,
-        project_dir: str | Path,
+        experiment_dir: str | Path,
         *,
         range_minutes: Sequence[float] = (0, 0),
         parallel: bool = True,
@@ -40,7 +40,7 @@ class HedonicFeedingExperiment(TwoWellExperiment):
 
         Parameters
         ----------
-        project_dir:
+        experiment_dir:
             Root directory for the experiment project.  Must contain
             ``flic_config.yaml`` with ``chamber_size: 2`` in the global or
             per-DFM params section.
@@ -58,7 +58,7 @@ class HedonicFeedingExperiment(TwoWellExperiment):
         # load_experiment_yaml returns a TwoWellExperiment when chamber_size=2,
         # and raises ValueError if any DFM uses a different chamber_size.
         base = load_experiment_yaml(
-            project_dir,
+            experiment_dir,
             range_minutes=range_minutes,
             parallel=parallel,
             max_workers=max_workers,
@@ -100,7 +100,7 @@ class HedonicFeedingExperiment(TwoWellExperiment):
         save : bool
             Save the plot to disk (default ``False``).  When ``True`` and
             *path* is not given, writes to
-            ``project_dir/analysis/hedonic_feeding_plot.{format}``.
+            ``experiment_dir/analysis/hedonic_feeding_plot.{format}``.
         path : str | Path | None
             Explicit output path.  Ignored when ``save=False``.
         format : str

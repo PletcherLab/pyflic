@@ -56,6 +56,9 @@ TOC: tuple[Section, ...] = (
             "concepts-metrics",
             "concepts-light-phase",
             "concepts-experiment-types",
+            "concepts-project",
+            "concepts-facets",
+            "concepts-ai-summary",
         ),
     ),
     Section(
@@ -80,6 +83,7 @@ TOC: tuple[Section, ...] = (
         "Applications",
         (
             "app-hub",
+            "app-plot-editor",
             "app-qc-viewer",
             "app-config-editor",
         ),

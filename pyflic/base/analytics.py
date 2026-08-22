@@ -7,7 +7,7 @@ touching the core feeding/tasting pipeline.
 
 All helpers are pure functions that take an ``Experiment`` (or a project
 directory) so they can be invoked from the Python API, the YAML script
-runner (``analysis_hub`` actions), or the GUI buttons.
+runner (``script_editor.runner`` actions), or the GUI buttons.
 """
 
 from __future__ import annotations
@@ -595,8 +595,8 @@ def bout_transition_matrix(experiment: Experiment) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 def compare_configs(
-    project_dir_a: str | Path,
-    project_dir_b: str | Path,
+    experiment_dir_a: str | Path,
+    experiment_dir_b: str | Path,
     *,
     metrics: Sequence[str] = ("Licks", "Events", "MedDuration"),
     two_well_mode: str = "total",
@@ -610,8 +610,8 @@ def compare_configs(
     """
     from .yaml_config import load_experiment_yaml
 
-    exp_a = load_experiment_yaml(project_dir_a, range_minutes=range_minutes, parallel=True)
-    exp_b = load_experiment_yaml(project_dir_b, range_minutes=range_minutes, parallel=True)
+    exp_a = load_experiment_yaml(experiment_dir_a, range_minutes=range_minutes, parallel=True)
+    exp_b = load_experiment_yaml(experiment_dir_b, range_minutes=range_minutes, parallel=True)
     return _compare_two_experiments(
         exp_a, exp_b,
         metrics=metrics, two_well_mode=two_well_mode,

@@ -20,7 +20,7 @@ class SingleWellExperiment(Experiment):
     @classmethod
     def load(
         cls,
-        project_dir: str | Path,
+        experiment_dir: str | Path,
         *,
         range_minutes: Sequence[float] = (0, 0),
         parallel: bool = True,
@@ -31,7 +31,7 @@ class SingleWellExperiment(Experiment):
         from .yaml_config import load_experiment_yaml
 
         base = load_experiment_yaml(
-            project_dir,
+            experiment_dir,
             range_minutes=range_minutes,
             parallel=parallel,
             max_workers=max_workers,

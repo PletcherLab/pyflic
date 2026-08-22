@@ -21,6 +21,9 @@ import yaml
 _KNOWN_GLOBAL_KEYS = {
     "params", "parameters", "well_names", "constants",
     "experimental_design_factors", "experiment_type",
+    # Post-overhaul keys (ADR-0007 / ADR-0008).
+    "chamber_layout", "facet_cutoffs", "facet_labels", "transform_licks",
+    "exclusion_group",
 }
 _KNOWN_PARAM_KEYS = {
     "baseline_window_minutes", "baseline_window_min", "baseline_window",
@@ -113,7 +116,7 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
                 issues,
                 "warning",
                 "'data_dir' is no longer used and should be removed; "
-                "data is always read from project_dir/data/",
+                "data is always read from experiment_dir/data/",
                 path="data_dir",
             )
         elif k not in expected_top:
@@ -241,17 +244,47 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
 
 
 def main_cli() -> None:
-    """Command-line entry: ``python -m pyflic.base.yaml_lint <project_or_yaml>``."""
+    """Command-line entry: ``pyflic lint <dir | flic_config.yaml>``.
+
+    Runs the schema linter and, for a directory, the migration checks — the
+    two together are the whole crossing from the pre-overhaul layout, since
+    there is deliberately no migration tool.
+    """
     import sys
     if len(sys.argv) != 2:
-        print("usage: pyflic-lint <project_dir | flic_config.yaml>", file=sys.stderr)
+        print("usage: pyflic-lint <dir | flic_config.yaml>", file=sys.stderr)
         raise SystemExit(2)
     target = Path(sys.argv[1])
-    cfg = target if target.is_file() else target / "flic_config.yaml"
-    issues = lint_flic_config(cfg)
-    for i in issues:
-        print(i.format(cfg))
-    n_err = sum(1 for i in issues if i.severity == "error")
-    n_warn = sum(1 for i in issues if i.severity == "warning")
+
+    n_err = n_warn = 0
+    if target.is_file():
+        cfg = target
+        issues = lint_flic_config(cfg)
+        for issue in issues:
+            print(issue.format(cfg))
+        n_err += sum(1 for i in issues if i.severity == "error")
+        n_warn += sum(1 for i in issues if i.severity == "warning")
+    else:
+        from .migration_lint import check_tree
+        from .project import is_experiment_dir
+
+        for cfg in sorted(target.rglob("flic_config.yaml")):
+            issues = lint_flic_config(cfg)
+            for issue in issues:
+                print(issue.format(cfg))
+            n_err += sum(1 for i in issues if i.severity == "error")
+            n_warn += sum(1 for i in issues if i.severity == "warning")
+        if not is_experiment_dir(target) and \
+                not any(target.rglob("flic_config.yaml")):
+            print(f"note: no flic_config.yaml found under {target}")
+
+        migration = check_tree(target)
+        if migration:
+            print("\n--- migration (ADR-0005..0008) ---")
+            for issue in migration:
+                print(issue.format())
+            n_err += sum(1 for i in migration if i.severity == "error")
+            n_warn += sum(1 for i in migration if i.severity == "warning")
+
     print(f"\n{n_err} error(s), {n_warn} warning(s)")
     raise SystemExit(1 if n_err else 0)

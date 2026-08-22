@@ -1,32 +1,213 @@
 # pyflic
 
-A toolkit for analysing FLIC (Fly Liquid-food Interaction Counter) feeding-behaviour experiments. Configures, loads, and visualises chamber-level lick/feeding data driven by per-experiment YAML configs.
+A toolkit for analysing FLIC (Fly Liquid-food Interaction Counter)
+feeding-behaviour experiments: detects feeding and tasting bouts from raw DFM
+signal, and pools replicate recordings into publication-ready figures and
+statistics. Structurally modelled on PyTrackingAnalysis — Batch → Project →
+Experiment, tile-strip Hub, two-level scripting, Experiment Types,
+publication figures — with pooling at the Project level. This glossary fixes
+the domain language; it is not a spec.
 
 ## Language
 
-**Project directory**:
-A directory holding a single experiment: configuration YAML(s), a `data/` folder with raw DFM CSVs, and the analysis outputs pyflic writes (`analysis/`, `plots/`, `qc/`).
-_Avoid_: project, folder, dataset directory.
+**Project**:
+A directory with a `project.yaml` at its root whose immediate subdirectories
+holding a `flic_config.yaml` are its **Replicates**. The Project is the level
+at which results are pooled, and it owns the pooled outputs. Modelled on the
+PyTrackingAnalysis Project.
+_Avoid_: study, collection, batch parent, parent directory.
 
-**Active config**:
-The single YAML file (default `flic_config.yaml`) currently driving the hub UI for one project.
-_Avoid_: config, settings, yaml.
+**Experiment Directory**:
+One FLIC recording's directory — `flic_config.yaml` at its root, a `data/`
+folder of raw DFM CSVs, and the outputs pyflic writes — either standalone or
+as a Replicate inside a Project.
+_Avoid_: project, project directory (the pre-overhaul name), folder,
+dataset directory.
 
-**Script**:
-A named recipe inside a YAML's `scripts:` section — a list of pipeline `steps` (load, basic_analysis, plot_*, etc.) bound under one name and triggered from the hub's "Run Script" button.
-_Avoid_: pipeline, recipe, job.
+**Replicate**:
+An Experiment Directory inside a Project. Its `flic_config.yaml` normally
+holds only the free parts — `dfms:` and its own `scripts:` — and inherits
+`global:` from the Design; a `global:` block that *is* present (a standalone
+experiment moved in) is validated key-by-key and any deviation is a load
+error. A new Replicate is **scaffolded** by copying the first Replicate's
+`dfms:` block and reconciling it against the DFM ids actually present in
+`data/` (parsed from `DFM<id>_<n>.csv`): ids with no entry are added with
+chambers unassigned, entries with no data are flagged rather than dropped.
+The Project panel lists experiment-shaped folders — a `data/` holding at
+least one `DFM*.csv` — that have no config yet as scaffolding candidates.
+Scaffolding never overwrites an existing config.
 
-**Batch target**:
-A directory at any depth under the chosen root that contains at least one YAML defining a script named `batch`. A run of subdir-batch mode executes that `batch` script once per target.
-_Avoid_: subdir, subdirectory, project (when discussing batch).
+**Design**:
+The `design:` section of `project.yaml` — the **authority** for every key
+under a Replicate's `global:` (experiment type, detection `params:`,
+`well_names`, `transform_licks`, `constants:`, `experimental_design_factors`).
+A Replicate that deviates on any of them fails to load, not merely warns.
+Left free per Replicate: the whole `dfms:` block — DFM count and chamber →
+treatment assignment — and per-DFM `params:` overrides
+restricted to the *physical* keys (`pi_direction`, `chamber_sets`). A
+per-DFM override of an analysis key is rejected inside a Project; a
+standalone Experiment Directory keeps unrestricted overrides.
+_Avoid_: defaults, template (a Design is enforced, not inherited-and-
+overridable).
 
-**Subdir-batch mode**:
-The hub mode (toggled by the "Run 'batch' script in every directory under here" checkbox) that walks the tree under the chosen root and runs the `batch` script in each batch target it finds.
-_Avoid_: batch mode (ambiguous — see "yaml-batch mode"), subdir mode.
+**Experiment Type**:
+A named bundle that selects one Chamber Layout and constrains the rest of an
+experiment — the required `well_names`, the facet cutoffs and phase labels,
+the default `constants:`, the set of analyses that run, the plot set, and the
+report produced. It is the top-level thing a scientist chooses; everything
+else is derived or constrained from it. A composed strategy object, not an
+`Experiment` subclass.
+_Avoid_: assay, assay type, protocol, template.
 
-**YAML-batch mode**:
-The separate hub mode that runs a chosen script across every YAML in a single project directory, writing into per-yaml output subfolders.
-_Avoid_: batch mode.
+**Custom Experiment**:
+The absence of a chosen Experiment Type — the permissive freeform mode, where
+the config is driven directly by `chamber_layout:` with no constraints. A
+config with no `experiment_type` key IS a Custom Experiment. Selectable
+explicitly too.
+_Avoid_: generic, freeform, none.
+
+**Chamber Layout**:
+How many wells a chamber has — `single_well` or `two_well` — and therefore
+which `Experiment` subclass computes the metrics (a type carrying analysis of
+its own may name a further subclass via `experiment_class`). pyflic's analogue of
+PyTrackingAnalysis's Tracking Type: a lower-level, implementation-facing
+concept that an Experiment Type selects exactly one of. A typed config writes
+neither `chamber_layout:` nor `params.chamber_size` — the type owns both and
+they are derived, never written to disk; only a Custom Experiment states
+`chamber_layout:`.
+_Avoid_: tracking type (nothing is tracked in FLIC), chamber size (that is
+the derived numeric parameter), experiment type (the layer above).
+
+**Facet**:
+A named time window within a recording, fixed by the Design's
+`facet_cutoffs:` so every Replicate is windowed identically. Facets are a
+**column**, not a directory: analysis writes `feeding_summary.csv` plus
+`feeding_summary_facet.csv` carrying a Facet column. The Hub's Start/End
+controls select a Facet rather than filtering the load. Replaces the
+retired `analysis_<start>_<end>/` output directories.
+_Avoid_: window, range, time bin (a bin is the separate `binsize` concept
+used by binned summaries).
+
+**Excluded Chamber**:
+A chamber removed from every result. Two live sources, both applied before
+pooling: a row in that Replicate's `remove_chambers.csv` under the active
+exclusion group, and `auto_remove_chambers()` driven by the Design's
+`constants:` cutoffs. (A third, `excluded_chambers:` in a `dfms:` entry, was
+already deprecated before this overhaul — the loader warns and ignores it.)
+The file stays per-Replicate — which chambers are bad is a fact about that
+recording — but the Design names the active `exclusion_group:`, so every
+Replicate is filtered by the same rule. The Combined Analysis stacks only
+filtered rows and writes an aggregated exclusions table (Experiment, DFM,
+Chamber, Source, Note) into the Project Report.
+_Avoid_: dropped chamber, filtered chamber, QC filter (data quality is a
+separate, always-reported concern).
+
+**Combined Analysis**:
+The Project-level results built by stacking each Replicate's *filtered*
+feeding summaries (auto-removals already applied) with an added `Experiment`
+column. Because DFM ids repeat across Replicates, DFM is only ever
+interpreted **within** an Experiment. Statistics run twice: per-chamber
+pooled tests matching the plots, beside a linear mixed model with treatment
+fixed and **DFM nested within Experiment** as the random structure.
+_Avoid_: merged analysis, meta-analysis.
+
+**Project Report**:
+The Project-level PDF: pooled figures rendered from the Combined Analysis,
+the pooled + mixed statistics tables, and a per-Replicate summary table
+(chamber counts, exclusions). Replicates never get their own figure sets in
+it — that is what a Replicate's own report is for.
+
+**Publication Figure**:
+A hand-curated, journal-ready vector figure (SVG with editable text, or PDF)
+rendered by plotnine from a Plot Spec + Plot Style and saved under
+`<project>/figures/` — distinct from the matplotlib figures embedded in the
+PDF report, and always regenerable from the spec.
+_Avoid_: report figure, plot export.
+
+**Plot Style**:
+A named, reusable look shared by every Publication Figure that references it:
+figure size, theme, fonts, point/mean styling, and the treatment→color
+mapping. Stored in the Project root's `plot_specs.yaml` under `styles:`;
+`default_style:` names the one the Plot Editor auto-loads. One Style covers
+both figure families, so a Project has one look.
+_Avoid_: theme (a plotnine theme is one field inside a style).
+
+**Plot Spec**:
+One Publication Figure's content decisions plus the name of its Plot Style,
+stored in `plot_specs.yaml` under `plots:`, keyed by plot id. Two shapes:
+a **faceted metric** spec (`faceted_licks`, `faceted_events`,
+`faceted_medduration`, `faceted_pi` — x = Treatment, faceted by Facet, dots +
+mean±SEM; carries axis labels, facet/treatment inclusion, order and display
+names, y-limits, reference line) and a **time-course** spec
+(`timecourse_<metric>` — x = time bin, one line per treatment with an SEM
+ribbon; carries binsize and mode instead of facet ordering).
+_Avoid_: plot config, settings.
+
+**Plot Editor**:
+The Project-level app that opens a Project, renders a live preview of the
+pooled figures from the same Spec+Style that saving uses, and writes the
+vector Publication Figures. Presentation only — it never alters a
+`flic_config.yaml`.
+
+**Analysis Hub**:
+The main app: a horizontal **tile strip** across the top (Batch · Project ·
+Analyze · Plots · Scripts · AI · Tools — each tile shows only live status,
+with a **status readout** filling the strip to their right), and a full-width
+output/plots area below. All controls live in a tile's **anchored panel**
+(one open at a time). Tiles never move or hide — an inapplicable tile dims
+and its panel holds the fix. The selection names the working container — a
+Batch or a Project. The Hub is **Project-first**: an experiment is loaded
+only by double-clicking its row in the Project panel's replicates table, so
+there is no Load tile; the parallel/executor/max_workers options live in the
+Project panel.
+_Avoid_: card column (the pre-overhaul layout), Load card.
+
+**Experiment Script**:
+A saved, re-runnable step list of experiment-level actions. Lives in an
+Experiment Directory's `flic_config.yaml` `scripts:` — or, for Replicates,
+centrally in the Project's `experiment_scripts:`, where one recipe serves
+every Replicate without being copied. Central scripts run only through the
+`run_in_experiments` bridge.
+_Avoid_: recipe, macro, pipeline, job.
+
+**Project Script**:
+A saved step list of project-level actions in `project.yaml` `scripts:`.
+Same shape and visual editor as an Experiment Script, but a **separate action
+registry** — levels cannot mix; the only bridge is `run_in_experiments`,
+which runs a named Experiment Script in every Replicate. There is no third
+(Batch) script level: what a Batch Run executes IS a Project Script, named by
+`batch.yaml`'s `script:` key.
+
+**AI Summary**:
+An optional, AI-written narrative of an analysis, generated from the report's
+own content by a user-chosen provider, opt-in per report and offered only
+when a provider API key is configured in `.env`. It *summarizes* the
+pipeline's analysis; it never performs its own. A derivative of a single run:
+re-running the analysis deletes it.
+_Avoid_: AI analysis, AI interpretation.
+
+**Batch**:
+A directory whose *immediate* subdirectories holding a `project.yaml` are its
+Projects. Purely a processing convenience for running many Projects
+unattended: it is not itself a Project, holds no analysis of its own, and
+never pools across Projects. A **Batch Run** executes one designated Project
+Script in every Project, continue-on-error. Nothing marks a Batch — being one
+is structural; an optional `batch.yaml` appears only to name the designated
+`script:` or hold central `project_scripts:`.
+_Avoid_: batch target, subdir-batch mode, yaml-batch mode (all retired, see
+ADR-0006), study, collection, batch root.
+
+### Cross-app
+
+**MIRRORED.md**:
+The cross-app change ledger shared byte-identically across pyflic,
+PyTrackingAnalysis, and pySurvAnalysis: newest-first entries naming a change,
+the app it originated in, its ADR, and a per-app implementation status. The
+three apps duplicate their shared machinery (Hub shell, Script Editor,
+Plot Editor, `ui/`, `help/`) rather than depending on a common package, and
+this file is what keeps that duplication honest. **Its format and content are
+owned by the sibling app that proposed it** — pyflic follows the convention,
+it does not define it.
 
 ### Help
 
@@ -48,22 +229,73 @@ _Avoid_: manual, documentation, the docs, USAGE.
 
 ## Relationships
 
-- A **Project directory** holds one or more **Active configs** and zero or more **Scripts** per config.
-- A **Batch target** is a **Project directory** that has a **Script** named `batch` in at least one of its YAMLs.
-- **Subdir-batch mode** runs across many **Batch targets**; **yaml-batch mode** runs across many configs in one project.
-- Many **Help buttons** across the apps open the one **Help window**; each names a single **Help topic**. A tooltip may summarise a topic but never restates it — the topic is the only copy of the text.
-- A **Guide** is assembled from **Help topics** in a chosen order. No prose appears in a guide that is not in a topic.
+- A **Batch** holds **Projects**; a **Project** holds **Replicates**; a
+  **Replicate** is an **Experiment Directory**. Membership at every level is
+  by marker file (`project.yaml`, `flic_config.yaml`) and by *immediate*
+  children only — never by depth.
+- A **Project**'s **Design** is the authority for every `global:` key in its
+  Replicates; the `dfms:` block stays free, as do per-DFM overrides of the
+  physical keys. A Replicate normally omits `global:` entirely and inherits.
+- An **Experiment Type** selects exactly one **Chamber Layout**, fixes the
+  **Facet** cutoffs, and declares the report set. Script actions are gated on
+  both: `plot_well_comparison` needs a Chamber Layout, `plot_breaking_point`
+  needs an Experiment Type.
+- The **Combined Analysis** stacks Replicate summaries; the **Project Report**
+  and the **Publication Figures** are both rendered from it — the report by
+  matplotlib, the figures by plotnine from a **Plot Spec** + **Plot Style**.
+- **Experiment Scripts** and **Project Scripts** have separate action
+  registries and cannot mix; `run_in_experiments` is the only bridge. A
+  **Batch Run** runs a Project Script — there is no Batch script level.
+- Many **Help buttons** across the apps open the one **Help window**; each
+  names a single **Help topic**. A tooltip may summarise a topic but never
+  restates it — the topic is the only copy of the text.
+- A **Guide** is assembled from **Help topics** in a chosen order. No prose
+  appears in a guide that is not in a topic.
 
 ## Example dialogue
 
-> **Dev:** "When subdir-batch is on, does the *root* directory itself count?"
-> **Domain expert:** "Yes — if the root contains a YAML with a `batch` script, it's a **batch target** like any other. The recursion includes the root."
+> **Dev:** "Two Replicates both have a DFM 1. Do those chambers share a random
+> effect in the pooled model?"
+> **Domain expert:** "No. DFM ids are per-recording — DFM 1 in one Replicate
+> is a different physical device from DFM 1 in another. DFM is nested within
+> Experiment, never grouped across it."
 >
-> **Dev:** "What about a folder that has YAMLs but none with `batch`?"
-> **Domain expert:** "Not a **batch target**. Skipped, but logged as a near-miss so the user notices if they forgot to add the script."
+> **Dev:** "A Replicate needs `feeding_threshold: 22` because its rig is
+> noisier. Can it override the Design?"
+> **Domain expert:** "No. The Design owns every `global:` key — that Replicate
+> fails to load. Either the whole Project uses 22, or that recording isn't a
+> Replicate of this Project. Only `pi_direction` and `chamber_sets` vary, and
+> only per-DFM, because those describe hardware rather than analysis."
 
 ## Flagged ambiguities
 
-- "subdirectory" historically meant both *one level down* and *a thing batch runs on*. Resolved: the second meaning is now **batch target**, decoupled from depth.
-- "batch" alone is ambiguous between **subdir-batch mode** and **yaml-batch mode**. Always qualify.
-- "the docs" was ambiguous between `doc/` (user prose) and `docs/` (ADRs). Resolved: user-facing prose is now **help topics**, which live with the shipped code; `docs/` holds decision records for developers and nothing else. Long-form prose is a **guide**, assembled from topics rather than written. Say **help topic**, **guide**, or **ADR**, never "the docs".
+- "project" meant *one experiment* before this overhaul and now means the
+  *pooling parent*. Resolved: one recording is an **Experiment Directory**;
+  `Experiment.project_dir` is renamed. See ADR-0005.
+- "batch" was ambiguous between subdir-batch and yaml-batch mode. Resolved:
+  both are retired; **Batch** is a structural level. See ADR-0006.
+- "experiment type" conflated the assay with the hardware — `hedonic` and
+  `two_well` were both values of one key. Resolved: **Experiment Type** is the
+  assay, **Chamber Layout** is the hardware, and a typed config states neither
+  the layout nor `chamber_size`.
+- The word `batch` still names things at two levels: the default **Project
+  Script** written into every new `project.yaml` (PyTrackingAnalysis's
+  convention), and the legacy Experiment Scripts named `batch` that
+  subdir-batch used to run. The latter have no meaning after ADR-0006 —
+  `pyflic lint` reports them; they are renamed by hand.
+- "the docs" was ambiguous between `doc/` (user prose) and `docs/` (ADRs).
+  Resolved: user-facing prose is now **help topics**, which live with the
+  shipped code; `docs/` holds decision records for developers and nothing
+  else. Long-form prose is a **guide**, assembled from topics rather than
+  written. Say **help topic**, **guide**, or **ADR**, never "the docs".
+
+## Migration
+
+There is no migration tool. The overhaul is a hard break: `pyflic lint`
+reports each offending construct and the new form, and configs are fixed by
+hand. Affected: `experiment_type: two_well|single_well` (→ Custom +
+`chamber_layout:`), `params.chamber_size` in a typed config (→ delete),
+multi-YAML directories (→ keep one `flic_config.yaml`), `<stem>_results/` and
+`analysis_<start>_<end>/` outputs (→ orphaned, never deleted by pyflic),
+Experiment Scripts named `batch`, and `.pyflic_cache/` entries (keys change
+once Facets exist).

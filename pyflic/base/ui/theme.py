@@ -66,6 +66,37 @@ def category_color(category: Category, mode: ThemeMode | None = None) -> str:
     return PALETTE[category].for_mode(use_mode)
 
 
+#: Chrome surfaces for the tile strip, tiles, and anchored panels.  Kept here
+#: rather than derived from the Qt palette so the strip reads as one deliberate
+#: band in both themes instead of inheriting whatever qdarktheme picks.
+_SURFACES: dict[str, dict[str, str]] = {
+    "light": {
+        "band":   "#eef2f7",
+        "base":   "#ffffff",
+        "hover":  "#f8fafc",
+        "border": "#cbd5e1",
+        "text":   "#0f172a",
+        "muted":  "#64748b",
+    },
+    "dark": {
+        "band":   "#161b22",
+        "base":   "#1c2128",
+        "hover":  "#22272e",
+        "border": "#30363d",
+        "text":   "#e6edf3",
+        "muted":  "#8b949e",
+    },
+}
+
+
+def surface_colors(mode: ThemeMode | None = None) -> dict[str, str]:
+    """The chrome surface colors for *mode* (default: the applied mode)."""
+    use_mode: ThemeMode = mode or _resolved_mode
+    if use_mode == "auto":
+        use_mode = _resolved_mode
+    return dict(_SURFACES["dark" if use_mode == "dark" else "light"])
+
+
 def _resolve_auto() -> Literal["light", "dark"]:
     try:
         import darkdetect

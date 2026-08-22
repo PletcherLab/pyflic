@@ -1,17 +1,67 @@
 # What a script is
 
-A **script** is a named recipe stored in your configuration file: a list of pipeline steps
-under one name, triggered from the hub's **Run Script** button. Instead of clicking Load,
-then Basic analysis, then three plots, every time you revisit an experiment, you define
-that sequence once and run it in a click.
+A **script** is a named recipe: a list of steps under one name, run from the Hub's Scripts
+panel. Instead of clicking Load, then Basic analysis, then three plots every time you
+revisit an experiment, you define that sequence once and run it in a click.
 
-Scripts also make an analysis reproducible. The sequence lives in the configuration file
-alongside the parameters that produced the results, so re-running months later gives the
-same output without anyone remembering which buttons were pressed in which order.
+Scripts also make an analysis reproducible. The sequence lives in the config alongside the
+parameters that produced the results, so re-running months later gives the same output
+without anyone remembering which buttons were pressed in which order.
 
-## Defining one
+## Two levels
 
-Scripts live under the top-level `scripts:` key:
+There are two script levels with **separate action registries**. They cannot mix: a
+project-level step in an Experiment Script is an error, and vice versa.
+
+| Level | Lives in | Acts on |
+|---|---|---|
+| **Experiment Script** | a replicate's `flic_config.yaml` `scripts:`, or a Project's `experiment_scripts:` | one loaded replicate |
+| **Project Script** | `project.yaml` `scripts:` | the Project as a whole |
+
+There is no third level. What a [Batch Run](scripts-batch.md) executes IS a Project Script.
+
+The only bridge between the two is the `run_in_experiments` project action, which runs a
+named Experiment Script in every replicate — or, with its optional `only:` list, in just
+some of them.
+
+```yaml
+# project.yaml
+experiment_scripts:              # one recipe, serving every replicate
+  - name: standard
+    steps:
+      - action: load
+      - action: basic_analysis
+      - action: binned_csv
+        binsize: 30
+
+scripts:                         # Project Scripts
+  - name: batch
+    steps:
+      - action: run_in_experiments
+        script: standard
+      - action: project_report
+      - action: render_publication_figures
+```
+
+Putting a recipe in `experiment_scripts:` means one copy serves every replicate instead of
+being pasted into each of their configs. A replicate's own `scripts:` is the fallback when
+the name is not found centrally.
+
+### Built-in Project Scripts
+
+Two pipelines every Project can run without authoring anything. Neither is written to
+`project.yaml`, so they track the shipped default:
+
+- **Standard Pipeline** — validate design → project report → render figures
+- **Report Pipeline** — project report → render figures
+
+A Batch Run prefers the Report Pipeline's steps because they do not gate on
+`validate_design`, which would fail Projects mid-migration. That is what every new
+`project.yaml` is seeded with, under the name `batch`.
+
+## Defining an Experiment Script
+
+Scripts live under a `scripts:` key:
 
 ```yaml
 scripts:

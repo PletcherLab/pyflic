@@ -54,6 +54,11 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     "save":       ("fa5s.save",                Category.LOAD),
     "save_as":    ("fa5s.file-export",         Category.LOAD),
     "new":        ("fa5s.file",                Category.NEUTRAL),
+    # Tile strip (Batch / Project / AI)
+    "batch":      ("fa5s.layer-group",         Category.NEUTRAL),
+    "replicate":  ("fa5s.clone",               Category.NEUTRAL),
+    "ai":         ("fa5s.robot",               Category.TOOLS),
+    "analyze":    ("fa5s.chart-area",          Category.ANALYZE),
     # Misc
     "warning":    ("fa5s.exclamation-triangle",Category.QC),
     "info":       ("fa5s.info-circle",         Category.NEUTRAL),

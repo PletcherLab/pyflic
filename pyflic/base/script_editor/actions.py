@@ -1,13 +1,13 @@
 """Action catalogue for the Script Editor.
 
 Every entry here mirrors one branch of the dispatch table in
-``_build_script_task`` in :mod:`pyflic.base.analysis_hub`.  This module is the
+the dispatch in :mod:`pyflic.base.script_editor.runner`.  This module is the
 only place the parameter schema lives — the Palette, Canvas, Inspector, and
 YAML preview all consume it.
 
 Adding a new action involves:
 
-1. Registering it in ``_build_script_task`` (the executor)
+1. Registering it in :mod:`pyflic.base.script_editor.runner` (the executor)
 2. Appending an entry here (the editor)
 """
 
@@ -23,23 +23,23 @@ from ..ui import Category
 # ---------------------------------------------------------------------------
 
 def _two_well_binned_metrics() -> list[tuple[str, str, str]]:
-    from .. import analysis_hub
-    return list(analysis_hub._TWO_WELL_BINNED)
+    from ..metrics import TWO_WELL_BINNED
+    return list(TWO_WELL_BINNED)
 
 
 def _single_well_binned_metrics() -> list[tuple[str, str, str]]:
-    from .. import analysis_hub
-    return list(analysis_hub._SINGLE_WELL_BINNED)
+    from ..metrics import SINGLE_WELL_BINNED
+    return list(SINGLE_WELL_BINNED)
 
 
 def _well_cmp_metrics() -> list[str]:
-    from .. import analysis_hub
-    return list(analysis_hub._WELL_CMP_METRICS)
+    from ..metrics import WELL_CMP_METRICS
+    return list(WELL_CMP_METRICS)
 
 
 def _metric_default_mode() -> dict[str, str]:
-    from .. import analysis_hub
-    return dict(analysis_hub._METRIC_DEFAULT_MODE)
+    from ..metrics import METRIC_DEFAULT_MODE
+    return dict(METRIC_DEFAULT_MODE)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ ACTIONS: list[Action] = [
         label="Write summary",
         blurb="Write summary.txt capturing excluded chambers and experiment metadata.",
         icon="csv", category=Category.LOAD, produces="csv",
-        notes="Writes project_dir/analysis/summary.txt with experiment metadata, "
+        notes="Writes experiment_dir/analysis/summary.txt with experiment metadata, "
               "design table, and any excluded chambers. Safe to call at any point "
               "in the script — e.g. right after remove_chambers.",
     ),
@@ -460,7 +460,7 @@ def actions_by_category() -> dict[Category, list[Action]]:
 
 # ---------------------------------------------------------------------------
 # Metric helpers — bridge between a step's parameter schema and the
-# experiment-type-aware metric lists in analysis_hub.
+# layout-aware metric lists in pyflic.base.metrics.
 # ---------------------------------------------------------------------------
 
 def metric_choices(kind: str, is_two_well: bool) -> list[tuple[str, str]]:

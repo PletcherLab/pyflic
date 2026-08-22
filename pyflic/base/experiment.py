@@ -42,9 +42,12 @@ class Experiment:
     chamber_factors: dict | None = None         # {(dfm_id, chamber_idx): {factor: level}}
     config_path: Path | None = None
     data_dir: Path | None = None
-    project_dir: Path | None = None
-    output_subdir: str | None = None
+    experiment_dir: Path | None = None
     range_minutes: tuple[float, float] | None = None
+    facet_cutoffs: tuple[float, ...] | None = None
+    experiment_type: Any = None            # ExperimentType strategy (ADR-0007)
+    chamber_layout: str | None = None      # 'single_well' | 'two_well'
+    config: dict = field(default_factory=dict)   # the resolved yaml
     transform_licks: bool = True
     parallel: bool | None = None
     executor: Literal["threads", "processes"] | None = None
@@ -210,48 +213,44 @@ class Experiment:
 
         return result
 
-    def _range_suffix(self) -> str:
-        """Return ``'_0_30'``-style suffix when a range is active, or ``''``."""
-        rm = self.range_minutes
-        if rm is None or (rm[0] == 0.0 and rm[1] == 0.0):
-            return ""
-        a, b = rm
-        b_eff = b
-        if b == 0.0 or b == float("inf"):
-            actual_max = self._max_experiment_minutes()
-            if actual_max is not None:
-                b_eff = actual_max
-        return f"_{_fmt_min(a)}_{_fmt_min(b_eff)}"
-
     @property
     def _output_root(self) -> Path | None:
-        """Return ``project_dir/output_subdir`` (or ``project_dir`` if no subdir)."""
-        if self.project_dir is None:
-            return None
-        if self.output_subdir:
-            return self.project_dir / self.output_subdir
-        return self.project_dir
+        """The Experiment Directory itself.
+
+        Kept as a property because callers reference it, but there is no longer
+        anything between the Experiment Directory and its outputs: ADR-0005
+        retired ``<stem>_results/`` along with multi-YAML directories.
+        """
+        return self.experiment_dir
 
     @property
     def analysis_dir(self) -> Path | None:
-        """Return ``project_dir/[output_subdir/]analysis[_start_end]``, or ``None`` if no ``project_dir`` is set."""
+        """``experiment_dir/analysis``, or ``None`` if no ``experiment_dir`` is set.
+
+        Fixed, never suffixed by the time window (ADR-0008): a window is a Facet
+        column now, so one analysis directory holds the whole faceted result.
+        """
         root = self._output_root
-        if root is None:
-            return None
-        return root / f"analysis{self._range_suffix()}"
+        return None if root is None else root / "analysis"
 
     @property
     def qc_dir(self) -> Path | None:
-        """Return ``project_dir/[output_subdir/]qc[_start_end]``, or ``None`` if no ``project_dir`` is set."""
+        """``experiment_dir/qc``, or ``None`` if no ``experiment_dir`` is set."""
         root = self._output_root
-        if root is None:
-            return None
-        return root / f"qc{self._range_suffix()}"
+        return None if root is None else root / "qc"
+
+    @property
+    def figures_dir(self) -> Path | None:
+        """``experiment_dir/figures`` — vector Publication Figures rendered for a
+        standalone Experiment Directory.  Inside a Project the Plot Editor
+        writes to the Project's own ``figures/`` instead."""
+        root = self._output_root
+        return None if root is None else root / "figures"
 
     @classmethod
     def load(
         cls,
-        project_dir: str | Path,
+        experiment_dir: str | Path,
         *,
         config_name: str = "flic_config.yaml",
         range_minutes: Sequence[float] = (0, 0),
@@ -262,10 +261,10 @@ class Experiment:
         """
         Load an experiment from a project directory.
 
-        ``project_dir`` is the single required argument and is the root of the
+        ``experiment_dir`` is the single required argument and is the root of the
         project layout::
 
-            project_dir/
+            experiment_dir/
               flic_config.yaml   ← required; loaded automatically
               data/              ← DFM CSV files
               qc/                ← QC report output (write_qc_reports)
@@ -273,9 +272,9 @@ class Experiment:
 
         Parameters
         ----------
-        project_dir:
+        experiment_dir:
             Root directory for the experiment project.  Must contain
-            ``flic_config.yaml``.  Data is always read from ``project_dir/data``.
+            ``flic_config.yaml``.  Data is always read from ``experiment_dir/data``.
         range_minutes:
             ``(start, end)`` time window in minutes.  ``(0, 0)`` means load all.
         parallel:
@@ -289,7 +288,7 @@ class Experiment:
         from .yaml_config import load_experiment_yaml
 
         return load_experiment_yaml(
-            project_dir,
+            experiment_dir,
             config_name=config_name,
             range_minutes=range_minutes,
             parallel=parallel,
@@ -371,14 +370,14 @@ class Experiment:
         """
         Write per-DFM QC reports (CSV/TXT) to *out_dir* and return the resolved directory path.
 
-        If *out_dir* is not given, defaults to ``project_dir/qc``.  Raises
-        ``ValueError`` if neither *out_dir* nor ``project_dir`` is set.
+        If *out_dir* is not given, defaults to ``experiment_dir/qc``.  Raises
+        ``ValueError`` if neither *out_dir* nor ``experiment_dir`` is set.
         """
 
         if out_dir is None:
             if self.qc_dir is None:
                 raise ValueError(
-                    "out_dir must be provided when no project_dir is set on the Experiment."
+                    "out_dir must be provided when no experiment_dir is set on the Experiment."
                 )
             out_dir = self.qc_dir
         out = Path(out_dir).expanduser().resolve()
@@ -1966,7 +1965,7 @@ class Experiment:
         and ``Minutes`` (bin midpoint) column prepended to each row.
 
         By default the result is also saved to
-        ``project_dir/analysis/binned_feeding_summary.csv`` (or *path* if
+        ``experiment_dir/analysis/binned_feeding_summary.csv`` (or *path* if
         provided).  Pass ``save=False`` to suppress file output.
 
         Bins can be specified in one of two mutually exclusive ways:
@@ -2006,7 +2005,7 @@ class Experiment:
         path:
             Explicit output path for the CSV.  When ``None`` (the default)
             the file is written to
-            ``project_dir/analysis/binned_feeding_summary.csv``.
+            ``experiment_dir/analysis/binned_feeding_summary.csv``.
             Ignored when ``save=False``.
         save:
             Write the result to a CSV file (default ``True``).  Set to
@@ -2102,7 +2101,7 @@ class Experiment:
             if path is None:
                 if self.analysis_dir is None:
                     raise ValueError(
-                        "path must be provided when no project_dir is set on the Experiment."
+                        "path must be provided when no experiment_dir is set on the Experiment."
                     )
                 path = self.analysis_dir / "binned_feeding_summary.csv"
             out = Path(path).expanduser().resolve()
@@ -2141,7 +2140,7 @@ class Experiment:
         assigned to a treatment are included.
 
         By default the result is also saved to
-        ``project_dir/analysis/moving_median_duration.csv`` (or *path* if
+        ``experiment_dir/analysis/moving_median_duration.csv`` (or *path* if
         provided).  Pass ``save=False`` to suppress file output.
 
         Parameters
@@ -2155,7 +2154,7 @@ class Experiment:
             default) sweeps from 0 to the end of each DFM's recording.
         path:
             Explicit output CSV path.  When ``None`` (the default) the file is
-            written to ``project_dir/analysis/moving_median_duration.csv``.
+            written to ``experiment_dir/analysis/moving_median_duration.csv``.
             Ignored when ``save=False``.
         save:
             Write the result to a CSV file (default ``True``).
@@ -2178,7 +2177,7 @@ class Experiment:
             if path is None:
                 if self.analysis_dir is None:
                     raise ValueError(
-                        "path must be provided when no project_dir is set on the Experiment."
+                        "path must be provided when no experiment_dir is set on the Experiment."
                     )
                 path = self.analysis_dir / "moving_median_duration.csv"
             out = Path(path).expanduser().resolve()
@@ -2198,21 +2197,115 @@ class Experiment:
         Save the feeding summary CSV to disk and return the resolved output path.
 
         If *path* is not given, defaults to
-        ``project_dir/analysis[_start_end]/feeding_summary.csv``.
-        The range is encoded in the directory name, not the filename.
-        Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
+        ``experiment_dir/analysis/feeding_summary.csv``.  The analysis
+        directory is fixed: a time window is a Facet column, not a directory
+        (ADR-0008).
+        Raises ``ValueError`` if neither *path* nor ``experiment_dir`` is set.
         Only includes DFM chambers assigned to a treatment.
         """
         if path is None:
             if self.analysis_dir is None:
                 raise ValueError(
-                    "path must be provided when no project_dir is set on the Experiment."
+                    "path must be provided when no experiment_dir is set on the Experiment."
                 )
             path = self.analysis_dir / "feeding_summary.csv"
         out = Path(path).expanduser().resolve()
         out.parent.mkdir(parents=True, exist_ok=True)
         df = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
         df.to_csv(out, index=False)
+        return out
+
+    # ------------------------------------------------------------------
+    # Facets (ADR-0008): a time window is a column, not a directory
+    # ------------------------------------------------------------------
+
+    def resolved_facet_cutoffs(self):
+        """The facet cutoffs in effect, or ``None`` when the experiment is not
+        faceted.  The Experiment Type may fix or default them; the config's
+        ``facet_cutoffs`` wins otherwise."""
+        if self.experiment_type is not None:
+            return self.experiment_type.resolve_facet_cutoffs(
+                (self.config or {}).get("global") or {})
+        return tuple(self.facet_cutoffs) if self.facet_cutoffs else None
+
+    def facet_windows(self):
+        """``[(start, end), ...]`` for this experiment, or ``[]`` when unfaceted."""
+        from . import windowing
+
+        cutoffs = self.resolved_facet_cutoffs()
+        return list(windowing.facet_windows(cutoffs)) if cutoffs else []
+
+    def facet_labels(self):
+        """Display labels parallel to :meth:`facet_windows`."""
+        from . import windowing
+
+        windows = self.facet_windows()
+        if not windows:
+            return []
+        if self.experiment_type is not None:
+            return self.experiment_type.phase_labels_for(
+                windows, (self.config or {}).get("global") or {})
+        return [windowing.minute_label(w) for w in windows]
+
+    def feeding_summary_facet(
+        self,
+        *,
+        transform_licks: bool | None = None,
+    ) -> pd.DataFrame:
+        """The feeding summary computed once per Facet and stacked.
+
+        Adds two leading columns — ``Facet`` (the display label) and
+        ``FacetRange`` (the canonical ``(start, end)`` cell) — so the window
+        travels with the data instead of with the output path.  Returns an
+        empty frame when the experiment is not faceted; callers should fall back
+        to :meth:`feeding_summary`.
+        """
+        from . import windowing
+
+        windows = self.facet_windows()
+        if not windows:
+            return pd.DataFrame()
+        labels = self.facet_labels()
+        frames: list[pd.DataFrame] = []
+        for window, label in zip(windows, labels):
+            df = self.feeding_summary(
+                range_minutes=windowing.as_range_minutes(window),
+                transform_licks=transform_licks,
+            )
+            if df is None or df.empty:
+                continue
+            df = df.copy()
+            df.insert(0, "FacetRange", windowing.format_range(window))
+            df.insert(0, "Facet", label)
+            frames.append(df)
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
+    def write_feeding_summary_facet(
+        self,
+        path: str | Path | None = None,
+        *,
+        transform_licks: bool | None = None,
+    ) -> Path | None:
+        """Write ``analysis/feeding_summary_facet.csv``.
+
+        Returns ``None`` (writing nothing) when the experiment is not faceted —
+        an absent file then means "no facets", which is why it is never written
+        empty.
+        """
+        df = self.feeding_summary_facet(transform_licks=transform_licks)
+        if df.empty:
+            return None
+        if path is None:
+            if self.analysis_dir is None:
+                raise ValueError(
+                    "path must be provided when no experiment_dir is set on the Experiment."
+                )
+            path = self.analysis_dir / "feeding_summary_facet.csv"
+        out = Path(path).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(out, index=False, na_rep="NA")
         return out
 
     def write_parsed_feeding_summary(
@@ -2236,7 +2329,7 @@ class Experiment:
         * ``feeding_summary_400_1000.csv``— minutes 400 → 1000
         * ``feeding_summary_1000_end.csv``— minutes 1000 → end of experiment
 
-        All files are written to ``project_dir/analysis/`` using the same
+        All files are written to ``experiment_dir/analysis/`` using the same
         naming convention as :meth:`write_feeding_summary`.  Raises
         :class:`ValueError` if *breakpoints* is empty, contains non-positive
         values, or is not strictly increasing.
@@ -2256,7 +2349,7 @@ class Experiment:
 
         paths: list[Path] = []
         if self.analysis_dir is None:
-            raise ValueError("project_dir must be set to write parsed feeding summaries.")
+            raise ValueError("experiment_dir must be set to write parsed feeding summaries.")
         for a, b in ranges:
             b_eff = b
             if b == float("inf"):
@@ -2284,14 +2377,14 @@ class Experiment:
         """
         Write ``summary_text()`` to disk and return the resolved output path.
 
-        If *path* is not given, defaults to ``project_dir/analysis/summary.txt``.
-        Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
+        If *path* is not given, defaults to ``experiment_dir/analysis/summary.txt``.
+        Raises ``ValueError`` if neither *path* nor ``experiment_dir`` is set.
         """
 
         if path is None:
             if self.analysis_dir is None:
                 raise ValueError(
-                    "path must be provided when no project_dir is set on the Experiment."
+                    "path must be provided when no experiment_dir is set on the Experiment."
                 )
             path = self.analysis_dir / "summary.txt"
         out = Path(path).expanduser().resolve()
@@ -2321,14 +2414,14 @@ class Experiment:
         Save the feeding summary plot to disk and return the resolved output path.
 
         If *path* is not given, defaults to
-        ``project_dir/analysis/feeding_summary.{format}``.
-        Raises ``ValueError`` if neither *path* nor ``project_dir`` is set.
+        ``experiment_dir/analysis/feeding_summary.{format}``.
+        Raises ``ValueError`` if neither *path* nor ``experiment_dir`` is set.
         *format* may be ``"png"`` (default) or ``"pdf"``.
         """
         if path is None:
             if self.analysis_dir is None:
                 raise ValueError(
-                    "path must be provided when no project_dir is set on the Experiment."
+                    "path must be provided when no experiment_dir is set on the Experiment."
                 )
             path = self.analysis_dir / f"feeding_summary.{format}"
         out = Path(path).expanduser().resolve()
@@ -2358,20 +2451,22 @@ class Experiment:
         Run the standard analysis pipeline and write all outputs to disk.
 
         Calls, in order:
-          1. ``write_qc_reports()``           → ``project_dir/qc/``  (skipped when skip_qc=True)
-          2. ``write_summary()``              → ``project_dir/analysis/summary.txt``
-          3. ``write_feeding_summary()``      → ``project_dir/analysis/feeding_summary.csv``
-          4. ``write_feeding_summary_plot()`` → ``project_dir/analysis/feeding_summary.{plot_format}``
+          1. ``write_qc_reports()``           → ``experiment_dir/qc/``  (skipped when skip_qc=True)
+          2. ``write_summary()``              → ``experiment_dir/analysis/summary.txt``
+          3. ``write_feeding_summary()``       → ``experiment_dir/analysis/feeding_summary.csv``
+          4. ``write_feeding_summary_facet()`` → ``.../feeding_summary_facet.csv`` (faceted experiments only)
+          5. ``write_feeding_summary_plot()``  → ``.../feeding_summary.{plot_format}``
 
-        Returns a dict with keys ``"qc_dir"`` (``None`` when skipped), ``"summary"``,
-        ``"feeding_summary"`` and ``"feeding_summary_plot"`` pointing to the
-        written paths.
+        Returns a dict with keys ``"qc_dir"`` (``None`` when skipped),
+        ``"summary"``, ``"feeding_summary"``, ``"feeding_summary_facet"``
+        (``None`` when the experiment is not faceted) and
+        ``"feeding_summary_plot"`` pointing to the written paths.
         """
         n_dfms = len(self.dfms)
-        n_steps = 3 if skip_qc else 4
+        n_steps = 4 if skip_qc else 5
         print("=" * 50, flush=True)
         print("FLIC Basic Analysis", flush=True)
-        print(f"  Project : {self.project_dir}", flush=True)
+        print(f"  Project : {self.experiment_dir}", flush=True)
         print(f"  DFMs    : {sorted(self.dfms.keys())}", flush=True)
         print("=" * 50, flush=True)
 
@@ -2417,6 +2512,16 @@ class Experiment:
         print(f"  Done → {feeding_csv_path}", flush=True)
 
         step += 1
+        print(f"\n[{step}/{n_steps}] Faceted feeding summary CSV...", flush=True)
+        facet_csv_path = self.write_feeding_summary_facet(
+            transform_licks=transform_licks,
+        )
+        if facet_csv_path is None:
+            print("  Skipped — experiment is not faceted.", flush=True)
+        else:
+            print(f"  Done → {facet_csv_path}", flush=True)
+
+        step += 1
         print(f"\n[{step}/{n_steps}] Feeding summary plot...", flush=True)
         plot_path = self.write_feeding_summary_plot(
             format=plot_format,
@@ -2434,6 +2539,7 @@ class Experiment:
             "qc_dir": qc_dir,
             "summary": summary_path,
             "feeding_summary": feeding_csv_path,
+            "feeding_summary_facet": facet_csv_path,
             "feeding_summary_plot": plot_path,
         }
 

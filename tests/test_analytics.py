@@ -158,11 +158,11 @@ def test_disk_cache_round_trip(experiment, tmp_path: Path):
     from pyflic.base import cache as _cache
     df = experiment.feeding_summary()
     p = _cache.save_feeding_summary(
-        df, experiment.project_dir, range_minutes=(0, 0), transform_licks=True,
+        df, experiment.experiment_dir, range_minutes=(0, 0), transform_licks=True,
     )
     assert p.is_file()
     df2 = _cache.load_feeding_summary(
-        experiment.project_dir, range_minutes=(0, 0), transform_licks=True,
+        experiment.experiment_dir, range_minutes=(0, 0), transform_licks=True,
     )
     assert df2 is not None
     assert len(df2) == len(df)
