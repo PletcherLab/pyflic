@@ -1,18 +1,18 @@
-"""Project: a marker-file parent of replicate Experiment Directories (ADR-0005).
+"""Project: a marker-file parent of member Experiment Directories (ADR-0005).
 
 A directory with a ``project.yaml`` is a Project; its immediate subdirectories
-containing a ``flic_config.yaml`` are its **Replicates**.  The Project owns the
-Combined Analysis (stacked *filtered* per-replicate summaries with an
+containing a ``flic_config.yaml`` are its **Members**.  The Project owns the
+Combined Analysis (stacked *filtered* per-member summaries with an
 ``Experiment`` column, pooled tests beside a mixed model), the project-level
 ``plot_specs.yaml`` / ``figures/``, and the Project Report.
 
 Two things here differ deliberately from PyTrackingAnalysis:
 
-* The ``design:`` section is the authority for **every** key under a Replicate's
+* The ``design:`` section is the authority for **every** key under a Member's
   ``global:``, not just the type and the design factors.  ``well_names`` and
   ``transform_licks`` divergence produces a pooled figure that is *wrong* rather
   than merely noisy, and no shorter list had a defensible boundary.
-* A Replicate normally **omits** ``global:`` and inherits it, so that authority
+* A Member normally **omits** ``global:`` and inherits it, so that authority
   costs no duplication.  A ``global:`` that is present is validated key by key.
 """
 
@@ -28,7 +28,7 @@ from . import experiment_types, windowing
 
 PROJECT_FILENAME = "project.yaml"
 #: The per-Experiment config.  A Project never has one of its own: the shared
-#: design lives in ``project.yaml`` and each Replicate carries this file.
+#: design lives in ``project.yaml`` and each Member carries this file.
 CONFIG_FILENAME = "flic_config.yaml"
 
 #: Keys of ``global:`` the Design owns absolutely (ADR-0005).  Listed rather
@@ -73,7 +73,7 @@ def dfm_ids_in_data(path) -> list[int]:
     """DFM ids present in ``path/data``, parsed from ``DFM<id>_<n>.csv``.
 
     pyflic can discover this where PyTrackingAnalysis cannot, which is what
-    lets :meth:`Project.scaffold_replicate` reconcile a copied ``dfms:`` block
+    lets :meth:`Project.scaffold_member` reconcile a copied ``dfms:`` block
     against the recording that actually exists.
     """
     import re
@@ -152,7 +152,7 @@ class _NameShim:
 
 
 class Project:
-    """The loaded Project: replicate discovery, design validation, the Combined
+    """The loaded Project: member discovery, design validation, the Combined
     Analysis, and the Project Report."""
 
     def __init__(self, project_dir: str | Path):
@@ -175,19 +175,28 @@ class Project:
         self.figures_path = os.path.join(self.project_directory, "figures")
         self.arena = _NameShim(self.name)  # AI-payload compatibility
 
-        # ---- discover replicates -------------------------------------
-        self.experiment_names: list[str] = []
+        # ---- discover members -------------------------------------
+        self.member_names: list[str] = []
         self.configs: dict[str, dict] = {}
+        #: Real paths already taken.  Two symlinked directories pointing at
+        #: one recording used to be counted twice — the same chambers analyzed
+        #: twice and stacked into the Combined Analysis under two labels
+        #: (ADR-0009).  ``layout.members_in`` enforces the same rule.
+        seen: set[str] = set()
         for entry in sorted(os.listdir(self.project_directory)):
             sub = os.path.join(self.project_directory, entry)
             if os.path.isdir(sub) and is_experiment_dir(sub):
-                self.experiment_names.append(entry)
+                real = os.path.realpath(sub)
+                if real in seen:
+                    continue
+                seen.add(real)
+                self.member_names.append(entry)
                 with open(os.path.join(sub, CONFIG_FILENAME),
                           encoding="utf-8") as handle:
                     self.configs[entry] = yaml.safe_load(handle) or {}
-        if not self.experiment_names and not self.design:
+        if not self.member_names and not self.design:
             raise ValueError(
-                f"Project '{self.name}' has no replicates: no subdirectory of "
+                f"Project '{self.name}' has no members: no subdirectory of "
                 f"{self.project_directory} contains a {CONFIG_FILENAME}, and "
                 f"there is no design: section to scaffold from")
 
@@ -211,8 +220,8 @@ class Project:
     def _resolve_type(self) -> None:
         if self.design_global:
             source = self.design_global
-        elif self.experiment_names:
-            source = self._own_global(self.experiment_names[0])
+        elif self.member_names:
+            source = self._own_global(self.member_names[0])
         else:
             source = {}
         self.experiment_type = experiment_types.get_experiment_type(
@@ -226,25 +235,25 @@ class Project:
         self.exclusion_group = source.get("exclusion_group", "general")
 
     def _own_global(self, name: str) -> dict:
-        """A Replicate's *own* ``global:`` block as written — not the resolved
-        one.  Design validation compares what the file states, so a Replicate
+        """A Member's *own* ``global:`` block as written — not the resolved
+        one.  Design validation compares what the file states, so a Member
         that states nothing is conformant by construction."""
         return dict((self.configs[name].get("global") or {}))
 
     def resolved_global(self, name: str) -> dict:
-        """The ``global:`` a Replicate loads with: the Design's, with its own
+        """The ``global:`` a Member loads with: the Design's, with its own
         (already validated) keys layered on top."""
         merged = dict(self.design_global)
         merged.update(self._own_global(name))
         return merged
 
     def _validate_design_match(self) -> None:
-        """Hard-fail when a Replicate contradicts the Design (ADR-0005).
+        """Hard-fail when a Member contradicts the Design (ADR-0005).
 
-        With a ``design:`` section every key a Replicate states under
+        With a ``design:`` section every key a Member states under
         ``global:`` must equal the Design's.  Without one (a Project assembled
-        from standalone experiments), Replicates must agree with each other —
-        the same rule with the first Replicate standing in for the Design.
+        from standalone experiments), Members must agree with each other —
+        the same rule with the first Member standing in for the Design.
         """
         if self.design_global:
             problems = self._validate_against_design()
@@ -252,14 +261,14 @@ class Project:
             problems = self._validate_agreement()
         if problems:
             raise ValueError(
-                f"Project '{self.name}': replicates do not match the project "
+                f"Project '{self.name}': members do not match the project "
                 f"design ({len(problems)} problem(s)):\n  - "
                 + "\n  - ".join(problems))
         self._collect_warnings()
 
     def _validate_against_design(self) -> list[str]:
         problems: list[str] = []
-        for name in self.experiment_names:
+        for name in self.member_names:
             own = self._own_global(name)
             for key, value in own.items():
                 if key not in DESIGN_KEYS:
@@ -276,7 +285,7 @@ class Project:
                         f"{name}: global.{key} is {value!r} but the project "
                         f"design requires {expected!r}")
             ## Per-DFM overrides are checked here too, so a Project fails to
-            ## load rather than failing later inside one replicate's load.
+            ## load rather than failing later inside one member's load.
             for node in (self.configs[name].get("dfms") or []):
                 if not isinstance(node, dict):
                     continue
@@ -292,14 +301,14 @@ class Project:
         return problems
 
     def _validate_agreement(self) -> list[str]:
-        """Legacy mode (no design section): Replicates must agree with the
+        """Legacy mode (no design section): Members must agree with the
         first one on every design key they state."""
         problems: list[str] = []
-        if not self.experiment_names:
+        if not self.member_names:
             return problems
-        first = self.experiment_names[0]
+        first = self.member_names[0]
         reference = self._own_global(first)
-        for name in self.experiment_names[1:]:
+        for name in self.member_names[1:]:
             own = self._own_global(name)
             for key in DESIGN_KEYS:
                 if key not in reference and key not in own:
@@ -315,19 +324,19 @@ class Project:
         """Non-fatal spread worth surfacing — things the Design leaves free."""
         def spread(getter, label):
             values: dict[str, list[str]] = {}
-            for name in self.experiment_names:
+            for name in self.member_names:
                 values.setdefault(repr(getter(name)), []).append(name)
             if len(values) > 1:
                 detail = "; ".join(f"{v}: {', '.join(ns)}"
                                    for v, ns in values.items())
                 self.warnings.append(
-                    f"{label} differs across replicates ({detail})")
+                    f"{label} differs across members ({detail})")
 
-        if len(self.experiment_names) > 1:
+        if len(self.member_names) > 1:
             spread(lambda n: len(self.configs[n].get("dfms") or []),
                    "DFM count")
-        for name in self.experiment_names:
-            if not has_experiment_data(self.experiment_dir(name)):
+        for name in self.member_names:
+            if not has_experiment_data(self.member_dir(name)):
                 self.warnings.append(f"{name}: no DFM CSVs in data/")
 
     # ------------------------------------------------------------------
@@ -342,53 +351,104 @@ class Project:
 
     def find_experiment_script(self, name: str) -> dict | None:
         """The centrally-held Experiment Script *name*, or None (the
-        ``run_in_experiments`` bridge then falls back to each Replicate's own)."""
+        ``run_in_experiments`` bridge then falls back to each Member's own)."""
         for script in self.experiment_scripts:
             if script.get("name") == name:
                 return script
         return None
 
     # ------------------------------------------------------------------
-    # Replicate access / scaffolding
+    # Member access / scaffolding
     # ------------------------------------------------------------------
 
-    def experiment_dir(self, name: str) -> str:
+    def member_dir(self, name: str) -> str:
         return os.path.join(self.project_directory, name)
 
-    def load_experiment(self, name: str, **kwargs):
-        """Load a Replicate with the Design's ``global:`` supplied for
+    def load_member(self, name: str, **kwargs):
+        """Load a Member with the Design's ``global:`` supplied for
         inheritance and per-DFM overrides restricted (ADR-0005)."""
         from .yaml_config import load_experiment_yaml
 
         kwargs.setdefault("exclusion_group", self.exclusion_group)
         return load_experiment_yaml(
-            self.experiment_dir(name),
+            self.member_dir(name),
             design_global=self.design_global or None,
             in_project=True,
             **kwargs,
         )
 
+    #: Pre-ADR-0009 spellings.  ``Project.experiment_names`` and friends are
+    #: the names the sibling app still uses, and notebooks written against
+    #: pyflic before the Member rename call them; keeping them costs three
+    #: lines and saves every one of those from breaking.
+    @property
+    def experiment_names(self) -> list[str]:
+        return self.member_names
+
+    def experiment_dir(self, name: str) -> str:
+        return self.member_dir(name)
+
+    def load_experiment(self, name: str, **kwargs):
+        return self.load_member(name, **kwargs)
+
+    def experiment_status(self, name: str) -> dict:
+        return self.member_status(name)
+
+    # ------------------------------------------------------------------
+    # Layout: what a run can use, and what is blocked (ADR-0009)
+    # ------------------------------------------------------------------
+
+    def member_layouts(self) -> list:
+        """Every experiment-shaped subdirectory, classified — healthy or
+        Blocked (:mod:`pyflic.base.layout`).
+
+        The Project's own membership test asks only "is there a
+        ``flic_config.yaml``".  This asks the harder question a *run* asks —
+        "is there data the loader can find" — so an Unfiled Recording and a
+        configured folder with no data are visible in the Project panel
+        instead of failing at load, an hour into an unattended run.
+        """
+        from . import layout
+
+        return layout.members_in(self.project_directory)
+
+    def blocked_members(self) -> list:
+        """Members a run cannot use as they stand."""
+        return [item for item in self.member_layouts() if item.blocked]
+
     def unconfigured_dirs(self) -> list[str]:
         """Immediate subdirectories that hold a recording but are not
-        Replicates yet — a ``data/`` with at least one ``DFM*.csv`` and no
-        ``flic_config.yaml``.  These are the scaffolding candidates; every
-        other subdirectory (project outputs, caches, unrelated folders) is
-        ignored, so the data criterion is the whole test and there is no
-        denylist to maintain."""
-        pending: list[str] = []
-        for entry in sorted(os.listdir(self.project_directory)):
-            sub = os.path.join(self.project_directory, entry)
-            if not os.path.isdir(sub) or is_experiment_dir(sub):
-                continue
-            if has_experiment_data(sub):
-                pending.append(entry)
-        return pending
+        Members yet — a ``data/`` with at least one ``DFM*.csv`` and no
+        ``flic_config.yaml``.  These are the scaffolding candidates.
 
-    def scaffold_replicate_config(self, name: str) -> tuple[dict, list[str]]:
-        """A ``flic_config.yaml`` for Replicate *name*, plus reconciliation notes.
+        Deliberately *not* the Unfiled Recordings (ADR-0009): scaffolding
+        reconciles the copied ``dfms:`` block against the DFM ids actually in
+        ``data/``, and doing that before the files are filed would write a
+        config reconciled against nothing.  File first, then scaffold —
+        :meth:`unfiled_members` names the ones waiting on that.
+        """
+        from . import layout
 
-        The ``dfms:`` block is copied from the first existing Replicate —
-        replicates of one design almost always reuse the plate layout, and
+        return [item.name for item in self.member_layouts()
+                if item.status == layout.NO_CONFIG]
+
+    def unfiled_members(self) -> list[str]:
+        """Subdirectories whose DFM CSVs sit at their root, not in ``data/``.
+
+        One click fixes them (:func:`pyflic.base.layout.file_recording`), and
+        until it does they are invisible to the Project: the loader reads
+        ``data/`` and nothing else.
+        """
+        from . import layout
+
+        return [item.name for item in self.member_layouts()
+                if item.status == layout.UNFILED]
+
+    def scaffold_member_config(self, name: str) -> tuple[dict, list[str]]:
+        """A ``flic_config.yaml`` for Member *name*, plus reconciliation notes.
+
+        The ``dfms:`` block is copied from the first existing Member —
+        members of one design almost always reuse the plate layout, and
         retyping 48 chamber assignments is the work worth avoiding — then
         reconciled against the DFM ids actually present in ``data/``:
 
@@ -396,17 +456,17 @@ class Project:
         * an entry with no data is **flagged**, never silently dropped, because
           a missing CSV is usually a copy that has not finished.
 
-        ``global:`` is deliberately absent: the Replicate inherits the Design.
+        ``global:`` is deliberately absent: the Member inherits the Design.
         """
         import copy
 
         notes: list[str] = []
         template: list = []
-        if self.experiment_names:
-            source = self.experiment_names[0]
+        if self.member_names:
+            source = self.member_names[0]
             template = copy.deepcopy(self.configs[source].get("dfms") or [])
             notes.append(f"dfms: copied from '{source}'")
-        found = dfm_ids_in_data(self.experiment_dir(name))
+        found = dfm_ids_in_data(self.member_dir(name))
         if not found:
             notes.append("data/: no DFM CSVs found — nothing to reconcile")
             return ({"dfms": template} if template else {"dfms": []}), notes
@@ -436,24 +496,24 @@ class Project:
                 return {k: "" for k in node["chambers"]}
         return {i: "" for i in range(1, 7)}
 
-    def scaffold_replicate(self, name: str) -> tuple[str, list[str]]:
-        """Give Replicate *name* a design-conformant ``flic_config.yaml``.
+    def scaffold_member(self, name: str) -> tuple[str, list[str]]:
+        """Give Member *name* a design-conformant ``flic_config.yaml``.
 
         Creates the directory and its ``data/`` when missing, so this serves
-        both "add a new replicate" and "adopt a folder already sitting in the
-        Project".  Never overwrites an existing config — a replicate's chamber
+        both "add a new member" and "adopt a folder already sitting in the
+        Project".  Never overwrites an existing config — a member's chamber
         assignments are hand-made.
         """
-        directory = self.experiment_dir(name)
+        directory = self.member_dir(name)
         config_path = os.path.join(directory, CONFIG_FILENAME)
         if os.path.isfile(config_path):
             raise FileExistsError(f"'{name}' already has a {CONFIG_FILENAME}")
         os.makedirs(os.path.join(directory, "data"), exist_ok=True)
-        config, notes = self.scaffold_replicate_config(name)
+        config, notes = self.scaffold_member_config(name)
         with open(config_path, "w", encoding="utf-8") as handle:
             yaml.safe_dump(config, handle, sort_keys=False, allow_unicode=True)
-        self.experiment_names.append(name)
-        self.experiment_names.sort()
+        self.member_names.append(name)
+        self.member_names.sort()
         self.configs[name] = config
         return config_path, notes
 
@@ -461,9 +521,9 @@ class Project:
     # Status
     # ------------------------------------------------------------------
 
-    def experiment_status(self, name: str) -> dict:
-        """Cheap per-Replicate status from saved artifacts (no data load)."""
-        directory = self.experiment_dir(name)
+    def member_status(self, name: str) -> dict:
+        """Cheap per-Member status from saved artifacts (no data load)."""
+        directory = self.member_dir(name)
         analysis = os.path.join(directory, "analysis")
         summary = os.path.join(analysis, "feeding_summary.csv")
         status = {
@@ -475,20 +535,34 @@ class Project:
             "has_data": has_experiment_data(directory),
             "dfms": len(dfm_ids_in_data(directory)),
             "chambers": None,
+            ## The stale rule (ADR-0010): saved results computed BEFORE the
+            ## current exclusion declaration describe a chamber population
+            ## nobody asked for.  Showing them a date beside "analyzed" is
+            ## worse than showing nothing — the date is true and the number
+            ## it stands for is not.
+            "stale": False,
         }
         if status["analyzed"]:
             try:
                 status["chambers"] = len(pd.read_csv(summary))
             except Exception:  # noqa: BLE001
                 pass
+            declaration = os.path.join(directory, "remove_chambers.csv")
+            try:
+                status["stale"] = (
+                    os.path.isfile(declaration)
+                    and os.path.getmtime(declaration)
+                    > os.path.getmtime(summary))
+            except OSError:
+                pass
         return status
 
     def run_all(self, *, make_reports: bool = True,
                 skip_analyzed: bool = False, log=print) -> list[str]:
-        """Run each Replicate's basic analysis (and report); returns failures."""
+        """Run each Member's basic analysis (and report); returns failures."""
         failures: list[str] = []
-        for name in self.experiment_names:
-            if skip_analyzed and self.experiment_status(name)["analyzed"]:
+        for name in self.member_names:
+            if skip_analyzed and self.member_status(name)["analyzed"]:
                 log(f"[{name}] already analyzed — skipped")
                 continue
             log(f"[{name}] running analysis...")
@@ -508,16 +582,16 @@ class Project:
     # ------------------------------------------------------------------
 
     def combined_frames(self):
-        """The stacked, filtered Replicate summaries.
+        """The stacked, filtered Member summaries.
 
         Returns ``(summary, facet, missing)``.  Each frame carries an
-        ``Experiment`` first column; ``missing`` lists Replicates with no saved
+        ``Experiment`` first column; ``missing`` lists Members with no saved
         summary — they are omitted, never silently analyzed, because pooling
         half a Project without saying so is worse than refusing.
         """
         summaries, facets, missing = [], [], []
-        for name in self.experiment_names:
-            path = os.path.join(self.experiment_dir(name), "analysis",
+        for name in self.member_names:
+            path = os.path.join(self.member_dir(name), "analysis",
                                 "feeding_summary.csv")
             if not os.path.isfile(path):
                 missing.append(name)
@@ -525,7 +599,7 @@ class Project:
             df = pd.read_csv(path)
             df.insert(0, "Experiment", name)
             summaries.append(df)
-            fpath = os.path.join(self.experiment_dir(name), "analysis",
+            fpath = os.path.join(self.member_dir(name), "analysis",
                                  "feeding_summary_facet.csv")
             if os.path.isfile(fpath):
                 fdf = pd.read_csv(fpath)
@@ -536,16 +610,16 @@ class Project:
         return summary, facet, missing
 
     def aggregated_exclusions(self) -> pd.DataFrame:
-        """Every Replicate's exclusions in one table (ADR-0005).
+        """Every Member's exclusions in one table (ADR-0005).
 
-        Sources: each Replicate's ``remove_chambers.csv`` rows for the Design's
+        Sources: each Member's ``remove_chambers.csv`` rows for the Design's
         active exclusion group, and the auto-removal table saved by a run.
         """
         from .exclusions import read_exclusions
 
         rows: list[dict] = []
-        for name in self.experiment_names:
-            directory = self.experiment_dir(name)
+        for name in self.member_names:
+            directory = self.member_dir(name)
             groups = read_exclusions(directory)
             for dfm_id, chambers in (groups.get(self.exclusion_group) or {}).items():
                 for chamber in chambers:
@@ -574,7 +648,7 @@ class Project:
         summary, facet, missing = self.combined_frames()
         if summary is None:
             raise ValueError(
-                f"No replicate has a saved analysis yet (missing: "
+                f"No member has a saved analysis yet (missing: "
                 f"{', '.join(missing) or 'none'}). Run the experiments first.")
         os.makedirs(self.analysis_path, exist_ok=True)
         written: list[str] = []
@@ -602,13 +676,13 @@ class Project:
         return {"written": written, "missing": missing}
 
     # ------------------------------------------------------------------
-    # Facets shared across Replicates
+    # Facets shared across Members
     # ------------------------------------------------------------------
 
     def shared_windows(self):
         """``(windows, labels)`` for the Design's facets, or ``(None, None)``.
 
-        Because the Design owns ``facet_cutoffs``, every Replicate is windowed
+        Because the Design owns ``facet_cutoffs``, every Member is windowed
         identically by construction — there is nothing to reconcile, which is
         the point of ADR-0008.
         """
@@ -725,7 +799,7 @@ class Project:
         """Treatment p-value from a linear mixed model on the ``(a, b)`` subset.
 
         **DFM is nested within Experiment** (ADR-0005): ``groups=Experiment``
-        with a DFM variance component.  DFM ids repeat across Replicates — DFM 1
+        with a DFM variance component.  DFM ids repeat across Members — DFM 1
         of one recording is a different physical device from DFM 1 of another —
         so grouping the stacked frame on DFM alone would merge them into one
         random-effect group and understate the treatment standard error.
@@ -768,17 +842,17 @@ class Project:
         n_exp = (summary["Experiment"].nunique()
                  if "Experiment" in summary.columns else 1)
         out = [bar, f"Combined Analysis — {self.name}", bar, ""]
-        out.append(f"Replicates pooled : {n_exp} "
-                   f"({', '.join(self.experiment_names)})")
+        out.append(f"Members pooled : {n_exp} "
+                   f"({', '.join(self.member_names)})")
         out.append(f"Chambers pooled   : {len(summary)}")
         out.append(f"Experiment type   : {self.experiment_type.display_name}")
         out.append(f"Chamber layout    : {self.chamber_layout}")
         out.append("")
-        out.append("p_pooled : per-chamber test across all replicates "
+        out.append("p_pooled : per-chamber test across all members "
                    "(Welch for 2 groups, Tukey HSD otherwise) — matches the "
                    "pooled figures.")
         out.append("p_mixed  : linear mixed model, treatment fixed, DFM nested "
-                   "within Experiment — accounts for between-replicate and "
+                   "within Experiment — accounts for between-member and "
                    "between-device variation.")
         out.append("")
         if not rows:

@@ -57,6 +57,37 @@ def read_exclusions(experiment_dir: str | Path) -> dict[str, dict[int, list[int]
     return result
 
 
+def read_exclusion_notes(
+    experiment_dir: str | Path,
+) -> dict[str, dict[tuple[int, int], str]]:
+    """Read ``remove_chambers.csv`` as ``{group: {(dfm, chamber): note}}``.
+
+    :func:`read_exclusions` answers "which chambers" and drops the note.  The
+    Exclusion Sheet needs the note as well: without it a standing declaration
+    reads back as a blank reason, and re-applying the very sheet that wrote it
+    reports a conflict — on every Batch Run, forever.
+    """
+    path = Path(experiment_dir) / _FILENAME
+    if not path.exists():
+        return {}
+    result: dict[str, dict[tuple[int, int], str]] = {}
+    try:
+        with path.open(newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                group = str(row.get("group", "") or "").strip()
+                try:
+                    key = (int(row["dfm_id"]), int(row["chamber"]))
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if not group:
+                    continue
+                result.setdefault(group, {})[key] = str(
+                    row.get("note", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        return {}
+    return result
+
+
 def write_exclusions(
     experiment_dir: str | Path,
     group: str,

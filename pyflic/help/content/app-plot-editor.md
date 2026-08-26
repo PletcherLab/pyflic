@@ -6,7 +6,7 @@ A **Project-level** tool for building journal-ready vector figures.
 pyflic plots my_project/
 ```
 
-Opening a replicate redirects up to its Project — a publication figure is a statement about
+Opening a member redirects up to its Project — a publication figure is a statement about
 the pooled result, not about one recording.
 
 The Editor is presentation only. It never alters a `flic_config.yaml`; everything it writes
@@ -39,14 +39,14 @@ The Content tab swaps its controls to match the selected plot's family. The Styl
 identical for both.
 
 A faceted figure needs the Combined Analysis (build it from the Hub's Project panel). A
-time course needs saved binned summaries — run a binned CSV in each replicate first.
+time course needs saved binned summaries — run a binned CSV in each member first.
 
 Preference-index plots are offered only for two-well projects; they have no meaning with a
 single well.
 
-## Marking replicates
+## Marking members
 
-**Mark replicates by point shape** gives each replicate its own marker in a pooled figure,
+**Mark members by point shape** gives each member its own marker in a pooled figure,
 so batch structure is visible inside the pooled cloud. It is on by default for pooled report
 figures, because seeing that structure is most of why one pools at all. It does not apply to
 a time course, which plots treatment means.

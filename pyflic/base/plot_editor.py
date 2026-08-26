@@ -4,7 +4,7 @@ Opens a Project, renders a live preview of the pooled figures from the same
 Spec + Style that saving uses, and writes the vector Publication Figures into
 ``<project>/figures/``.
 
-Presentation only: it never alters a ``flic_config.yaml``.  Opening a Replicate
+Presentation only: it never alters a ``flic_config.yaml``.  Opening a Member
 redirects up to its Project, because a Publication Figure is a statement about
 the pooled result, not about one recording.
 
@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
 
 from . import project as project_mod
 from . import pubfigures
+from .gui_env import sanitize_input_method_environment
 from .ui import Category, apply_theme, icon
 from .ui import settings as ui_settings
 from .ui.widgets import ActionButton, Card
@@ -159,7 +160,7 @@ class PlotEditorWindow(QMainWindow):
         self.free_y.toggled.connect(self._apply_content)
         form.addRow("", self.free_y)
 
-        self.mark_experiments = QCheckBox("Mark replicates by point shape")
+        self.mark_experiments = QCheckBox("Mark members by point shape")
         self.mark_experiments.toggled.connect(self._apply_content)
         form.addRow("", self.mark_experiments)
 
@@ -276,14 +277,14 @@ class PlotEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def open_target(self, path: str) -> None:
-        """Open *path* as a Project, redirecting up from a Replicate."""
+        """Open *path* as a Project, redirecting up from a Member."""
         path = str(Path(path).expanduser().resolve())
         if not project_mod.is_project_dir(path):
             parent = os.path.dirname(path)
             if project_mod.is_experiment_dir(path) and \
                     project_mod.is_project_dir(parent):
                 ## A Publication Figure is a statement about the pooled result,
-                ## so a replicate is never the right level to edit one at.
+                ## so a member is never the right level to edit one at.
                 path = parent
             else:
                 QMessageBox.warning(
@@ -300,8 +301,8 @@ class PlotEditorWindow(QMainWindow):
         self._facet_frame, self._binned_frame = pubfigures.project_frames(
             self.project)
         self.project_label.setText(
-            f"{self.project.name} — {len(self.project.experiment_names)} "
-            f"replicate(s), {self.project.chamber_layout}")
+            f"{self.project.name} — {len(self.project.member_names)} "
+            f"member(s), {self.project.chamber_layout}")
         self._reload_lists()
 
     def _choose_project(self) -> None:
@@ -389,7 +390,7 @@ class PlotEditorWindow(QMainWindow):
                        self.ribbon_label):
             widget.setVisible(is_timecourse)
         self.free_y.setVisible(not is_timecourse)
-        ## Replicate shapes encode a per-point identity; a time course plots
+        ## Member shapes encode a per-point identity; a time course plots
         ## treatment means, so there is no point to give a shape.
         self.mark_experiments.setVisible(not is_timecourse)
 
@@ -564,7 +565,7 @@ class PlotEditorWindow(QMainWindow):
             family = pubfigures.family_of(plot_id)
             self.preview_label.setText(
                 "No binned data saved yet — run a binned CSV in each "
-                "replicate." if family == pubfigures.FAMILY_TIMECOURSE
+                "member." if family == pubfigures.FAMILY_TIMECOURSE
                 else "No combined analysis yet — build it from the Hub's "
                      "Project panel.")
             self.preview_label.setPixmap(QPixmap())
@@ -602,6 +603,7 @@ class PlotEditorWindow(QMainWindow):
 
 
 def main() -> None:
+    sanitize_input_method_environment()
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("pyflic Plot Editor")
     apply_theme(app, mode=ui_settings.get("theme", "auto"))

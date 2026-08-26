@@ -97,6 +97,17 @@ def surface_colors(mode: ThemeMode | None = None) -> dict[str, str]:
     return dict(_SURFACES["dark" if use_mode == "dark" else "light"])
 
 
+def blocked_color() -> str:
+    """Red for a Blocked Member, legible on both themes.
+
+    The light theme's red is unreadable on the dark surface and vice versa, so
+    this is a pair rather than a constant.  One definition, because the Batch
+    table, the Project table, and the preflight tree all paint the same fact
+    and must not drift apart.
+    """
+    return "#f87171" if _resolved_mode == "dark" else "#b91c1c"
+
+
 def _resolve_auto() -> Literal["light", "dark"]:
     try:
         import darkdetect

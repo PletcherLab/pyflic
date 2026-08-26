@@ -93,7 +93,7 @@ def check_config(config_path: Path, *, in_project: bool = False
         if global_cfg:
             issues.append(MigrationIssue(
                 "warning",
-                "this replicate states its own global: block",
+                "this member states its own global: block",
                 "delete it and inherit the project design, or make sure every "
                 "key matches the design exactly — a mismatch is a load error",
                 rel))
@@ -194,7 +194,7 @@ def check_tree(root: Path) -> list[MigrationIssue]:
         if not (meta.get("design") or {}).get("global"):
             issues.append(MigrationIssue(
                 "warning",
-                "project.yaml has no design.global section, so replicates are "
+                "project.yaml has no design.global section, so members are "
                 "validated against each other instead of against an authority",
                 "add a design: global: block naming the shared settings "
                 "(ADR-0005)", str(root)))

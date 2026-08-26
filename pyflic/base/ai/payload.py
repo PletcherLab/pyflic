@@ -32,7 +32,7 @@ PROJECT_INSTRUCTIONS = (
     "- Say plainly when a comparison is not significant. Do not imply a trend "
     "the statistics do not support.\n"
     "- Note where the pooled and mixed-model p-values disagree: that gap is "
-    "between-replicate variation, and it matters.\n"
+    "between-member variation, and it matters.\n"
     "- Plain prose, no headings, at most 400 words."
 )
 

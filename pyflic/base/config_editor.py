@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .gui_env import sanitize_input_method_environment
 from .ui import ActionButton, Card, Category, TopBar, apply_theme, icon, resolved_mode
 from .ui import settings as ui_settings
 
@@ -1302,6 +1303,7 @@ def launch() -> None:
     ``flic_config.yaml``).  When omitted, looks for ``flic_config.yaml`` in
     the current working directory.
     """
+    sanitize_input_method_environment()
     app = QApplication.instance() or QApplication(sys.argv)
     apply_theme(app, mode=ui_settings.get("theme", "auto"))
     initial_path = sys.argv[1] if len(sys.argv) > 1 else None

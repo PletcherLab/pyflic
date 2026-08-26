@@ -2,13 +2,13 @@
 
 A Python toolkit for analyzing data from **FLIC (Fly Liquid-food Interaction Counter)** experiments. pyflic detects feeding and tasting bouts from raw electrical signal data, generates quality-control reports, computes summary statistics, and produces publication-ready plots.
 
-pyflic is a complete port of the original R-based FLIC analysis pipeline (FLICFunctions.R) into Python, with a modern GUI, a YAML-based configuration system, and built-in statistical tools. Replicate recordings are grouped into **Projects**, which pool their results into combined figures, statistics, and a project report.
+pyflic is a complete port of the original R-based FLIC analysis pipeline (FLICFunctions.R) into Python, with a modern GUI, a YAML-based configuration system, and built-in statistical tools. Related recordings are grouped into **Projects** — a Project's **members** are different experiments addressing one question, not repeats — which pool their results into combined figures, statistics, and a project report.
 
 ## Features
 
 - **Signal processing pipeline** -- baseline subtraction (running median), dual-threshold feeding detection, event linking, tasting detection, and preference index computation
-- **Batch / Project / Experiment structure** -- replicates of one design live in a Project whose `design:` section is the authority for their shared settings; a Batch runs one Project Script across many Projects unattended
-- **Pooled analysis** -- replicate summaries stacked into a Combined Analysis, with pooled per-chamber tests beside a mixed model (DFM nested within Experiment)
+- **Batch / Project / Experiment structure** -- members of one design live in a Project whose `design:` section is the authority for their shared settings; a Batch runs one Project Script across many Projects unattended, finding them recursively so grouping folders are transparent
+- **Pooled analysis** -- member summaries stacked into a Combined Analysis, with pooled per-chamber tests beside a mixed model (DFM nested within Experiment)
 - **Experiment Types** -- a named assay (Hedonic, Progressive Ratio, or Custom) selects a chamber layout and constrains the facets, quality cutoffs, analyses, and report
 - **Facets** -- a time window is a column, not a directory: one `analysis/` per experiment carries every phase
 - **YAML configuration** -- experiment structure, parameters, factorial designs, and two levels of automated scripting
@@ -45,8 +45,10 @@ my_experiment/
     DFM2_0.csv
 ```
 
-Replicates of one design go in a **Project**, whose `project.yaml` holds the shared
-settings. A replicate normally omits `global:` entirely and inherits them:
+Members of one design go in a **Project**, whose `project.yaml` holds the shared
+settings. A **member** is one of the several *different* experiments that Project brings
+to bear on its question — a dose series, a genotype panel, a pilot beside its follow-up —
+not a repeat of its neighbours. It normally omits `global:` entirely and inherits:
 
 ```
 my_project/
@@ -63,7 +65,12 @@ my_project/
     ...
 ```
 
-A folder of Projects is a **Batch** — nothing marks it, being one is structural.
+A folder with Projects **anywhere beneath it** is a **Batch** — nothing marks it, being
+one is structural. Discovery is recursive and stops at each Project, so
+`Sept2026/ProjA` and `Archive/2025/ProjC` are both found from one batch folder, and a
+Project is named by its path inside it. **Run Batch** always opens a review window first,
+stating what will run and offering to repair the folders it cannot use — a recording still
+loose at its root, or one with no config yet.
 
 Create the config file interactively:
 

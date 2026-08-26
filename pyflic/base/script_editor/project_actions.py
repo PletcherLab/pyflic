@@ -4,7 +4,7 @@ A Project Script is a saved step list of project-level actions, stored in
 ``project.yaml`` under ``scripts:``.  It has the same shape and the same visual
 editor as an Experiment Script but a **separate action registry** — the levels
 cannot mix.  The only bridge is ``run_in_experiments``, which runs a named
-Experiment Script in every Replicate.
+Experiment Script in every Member.
 
 There is no third (Batch) script level: what a Batch Run executes IS a Project
 Script, named by ``batch.yaml``'s ``script:`` key.
@@ -47,56 +47,56 @@ PROJECT_ACTIONS: list[ProjectAction] = [
     ProjectAction(
         action="validate_design",
         label="Validate design",
-        blurb="Check every replicate against the project design",
+        blurb="Check every member against the project design",
         icon="basic", category=Category.LOAD, produces="none",
-        notes="Fails the script when a replicate contradicts the design. "
+        notes="Fails the script when a member contradicts the design. "
               "Loading the Project already performs this check, so a script "
               "only needs the step to fail *early*, before an expensive run.",
     ),
     ProjectAction(
         action="run_in_experiments",
-        label="Run script in replicates",
+        label="Run script in members",
         blurb="The only bridge from project level to experiment level",
         icon="scripts", category=Category.SCRIPTS, produces="none",
         params=[
             Param(key="script", label="Experiment Script name", type="string",
                   note="Resolved project-first: the Project's "
-                       "experiment_scripts: section, then each replicate's own "
+                       "experiment_scripts: section, then each member's own "
                        "scripts:.",
                   required=True),
-            Param(key="only", label="Only these replicates", type="list_str",
+            Param(key="only", label="Only these members", type="list_str",
                   note="Directory names, comma separated. Blank = every "
-                       "replicate."),
+                       "member."),
         ],
-        notes="Continue-on-error: a replicate where the name resolves nowhere "
+        notes="Continue-on-error: a member where the name resolves nowhere "
               "is logged and counted, and the run carries on.",
     ),
     ProjectAction(
         action="run_all_analyses",
-        label="Analyze all replicates",
-        blurb="Basic analysis in every replicate",
+        label="Analyze all members",
+        blurb="Basic analysis in every member",
         icon="basic", category=Category.ANALYZE, produces="csv",
         params=[
             Param(key="skip_analyzed", label="Skip already-analyzed", type="bool",
                   default=False,
-                  note="Skip replicates that already have a saved "
+                  note="Skip members that already have a saved "
                        "feeding_summary.csv."),
-            Param(key="reports", label="Also write per-replicate reports",
+            Param(key="reports", label="Also write per-member reports",
                   type="bool", default=False),
         ],
     ),
     ProjectAction(
         action="build_combined_analysis",
         label="Build combined analysis",
-        blurb="Stack replicate summaries; pooled + mixed statistics",
+        blurb="Stack member summaries; pooled + mixed statistics",
         icon="csv", category=Category.ANALYZE, produces="csv",
-        notes="Replicates with no saved summary are omitted and listed — "
+        notes="Members with no saved summary are omitted and listed — "
               "never silently analyzed.",
     ),
     ProjectAction(
         action="project_report",
         label="Create project report",
-        blurb="Pooled figures, statistics, per-replicate table",
+        blurb="Pooled figures, statistics, per-member table",
         icon="pdf", category=Category.ANALYZE, produces="pdf",
         params=[
             Param(key="ai_summary", label="Include AI narrative", type="bool",

@@ -15,18 +15,18 @@ project-level step in an Experiment Script is an error, and vice versa.
 
 | Level | Lives in | Acts on |
 |---|---|---|
-| **Experiment Script** | a replicate's `flic_config.yaml` `scripts:`, or a Project's `experiment_scripts:` | one loaded replicate |
+| **Experiment Script** | a member's `flic_config.yaml` `scripts:`, or a Project's `experiment_scripts:` | one loaded member |
 | **Project Script** | `project.yaml` `scripts:` | the Project as a whole |
 
 There is no third level. What a [Batch Run](scripts-batch.md) executes IS a Project Script.
 
 The only bridge between the two is the `run_in_experiments` project action, which runs a
-named Experiment Script in every replicate — or, with its optional `only:` list, in just
+named Experiment Script in every member — or, with its optional `only:` list, in just
 some of them.
 
 ```yaml
 # project.yaml
-experiment_scripts:              # one recipe, serving every replicate
+experiment_scripts:              # one recipe, serving every member
   - name: standard
     steps:
       - action: load
@@ -43,8 +43,8 @@ scripts:                         # Project Scripts
       - action: render_publication_figures
 ```
 
-Putting a recipe in `experiment_scripts:` means one copy serves every replicate instead of
-being pasted into each of their configs. A replicate's own `scripts:` is the fallback when
+Putting a recipe in `experiment_scripts:` means one copy serves every member instead of
+being pasted into each of their configs. A member's own `scripts:` is the fallback when
 the name is not found centrally.
 
 ### Built-in Project Scripts

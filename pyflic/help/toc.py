@@ -58,6 +58,7 @@ TOC: tuple[Section, ...] = (
             "concepts-experiment-types",
             "concepts-project",
             "concepts-facets",
+            "concepts-exclusions",
             "concepts-ai-summary",
         ),
     ),
@@ -145,6 +146,7 @@ GUIDES: tuple[Guide, ...] = (
             "scripts-actions",
             "scripts-editor",
             "scripts-batch",
+            "concepts-exclusions",
         ),
     ),
 )

@@ -17,14 +17,19 @@ A horizontal **tile strip** runs across the top: Batch · Project · Analyze · 
 Scripts · AI · Tools, with a **status readout** filling the strip to their right. Below it
 is a full-width output and plots area.
 
-Each tile shows only live status — how many replicates, which one is loaded, how many
+Each tile shows only live status — how many members, which one is loaded, how many
 scripts. All the *controls* live in the tile's **anchored panel**, which drops down when
 you click the tile. One panel is open at a time; click the tile again, click anywhere in
 the background, or press Esc to close it.
 
 **Tiles never move or hide.** A tile that does not apply yet is *dimmed* — Analyze is dim
-until a replicate is loaded — but it stays clickable, because its panel holds the control
-that fixes the missing state. The strip is a map, not a menu that rearranges itself.
+until a member is loaded — but it stays clickable, because its panel holds the control
+that fixes the missing state. Its panel's cards are greyed to match, and they stay
+clickable too. The strip is a map, not a menu that rearranges itself.
+
+**Batch and Project are never dimmed.** Their panels hold "Choose batch folder…" and "Open
+a Project…" — the controls that fix the empty state — so a closed-looking tile there would
+be pointing away from the only way forward.
 
 ## Project-first
 
@@ -32,46 +37,68 @@ The Hub is **Project-first**. The selection names the working container — a Ba
 Project — and does only that one job.
 
 An experiment is loaded **only** by double-clicking its row in the Project panel's
-replicates table. There is no Load tile: the load options (parallel loading, worker count)
+members table. There is no Load tile: the load options (parallel loading, worker count)
 sit in the Project panel beside the table that triggers the load, so there is exactly one
-route to a loaded replicate and one place the Hub can be asked what is loaded.
+route to a loaded member and one place the Hub can be asked what is loaded.
 
 ## Batch panel
 
-Lists the Projects directly beneath the chosen folder, with each one's replicate count and
-whether it has been analysed and reported. Pick a Project Script and press **Run Batch** to
-run it in every Project, continue-on-error.
+Lists every Project found **anywhere** beneath the chosen folder — the scan is recursive
+and stops at each Project — with how many of its members a run can use, whether it has a
+report, and whether anything in it is blocked. A row is named by its path inside the batch
+folder (`Sept2026/ProjA`).
 
-Double-clicking a row is an ordinary selection change down to that Project — there is no
-drill-in state and no up-button. See [Running many projects at once](scripts-batch.md).
+- **Check** the Projects a Batch Run should touch. One with nothing usable starts
+  unchecked, because it could only produce a failure.
+- **Red rows** hold blocked members; hover for the reasons, right-click to open the review
+  window focused on that Project.
+- **Double-click** a row to make it the working Project — the Project panel opens on it.
+  There is no drill-in state and no up-button; the Batch panel keeps showing the batch it
+  came from.
+- **Rescan** re-walks the folder, for changes made outside the app.
+- **Run Batch** opens a review window stating exactly what will run, then runs it.
+
+See [Running many projects at once](scripts-batch.md).
 
 ## Project panel
 
-The replicates table is the centre of the Hub: one row per replicate, with its DFM count,
+The members table is the centre of the Hub: one row per member, with its DFM count,
 chamber count, and whether it has been analysed and reported. Double-click a row to load
-it.
+it — the Analyze panel opens on it, because loading is only ever a step toward doing
+something with it.
+
+**Red rows are blocked members** — folders a run cannot use as they stand, including ones
+the Project cannot even see yet because they have no config. Hover for the reason. These
+used to be invisible here, which is exactly where the fix lives.
+
+The **Analyzed** column has three values, not two. **re-run needed** means the member's
+`remove_chambers.csv` is newer than its saved analysis: those results describe a chamber
+population you have since said was wrong.
 
 - **Open a Project** / **New Project here** — choose an existing Project, or write a
   `project.yaml` into a folder to make it one.
-- **Scaffold pending replicates** — lights up when a subfolder holds DFM CSVs but has no
-  `flic_config.yaml`. See [Projects and replicates](concepts-project.md).
+- **File unfiled recordings** — moves DFM CSVs sitting at a member's root into its `data/`.
+- **Member configs…** — gives a folder holding DFM CSVs a config scaffolded from an
+  existing member. See [Projects and members](concepts-project.md).
 - **Analyze all** / **Combine** / **Create report** — the project-level actions.
+- **View reports** — opens the Project Report and each member's own report.
+- **Apply exclusion sheet…** — see [Excluding chambers in bulk](concepts-exclusions.md).
 
 ## Analyze panel
 
-Actions on the **loaded replicate**: basic analysis, the summary CSVs, the faceted summary,
-binned CSVs, tidy events, and the per-replicate PDF report.
+Actions on the **loaded member**: basic analysis, the summary CSVs, the faceted summary,
+binned CSVs, tidy events, and the per-member PDF report.
 
 ## Plots panel
 
-Quick figures for the loaded replicate, and the entry point to the Plot Editor for the
+Quick figures for the loaded member, and the entry point to the Plot Editor for the
 Project's publication figures. See [Plot catalogue](plots-catalog.md) and
 [Plot Editor](app-plot-editor.md).
 
 ## Scripts panel
 
 Both script levels, kept visibly apart: Project Scripts from `project.yaml` above,
-Experiment Scripts for the loaded replicate below. See [Scripts](scripts-overview.md).
+Experiment Scripts for the loaded member below. See [Scripts](scripts-overview.md).
 
 ## AI panel
 
@@ -80,5 +107,18 @@ present. See [AI summary](concepts-ai-summary.md).
 
 ## Tools panel
 
-The config editor, the QC viewer, the linter and its migration checks, cache clearing, the
-theme toggle, and this help.
+The config editor, the QC viewer, **Validate every YAML here** (parses every
+`project.yaml`, `batch.yaml` and `flic_config.yaml` under the selection and reports what
+fails — the cheap way to find a hand-edited config three folders down before an unattended
+run finds it), the linter and its migration checks, opening the selected folder, cache
+clearing, the theme toggle, and this help.
+
+## Output, plots, and errors
+
+Below the strip: an **Output** tab carrying everything a run prints, an **Errors** tab
+collecting the warnings and failures (it badges itself while unread), and one tab per
+figure. The buttons in the top-right corner clear each of the three.
+
+During a long run the figure tabs pile up faster than anyone reads them. **Suppress new
+plot / output tabs**, in the Batch panel, stops new ones being created — every artifact is
+still written to disk.

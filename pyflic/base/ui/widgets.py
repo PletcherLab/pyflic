@@ -10,10 +10,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPalette, QPixmap, QTextCursor
+from PyQt6.QtGui import QColor, QIcon, QPalette, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -21,9 +21,9 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -175,19 +175,14 @@ class Card(QFrame):
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
 
-        if icon_name is not None:
-            ico = QLabel(self)
-            ico.setPixmap(icon(icon_name, category=category).pixmap(20, 20))
-            title_row.addWidget(ico)
+        self._icon = icon(icon_name, category=category) if icon_name else None
+        self._icon_lbl: QLabel | None = None
+        if self._icon is not None:
+            self._icon_lbl = QLabel(self)
+            title_row.addWidget(self._icon_lbl)
 
         self._title_lbl = QLabel(title, self)
         self._title_lbl.setObjectName("PyflicCardTitle")
-        self._title_lbl.setStyleSheet(
-            f"QLabel#PyflicCardTitle {{ "
-            f"  border-left: 4px solid {category_color(category)};"
-            f"  padding-left: 8px;"
-            f"}}"
-        )
         title_row.addWidget(self._title_lbl, 0)
         # Extra title-row widgets (the help button) are inserted here, right
         # after the title text, so they stay visible when the card is narrow.
@@ -197,23 +192,85 @@ class Card(QFrame):
 
         outer.addLayout(title_row)
 
+        self._subtitle_lbl: QLabel | None = None
         if subtitle:
             sub = QLabel(subtitle, self)
             sub.setObjectName("PyflicCardSubtitle")
             sub.setWordWrap(True)
             outer.addWidget(sub)
+            self._subtitle_lbl = sub
 
         self._body = QVBoxLayout()
         self._body.setSpacing(8)
         outer.addLayout(self._body)
 
-        # Soft background distinct from window
-        pal = self.palette()
-        base = pal.color(QPalette.ColorRole.Base)
-        bg = base.lighter(102) if resolved_mode() == "light" else base.lighter(115)
-        pal.setColor(QPalette.ColorRole.Window, bg)
+        self._dimmed = False
         self.setAutoFillBackground(True)
-        self.setPalette(pal)
+        self.restyle()
+
+    def set_dimmed(self, dimmed: bool) -> None:
+        """Grey the card's surface to show its actions have no subject yet.
+
+        Dimming is presentation only — the card stays live so the control that
+        fixes the missing state (an Open button, a checkbox) keeps working;
+        the actions themselves are gated with ``setEnabled`` as before.
+        """
+        if dimmed != self._dimmed:
+            self._dimmed = dimmed
+            self.restyle()
+
+    def is_dimmed(self) -> bool:
+        return self._dimmed
+
+    def restyle(self) -> None:
+        """Repaint the card for the CURRENT theme and dim state.
+
+        The colors come from ``surface_colors`` rather than palette roles,
+        which qdarktheme leaves at the platform's light values, and are applied
+        as this widget's own stylesheet — the app stylesheet's
+        ``QFrame#PyflicCard`` background rule wins over a palette color.
+
+        Every visible piece is repainted rather than fading the whole card with
+        a ``QGraphicsOpacityEffect``: an effect composites the card over
+        whatever is behind it, and behind it is a panel still painting the
+        platform's LIGHT base, so on the dark theme the "dim" comes out
+        brighter than the live card.
+        """
+        from .theme import surface_colors
+
+        c = surface_colors()
+        base = QColor(c["base"])
+        if self._dimmed:
+            ## Away from the live surface in the direction the theme reads as
+            ## recessed, and far enough to survive a glance: on the dark theme
+            ## a few points of lightness is invisible.
+            bg = base.darker(112) if resolved_mode() == "light" \
+                else base.darker(150)
+            accent = text = c["muted"]
+            border = f"1px solid {c['border']}"
+        else:
+            bg, accent, text = base, category_color(self._category), c["text"]
+            border = "none"
+        self.setStyleSheet(
+            f"QFrame#PyflicCard {{ border-radius: 10px; "
+            f"background: {bg.name()}; border: {border}; }}"
+        )
+        self._title_lbl.setStyleSheet(
+            f"QLabel#PyflicCardTitle {{"
+            f"  border-left: 4px solid {accent};"
+            f"  padding-left: 8px;"
+            f"  color: {text};"
+            f"}}"
+        )
+        if self._subtitle_lbl is not None:
+            self._subtitle_lbl.setStyleSheet(
+                f"QLabel#PyflicCardSubtitle {{ color: {c['muted']}; }}"
+            )
+        if self._icon_lbl is not None and self._icon is not None:
+            ## Qt's own greyed rendering — the category tint at full strength
+            ## is the loudest thing left on a dimmed card.
+            mode = QIcon.Mode.Disabled if self._dimmed else QIcon.Mode.Normal
+            self._icon_lbl.setPixmap(self._icon.pixmap(QSize(20, 20), mode))
 
     def add_title_widget(self, widget: QWidget) -> None:
         """Add *widget* to the title row, immediately after the title text.
@@ -302,82 +359,287 @@ class ActionButton(QPushButton):
 # ---------------------------------------------------------------------------
 
 class OutputLog(QPlainTextEdit):
-    """Read-only log panel with a capped scrollback."""
+    """Read-only log panel with a capped scrollback.
 
-    def __init__(self, parent: QWidget | None = None, *, max_lines: int = 5000) -> None:
+    Lines render as rich text — proportional prose with muted ``[prefix]``
+    tags, accents for failures and warnings, and the monospace font only when
+    a line's spacing is tabular (see :mod:`pyflic.base.ui.textformat`).
+    """
+
+    line_appended = pyqtSignal(str)
+
+    def __init__(self, parent: QWidget | None = None, *,
+                 max_lines: int = 5000) -> None:
         super().__init__(parent)
         self.setObjectName("PyflicLog")
         self.setReadOnly(True)
         self.setMaximumBlockCount(max_lines)
+        #: Text written without a closing newline, waiting for the rest of its
+        #: line.  It is displayed immediately (as its own block) and that block
+        #: is rewritten when the remainder arrives.
+        self._pending = ""
+        self._pending_shown = False
 
     def append_line(self, text: str) -> None:
-        self.appendPlainText(text.rstrip())
+        """Append *text* as one or more COMPLETE lines.
+
+        For callers that hand over a finished message — most of the app.  A
+        trailing newline is optional and never treated as "more to come", so
+        two consecutive messages cannot run together.  Embedded newlines still
+        split into separate blocks: ``appendHtml`` renders its argument as a
+        single HTML fragment, where a newline is mere whitespace — which is
+        what runs whole tables together on one line.
+        """
+        if not text:
+            return
+        self._flush_pending()
+        lines = text.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()          # a trailing newline closes, it does not add
+        for line in lines:
+            self._append_one(line)
+        self._after_append(text)
+
+    def append_stream(self, chunk: str) -> None:
+        """Append a raw chunk from a redirected ``stdout``.
+
+        Unlike :meth:`append_line` a chunk has no line discipline: ``print``
+        writes its text and its terminator separately, so one call can carry
+        several lines, a bare newline, or the front half of a line.  The
+        trailing fragment is shown immediately and rewritten in place when the
+        rest of it arrives, so nothing appears twice.
+        """
+        if not chunk:
+            return
+        lines = (self._pending + chunk).split("\n")
+        self._pending = lines.pop()
+        if self._pending_shown:
+            self._drop_last_block()
+            self._pending_shown = False
+        for line in lines:
+            self._append_one(line)
+        if self._pending:
+            self._append_one(self._pending)
+            self._pending_shown = True
+        self._after_append(chunk)
+
+    def clear_log(self) -> None:
+        """Erase the scrollback, including any partially-streamed line."""
+        self.clear()
+        self._flush_pending()
+
+    def _flush_pending(self) -> None:
+        """Close off a partial streamed line so a complete message from
+        somewhere else cannot be glued onto its end."""
+        self._pending = ""
+        self._pending_shown = False
+
+    def _after_append(self, text: str) -> None:
         self.moveCursor(QTextCursor.MoveOperation.End)
         self.ensureCursorVisible()
+        self.line_appended.emit(text)
+
+    def _append_one(self, line: str) -> None:
+        from .textformat import log_line_to_html
+
+        stripped = line.rstrip()
+        if stripped:
+            self.appendHtml(log_line_to_html(stripped))
+        else:
+            self.appendPlainText("")
+
+    def _drop_last_block(self) -> None:
+        """Remove the block holding the partial line, so the completed line
+        replaces it rather than appearing twice."""
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+        cursor.removeSelectedText()
 
 
 # ---------------------------------------------------------------------------
 # Plot dock
 # ---------------------------------------------------------------------------
 
-class PlotDock(QTabWidget):
-    """Tabbed dock for interactive matplotlib figures.
+def _close_figure(figure: Any) -> None:
+    """Unregister *figure* from pyplot, ignoring anything that goes wrong."""
+    try:
+        import matplotlib.pyplot as _plt
 
-    The first tab is always *Output* (containing the supplied
-    :class:`OutputLog`); subsequent tabs are added by :meth:`add_figure` and
-    are individually closable.  ``mplcursors`` adds hover tooltips when
-    available; if not, the dock degrades gracefully to pan/zoom only.
+        _plt.close(figure)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _close_figure_when_destroyed(widget: QWidget, figure: Any) -> None:
+    """Close *figure* once *widget*'s C++ object goes away.
+
+    ``destroyed`` fires after ``deleteLater`` has run, which is exactly when
+    the embedded canvas stops needing the figure.  The slot touches no Qt
+    state, so it is safe at that point in the object's life.
+    """
+    # Bind both the figure and the helper as default arguments: the signal can
+    # fire from the garbage collector or at interpreter shutdown, when free
+    # variables and module globals are no longer reachable, and an exception
+    # raised inside a Qt slot takes the process down.
+    widget.destroyed.connect(
+        lambda *_args, fig=figure, close=_close_figure: close(fig)
+    )
+
+
+class PlotDock(QTabWidget):
+    """Tabbed dock for matplotlib figures and saved artifacts.
+
+    The first tab is always *Output* (the supplied :class:`OutputLog`); an
+    optional second permanent *Errors* tab (``error_log``) collects warnings
+    and failures so they are not lost in the normal output.  Subsequent tabs
+    are added by :meth:`add_figure` / :meth:`add_widget` and are individually
+    closable.
     """
 
-    def __init__(self, output_log: OutputLog, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        output_log: OutputLog,
+        error_log: OutputLog | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setTabsClosable(True)
         self.setMovable(True)
         self.setDocumentMode(True)
         self.tabCloseRequested.connect(self._on_close)
 
+        no_btn = self.tabBar().ButtonPosition.RightSide
+        self._output_log = output_log
+        self._error_log = error_log
+        self._unseen_issues = 0
         # Output tab is always present and not closable.
         self.addTab(output_log, icon("info"), "Output")
-        self.tabBar().setTabButton(0, self.tabBar().ButtonPosition.RightSide, None)
+        self.tabBar().setTabButton(0, no_btn, None)
+        if error_log is not None:
+            idx = self.addTab(error_log, icon("warning"), "Errors")
+            self.tabBar().setTabButton(idx, no_btn, None)
+            # Badge the Errors tab when lines arrive while it isn't visible.
+            error_log.line_appended.connect(self._on_issue_logged)
+            self.currentChanged.connect(self._on_tab_changed)
+
+        self.setCornerWidget(self._build_clear_bar(), Qt.Corner.TopRightCorner)
+
+    def _build_clear_bar(self) -> QWidget:
+        """Row of clear buttons shown in the dock's top-right corner.
+
+        One per thing that accumulates: the analysis tabs, the Output log, and
+        (when present) the Errors log.  A long run fills all three, and a
+        "close every tab" gesture that lives on each tab's own X is no gesture
+        at all once there are forty of them.
+        """
+        buttons: list[tuple[str, str, Any]] = [
+            ("Clear Tabs",
+             "Close all figure and artifact tabs and show the Output tab.",
+             self.clear_figures),
+            ("Clear Output", "Erase the contents of the Output tab.",
+             self.clear_output),
+        ]
+        if self._error_log is not None:
+            buttons.append(("Clear Errors",
+                            "Erase the contents of the Errors tab.",
+                            self.clear_errors))
+
+        bar = QWidget(self)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(0, 0, 4, 0)
+        lay.setSpacing(2)
+        for text, tip, slot in buttons:
+            btn = QToolButton(bar)
+            btn.setText(text)
+            btn.setIcon(icon("clear"))
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            btn.setAutoRaise(True)
+            btn.setToolTip(tip)
+            btn.clicked.connect(slot)
+            lay.addWidget(btn)
+        return bar
+
+    def _on_issue_logged(self, _text: str) -> None:
+        idx = self.indexOf(self._error_log)
+        if idx < 0 or self.currentWidget() is self._error_log:
+            return
+        self._unseen_issues += 1
+        self.setTabText(idx, f"Errors ({self._unseen_issues})")
+
+    def _on_tab_changed(self, _idx: int) -> None:
+        if self.currentWidget() is self._error_log:
+            self._unseen_issues = 0
+            self.setTabText(self.indexOf(self._error_log), "Errors")
+
+    def clear_figures(self) -> None:
+        """Close every added tab (everything but Output/Errors), show Output."""
+        fixed = (self._output_log, self._error_log)
+        for idx in range(self.count() - 1, -1, -1):
+            w = self.widget(idx)
+            if w in fixed:
+                continue
+            self.removeTab(idx)
+            if w is not None:
+                w.deleteLater()
+        self.setCurrentWidget(self._output_log)
+
+    def clear_output(self) -> None:
+        """Erase everything in the Output log."""
+        self._output_log.clear_log()
+
+    def clear_errors(self) -> None:
+        """Erase everything in the Errors log and drop its unseen badge."""
+        if self._error_log is None:
+            return
+        self._error_log.clear_log()
+        self._unseen_issues = 0
+        idx = self.indexOf(self._error_log)
+        if idx >= 0:
+            self.setTabText(idx, "Errors")
 
     def _on_close(self, idx: int) -> None:
-        if idx == 0:
+        if self.widget(idx) in (self._output_log, self._error_log):
             return
         w = self.widget(idx)
         self.removeTab(idx)
         if w is not None:
             w.deleteLater()
 
-    def add_figure(self, title: str, figure: Any, *, interactive: bool = False) -> QSize:
-        """Embed *figure* (a matplotlib ``Figure``) as a new tab.
+    def add_figure(self, title: str, figure: Any, *,
+                   interactive: bool = False,
+                   replace_existing: bool = False) -> QSize:
+        """Embed *figure* (a matplotlib ``Figure``) as a tab.
 
-        Plotnine ggplot objects are accepted too — they're drawn first.
+        Plotnine ggplot objects are accepted too — they are drawn first.
+        Returns the natural pixel size of the embedded content, so callers can
+        grow the window to show it without scrolling.
 
-        Returns the natural pixel size of the embedded content (figure plus any
-        toolbar), so callers can grow the window to show it without scrolling.
+        ``interactive=True`` uses matplotlib's native Qt canvas + navigation
+        toolbar; ``interactive=False`` (the default) renders the figure to a
+        PNG and shows it inside :class:`ZoomableImageView`, so the user can
+        pan, wheel-zoom, and use the +/-/Fit buttons exactly as in the
+        saved-artifact tabs.
 
-        Parameters
-        ----------
-        interactive:
-            When *True*, embeds a live :class:`FigureCanvasQTAgg` with a
-            pan/zoom/save toolbar and (if available) hover tooltips via
-            ``mplcursors``.  When *False* (the default), renders the figure
-            to a static PNG and shows it in a scrollable label — faster to
-            paint and zero memory footprint beyond the image itself.
+        ``replace_existing=True`` reuses the tab that already carries *title*
+        instead of opening another one — for views that re-render the same
+        panel as the user clicks around, so tabs do not pile up unboundedly.
         """
         if not hasattr(figure, "savefig") and hasattr(figure, "draw"):
             figure = figure.draw()
 
-        host = QWidget(self)
-        lay = QVBoxLayout(host)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-
         if interactive:
             # Lazy imports so headless smoke tests don't pull matplotlib
             # backends until needed.
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+            from matplotlib.backends.backend_qtagg import (
+                FigureCanvasQTAgg,
+                NavigationToolbar2QT,
+            )
 
+            host = QWidget(self)
+            lay = QVBoxLayout(host)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(0)
             canvas = FigureCanvasQTAgg(figure)
             toolbar = NavigationToolbar2QT(canvas, host)
             lay.addWidget(toolbar)
@@ -385,8 +647,7 @@ class PlotDock(QTabWidget):
             try:
                 import mplcursors
 
-                cursor = mplcursors.cursor(figure, hover=True)
-                host._mpl_cursor = cursor  # type: ignore[attr-defined]
+                host._mpl_cursor = mplcursors.cursor(figure, hover=True)
             except Exception:  # noqa: BLE001
                 pass
             w_in, h_in = figure.get_size_inches()
@@ -394,31 +655,57 @@ class PlotDock(QTabWidget):
                 int(round(w_in * figure.dpi)),
                 int(round(h_in * figure.dpi)) + toolbar.sizeHint().height(),
             )
+            ## The tab owns the figure from here on.  Without this an
+            ## interactive figure stays registered with pyplot forever —
+            ## closing the tab frees the widget but leaves the full RGBA
+            ## buffer and the source frames alive.
+            _close_figure_when_destroyed(host, figure)
+            widget: QWidget = host
         else:
             import io as _io
 
+            from .zoom import ZoomableImageView
+
             buf = _io.BytesIO()
-            figure.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            try:
+                figure.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            finally:
+                # Also close on a savefig failure, which used to leak.
+                _close_figure(figure)
             buf.seek(0)
             pix = QPixmap()
             pix.loadFromData(buf.getvalue())
-            # Free the matplotlib figure now that we've rasterised it.
-            try:
-                import matplotlib.pyplot as _plt
-
-                _plt.close(figure)
-            except Exception:  # noqa: BLE001
-                pass
-            scroll = QScrollArea(host)
-            scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label = QLabel()
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setPixmap(pix)
-            scroll.setWidget(label)
-            scroll.setWidgetResizable(False)
-            lay.addWidget(scroll, 1)
+            widget = ZoomableImageView(pix)
             content_size = QSize(pix.width(), pix.height())
 
-        idx = self.addTab(host, icon("plots", category=Category.PLOTS), title)
-        self.setCurrentIndex(idx)
+        self.add_widget(title, widget, replace_existing=replace_existing)
         return content_size
+
+    def add_widget(self, title: str, widget: QWidget, tab_icon: Any = None, *,
+                   replace_existing: bool = False) -> int:
+        """Add *widget* as a tab titled *title* and make it current.
+
+        ``replace_existing=True`` reuses the tab that already carries *title*
+        (deleting the widget it held) instead of opening a second one, so
+        re-rendering the same panel does not grow the tab bar without bound.
+        Returns the tab index.
+        """
+        if tab_icon is None:
+            tab_icon = icon("plots", category=Category.PLOTS)
+        if replace_existing:
+            for existing in range(self.count()):
+                if self.tabText(existing) != title:
+                    continue
+                old = self.widget(existing)
+                if old in (self._output_log, self._error_log):
+                    break
+                self.removeTab(existing)
+                if old is not None:
+                    old.deleteLater()
+                idx = self.insertTab(existing, widget, tab_icon, title)
+                self.setCurrentIndex(idx)
+                return idx
+
+        idx = self.addTab(widget, tab_icon, title)
+        self.setCurrentIndex(idx)
+        return idx

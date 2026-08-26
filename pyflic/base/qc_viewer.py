@@ -59,6 +59,7 @@ from .ui import (
     ActionButton, Card, Category, OutputLog, TopBar,
     apply_theme, icon, resolved_mode,
 )
+from .gui_env import sanitize_input_method_environment
 from .ui import settings as ui_settings
 
 
@@ -1365,6 +1366,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _read_excluded_from_file(self) -> dict[int, list[int]]:
         """Read the ``"general"`` exclusion group from ``remove_chambers.csv``."""
         from .exclusions import read_exclusions
+
         all_excl = read_exclusions(self._experiment_dir)
         return all_excl.get("general", {})
 
@@ -1469,6 +1471,7 @@ def main() -> None:
     if len(sys.argv) >= 3:
         qc_dir = Path(sys.argv[2]).expanduser().resolve()
 
+    sanitize_input_method_environment()
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("FLIC QC Viewer")
     apply_theme(app, mode=ui_settings.get("theme", "auto"))

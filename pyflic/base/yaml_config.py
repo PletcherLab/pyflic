@@ -229,10 +229,10 @@ def load_experiment_yaml(
         ``experiment_dir/analysis``.
     design_global:
         The Project Design's ``global:`` block, supplied when loading a
-        Replicate.  A Replicate normally omits ``global:`` and inherits this;
+        Member.  A Member normally omits ``global:`` and inherits this;
         keys it does state win, having already been validated by ``Project``.
     in_project:
-        True when loading a Replicate.  Restricts per-DFM ``params:`` overrides
+        True when loading a Member.  Restricts per-DFM ``params:`` overrides
         to the physical keys (ADR-0005).
     strict_type:
         Raise when the config violates its Experiment Type instead of warning.
@@ -269,10 +269,10 @@ def load_experiment_yaml(
         raise ValueError("YAML root must be a mapping/object.")
 
     global_cfg = dict(cfg.get("global", {}) or {})
-    ## Design inheritance (ADR-0005): inside a Project a Replicate normally
+    ## Design inheritance (ADR-0005): inside a Project a Member normally
     ## omits `global:` entirely and inherits the Design's. A `global:` that IS
     ## present has already been validated key-by-key by Project, so merging
-    ## here is a no-op for a conformant Replicate and simply fills the gaps for
+    ## here is a no-op for a conformant Member and simply fills the gaps for
     ## one that states only part of the block.
     if design_global:
         merged = dict(design_global)

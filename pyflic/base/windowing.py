@@ -2,7 +2,7 @@
 
 pyflic used to write windowed results into ``analysis_<start>_<end>/``, so an
 output path was a function of the requested window.  Facets replace that: the
-Project Design fixes ``facet_cutoffs``, every Replicate is windowed
+Project Design fixes ``facet_cutoffs``, every Member is windowed
 identically, and the window travels with the data as a column.
 
 **Windows are half-open — ``[start, end)``.**  That is what makes a faceted

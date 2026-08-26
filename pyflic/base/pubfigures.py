@@ -210,7 +210,7 @@ class PlotSpec:
     y_limits: list | None = None
     ref_line: float | None = None
     free_y: bool = False
-    #: Give each Replicate its own point shape so batch structure is visible
+    #: Give each Member its own point shape so batch structure is visible
     #: in the pooled figure.  Ignored when the data has no Experiment column.
     mark_experiments: bool = False
     #: Time-course family: bin width in minutes, and whether to draw the SEM
@@ -322,7 +322,7 @@ def faceted_data(frame: pd.DataFrame, metric: str,
                  label_order: list[str] | None = None) -> pd.DataFrame:
     """Tidy per-chamber data for one metric: Treatment, Phase, Value [, Experiment].
 
-    *frame* is a faceted summary (a Replicate's ``feeding_summary_facet.csv`` or
+    *frame* is a faceted summary (a Member's ``feeding_summary_facet.csv`` or
     a Project's ``_Summary_Facet.csv``).  An unfaceted frame becomes a single
     "Whole recording" phase, so the same builder serves both.
     """
@@ -519,7 +519,7 @@ def build_faceted(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
                                    size=style.point_size,
                                    alpha=style.point_alpha, random_state=0)
     if mark:
-        ## Only the shape (replicate) legend is useful — treatments are named
+        ## Only the shape (member) legend is useful — treatments are named
         ## on the x axis already.
         g = g + p9.guides(color="none", fill="none")
 
@@ -625,7 +625,7 @@ def project_frames(project):
     """``(facet_frame, binned_frame)`` for a Project's pooled figures.
 
     The facet frame comes from the Combined Analysis; the binned frame is
-    stacked here from each Replicate's saved ``binned_feeding_summary.csv``,
+    stacked here from each Member's saved ``binned_feeding_summary.csv``,
     because a time course needs bins the faceted summary does not carry.
     """
     facet_path = os.path.join(project.analysis_path,
@@ -638,8 +638,8 @@ def project_frames(project):
                  if os.path.isfile(summary_path) else None)
 
     binned_frames = []
-    for name in project.experiment_names:
-        path = os.path.join(project.experiment_dir(name), "analysis",
+    for name in project.member_names:
+        path = os.path.join(project.member_dir(name), "analysis",
                             "binned_feeding_summary.csv")
         if os.path.isfile(path):
             df = pd.read_csv(path)

@@ -13,7 +13,7 @@ per-sample signal data.
 It **summarizes** the pipeline's analysis; it never performs its own. The instructions tell
 it that every number it states must appear in the input, that it must say plainly when a
 comparison is not significant, and that it should point out where the pooled and
-mixed-model p-values disagree — that gap is between-replicate variation, and it matters.
+mixed-model p-values disagree — that gap is between-member variation, and it matters.
 
 ## It is a derivative of one run
 

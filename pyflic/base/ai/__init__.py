@@ -28,12 +28,17 @@ PROVIDERS: tuple[type[AISummarizer], ...] = (
 #: Where a Project's narrative is saved, relative to its analysis directory.
 NARRATIVE_FILENAME = "ai_summary.txt"
 
+#: The Batch narrative, written at the Batch root.  Named distinctly from a
+#: Project's own so a recursive glob can tell the levels apart.
+BATCH_NARRATIVE_FILENAME = "batch_ai_narrative.md"
+
 __all__ = [
     "AISummaryError", "AISummarizer", "AnthropicSummarizer",
     "OpenAISummarizer", "PROVIDERS", "SummaryPayload",
     "available_providers", "build_project_payload", "get_summarizer",
     "load_api_env", "generate_project_narrative", "read_project_narrative",
     "delete_project_narrative", "NARRATIVE_FILENAME",
+    "BATCH_NARRATIVE_FILENAME", "generate_batch_narrative",
 ]
 
 
@@ -95,3 +100,52 @@ def delete_project_narrative(project) -> bool:
         return True
     except OSError:
         return False
+
+
+def generate_batch_narrative(batch_dir, provider: str,
+                             model: str | None = None,
+                             project_keys: list[str] | None = None,
+                             log=print) -> str | None:
+    """Synthesize the Projects' own narratives into one at the Batch root.
+
+    A *synthesis*, not a pooling: each Project keeps its own design and its own
+    numbers, and the batch narrative says where they agree and where they do
+    not.  Returns the written path, or ``None`` when there was nothing to
+    synthesize.
+
+    Never raises for a Project it cannot read.  This runs at the end of an
+    unattended Batch Run, and a narrative that fails must not turn a successful
+    overnight batch into a failed one.
+    """
+    from .. import batch as batch_mod
+    from ..project import Project
+
+    root = os.path.abspath(str(batch_dir))
+    keys = (list(project_keys) if project_keys is not None
+            else batch_mod.batch_project_names(root))
+    sections: list[str] = []
+    for key in keys:
+        try:
+            saved = read_project_narrative(
+                Project(batch_mod.project_directory(root, key)))
+        except Exception:  # noqa: BLE001
+            saved = None
+        if saved:
+            sections.append(f"## {key}\n\n{saved.strip()}")
+        else:
+            log(f"[ai] {key} has no narrative to synthesize — skipped")
+    if not sections:
+        log("[ai] no Project narratives in this batch — nothing to synthesize")
+        return None
+
+    summarizer = get_summarizer(provider, model)
+    payload = SummaryPayload(text="\n\n".join(sections))
+    text = summarizer.summarize(payload, batch_mod.BATCH_NARRATIVE_PROMPT)
+    path = os.path.join(root, BATCH_NARRATIVE_FILENAME)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text.rstrip() + "\n\n"
+                     f"— written by {summarizer.display_name} "
+                     f"({summarizer.model}) from {len(sections)} Project "
+                     "narrative(s); no new analysis was performed.\n")
+    log(f"[ai] wrote {path}")
+    return path

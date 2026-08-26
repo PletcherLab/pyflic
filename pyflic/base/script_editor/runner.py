@@ -4,7 +4,7 @@ This is the one implementation of "run these steps against this experiment".
 It used to live inside ``AnalysisHubWindow._build_script_task``, closed over UI
 state, which meant the ``run_in_experiments`` bridge (ADR-0005) had no way to
 reach it.  Extracted here it serves both: the Hub wraps it in a worker thread
-and collects figures, a Project Script calls it once per Replicate.
+and collects figures, a Project Script calls it once per Member.
 
 Every step's action mirrors one entry in :mod:`pyflic.base.script_editor.actions`.
 Adding an action means adding it in both places.
@@ -72,7 +72,7 @@ def run_experiment_script(
 
     A step gated on a Chamber Layout or Experiment Type the experiment does not
     have is **skipped with a log line**, never an error: a central Experiment
-    Script broadcast across replicates of mixed shape should do what it can.
+    Script broadcast across members of mixed shape should do what it can.
     """
     ctx = context or ScriptContext(log=log)
     if log is not None:

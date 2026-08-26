@@ -49,6 +49,12 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     "clear":      ("fa5s.trash-alt",           Category.TOOLS),
     "config":     ("fa5s.sliders-h",           Category.TOOLS),
     "reload":     ("fa5s.sync-alt",            Category.TOOLS),
+    "refresh":    ("fa5s.sync-alt",            Category.TOOLS),
+    "file":       ("fa5s.folder-plus",         Category.TOOLS),
+    "add":        ("fa5s.plus-circle",         Category.LOAD),
+    "delete":     ("fa5s.times-circle",        Category.QC),
+    "menu":       ("fa5s.ellipsis-v",          Category.NEUTRAL),
+    "report":     ("fa5s.file-pdf",            Category.ANALYZE),
     # File menu
     "open":       ("fa5s.folder-open",         Category.NEUTRAL),
     "save":       ("fa5s.save",                Category.LOAD),
@@ -56,7 +62,7 @@ _GLYPHS: dict[str, tuple[str, Category | None]] = {
     "new":        ("fa5s.file",                Category.NEUTRAL),
     # Tile strip (Batch / Project / AI)
     "batch":      ("fa5s.layer-group",         Category.NEUTRAL),
-    "replicate":  ("fa5s.clone",               Category.NEUTRAL),
+    "member":  ("fa5s.clone",               Category.NEUTRAL),
     "ai":         ("fa5s.robot",               Category.TOOLS),
     "analyze":    ("fa5s.chart-area",          Category.ANALYZE),
     # Misc

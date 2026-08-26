@@ -183,8 +183,9 @@ def main() -> None:
         from pyflic.base.batch import Batch
         b = Batch(rest[0])
         if not len(b):
-            print(f"no Projects directly under {rest[0]} "
-                  f"(a Batch scans immediate children only)", file=sys.stderr)
+            print(f"no Project found anywhere under {rest[0]} — a Project is "
+                  f"a folder with a project.yaml and at least one member "
+                  f"directory inside it", file=sys.stderr)
             raise SystemExit(1)
         summary = b.run(rest[1] if len(rest) > 1 else None)
         raise SystemExit(1 if summary["failed"] else 0)

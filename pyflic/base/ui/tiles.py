@@ -14,6 +14,7 @@ because its panel holds the control that fixes the missing state.
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -66,8 +67,8 @@ class StatusTile(QFrame):
 
         head = QHBoxLayout()
         head.setSpacing(6)
+        self._icon = icon(icon_name, category)
         self._icon_lbl = QLabel()
-        self._icon_lbl.setPixmap(icon(icon_name, category).pixmap(QSize(16, 16)))
         head.addWidget(self._icon_lbl)
         self._title_lbl = QLabel(title.upper())
         head.addWidget(self._title_lbl)
@@ -137,10 +138,16 @@ class StatusTile(QFrame):
             f"border-bottom-right-radius: {right}px; }} "
             f"QLabel {{ color: {body}; background: transparent; border: none; "
             f"font-size: 9pt; }}")
+        ## Every element mutes together — title, summary AND icon.  Words
+        ## alone said it too quietly: seven equally bright chips read as seven
+        ## equally available ones, and the tile that is dim is precisely the
+        ## one whose panel holds the fix.
         title_color = c["muted"] if self._dimmed else color
         self._title_lbl.setStyleSheet(
             f"color: {title_color}; font-weight: 700; font-size: 9pt; "
             "letter-spacing: 0.06em; background: transparent; border: none;")
+        mode = QIcon.Mode.Disabled if self._dimmed else QIcon.Mode.Normal
+        self._icon_lbl.setPixmap(self._icon.pixmap(QSize(16, 16), mode))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if event.button() == Qt.MouseButton.LeftButton:
@@ -153,7 +160,7 @@ class StatusReadout(QFrame):
 
     Not a tile — it opens nothing and is never dimmed.  It fills the strip's
     leftover width so the Hub can always answer "which project, and which
-    replicate inside it?" without opening a panel first.
+    member inside it?" without opening a panel first.
     """
 
     _MAX_ROWS = 4
@@ -250,23 +257,41 @@ class TilePanel(QFrame):
         self._content_lay.addWidget(card)
         card.setVisible(True)
 
+    def cards(self) -> list:
+        """The Cards this panel hosts, in strip order.
+
+        The Hub dims a whole panel by dimming its cards, and it must not reach
+        past the panel into an unrelated Card that happens to share the
+        window: ``findChildren`` from the Hub would.
+        """
+        from .widgets import Card
+
+        host = self._scroll.widget()
+        return [child for child in host.findChildren(Card)]
+
     def finish(self) -> None:
         self._content_lay.addStretch(1)
+
+    def _content_height(self) -> int:
+        """The height the panel's content wants right now.
+
+        Recomputed rather than read from the cached hint: widgets rebuilt while
+        the panel was hidden leave a stale hint, which opens the panel far too
+        short on its first click.
+        """
+        host = self._scroll.widget()
+        layout = host.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        return host.sizeHint().height() + 24
 
     def open_at(self, x: int, y: int, max_bottom: int) -> None:
         """Show anchored at (*x*, *y*), clamped so the panel never runs past
         *max_bottom* or the parent's right edge."""
         parent = self.parentWidget()
         width = min(self._panel_width, parent.width() - 16)
-        ## Recompute the content hint: widgets rebuilt while the panel was
-        ## hidden leave a stale cached hint, which opens the panel far too
-        ## short on its first click.
-        host = self._scroll.widget()
-        if host.layout() is not None:
-            host.layout().invalidate()
-            host.layout().activate()
-        hint = host.sizeHint().height() + 24
-        height = max(140, min(hint, max_bottom - y - 8))
+        height = max(140, min(self._content_height(), max_bottom - y - 8))
         x = max(8, min(x, parent.width() - width - 8))
         self.setGeometry(x, y, width, height)
         self.raise_()

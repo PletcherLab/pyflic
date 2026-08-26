@@ -2,17 +2,29 @@
 
 A toolkit for analysing FLIC (Fly Liquid-food Interaction Counter)
 feeding-behaviour experiments: detects feeding and tasting bouts from raw DFM
-signal, and pools replicate recordings into publication-ready figures and
-statistics. Structurally modelled on PyTrackingAnalysis — Batch → Project →
-Experiment, tile-strip Hub, two-level scripting, Experiment Types,
-publication figures — with pooling at the Project level. This glossary fixes
-the domain language; it is not a spec.
+signal, and pools a Project's member recordings into publication-ready figures
+and statistics. Structurally modelled on PyTrackingAnalysis — Batch → Project →
+Experiment, tile-strip Hub, two-level scripting, Experiment Types, publication
+figures — with pooling at the Project level. This glossary fixes the domain
+language; it is not a spec.
+
+**The one structural difference from PyTrackingAnalysis.** There a Project holds
+**replicates**: the same experiment repeated, and pooling is a bigger n. Here a
+Project holds **Members**: different experiments that address one question — a
+dose series, a genotype panel, a pilot beside its follow-up. Pooling still
+happens, and the Design still forces one detection rule across all of them, but
+"member" never means "another run of the same thing", and the Combined Analysis
+keeps `Experiment` as a column precisely because the members are not
+interchangeable. Every mirrored surface from the sibling app renames
+*replicate* to *member*; a Project inside a **Batch** is deliberately NOT called
+a member, because "a member with four members" is a sentence this codebase must
+not be able to write.
 
 ## Language
 
 **Project**:
 A directory with a `project.yaml` at its root whose immediate subdirectories
-holding a `flic_config.yaml` are its **Replicates**. The Project is the level
+holding a `flic_config.yaml` are its **Members**. The Project is the level
 at which results are pooled, and it owns the pooled outputs. Modelled on the
 PyTrackingAnalysis Project.
 _Avoid_: study, collection, batch parent, parent directory.
@@ -20,29 +32,57 @@ _Avoid_: study, collection, batch parent, parent directory.
 **Experiment Directory**:
 One FLIC recording's directory — `flic_config.yaml` at its root, a `data/`
 folder of raw DFM CSVs, and the outputs pyflic writes — either standalone or
-as a Replicate inside a Project.
+as a Member inside a Project.
 _Avoid_: project, project directory (the pre-overhaul name), folder,
 dataset directory.
 
-**Replicate**:
-An Experiment Directory inside a Project. Its `flic_config.yaml` normally
-holds only the free parts — `dfms:` and its own `scripts:` — and inherits
+**Member**:
+An Experiment Directory inside a Project — one of the several *different*
+experiments that Project brings to bear on its question, not a repeat of its
+neighbours. Its `flic_config.yaml` normally holds only the free parts — `dfms:` and its own `scripts:` — and inherits
 `global:` from the Design; a `global:` block that *is* present (a standalone
 experiment moved in) is validated key-by-key and any deviation is a load
-error. A new Replicate is **scaffolded** by copying the first Replicate's
+error. A new Member is **scaffolded** by copying the first Member's
 `dfms:` block and reconciling it against the DFM ids actually present in
 `data/` (parsed from `DFM<id>_<n>.csv`): ids with no entry are added with
 chambers unassigned, entries with no data are flagged rather than dropped.
 The Project panel lists experiment-shaped folders — a `data/` holding at
 least one `DFM*.csv` — that have no config yet as scaffolding candidates.
 Scaffolding never overwrites an existing config.
+_Avoid_: replicate (the sibling app's word; its members repeat one experiment
+and pyflic's do not), run, dataset.
+
+**Blocked Member**:
+A folder inside a Project that a run cannot use as it stands: an **Unfiled
+Recording** (DFM CSVs at its root rather than in `data/`), a recording with no
+`flic_config.yaml`, or a configured directory with no DFM CSV at all
+(ADR-0009). Blocked is decided by layout alone — no YAML parsed, no data read —
+using the loader's own test, so a directory the classifier calls healthy is one
+the loader can actually open. Blocked is a property of the **Member**, never of
+the Project: a Project with four healthy members and one blocked one runs the
+four, and a run is never refused because of one. Blocked Members are named when
+the Project is selected, again in the Batch Run preflight, and again in the run
+summary.
+_Avoid_: invalid member, broken member (nothing is broken — the run just cannot
+use it yet), missing member.
+
+**Unfiled Recording**:
+The one Blocked state a button clears: DFM CSVs sitting at a member's root
+because that is where the rig wrote them. **Filing** moves `DFM*.csv` into
+`data/` and every other loose file into `extra_files/`; every `.yaml`/`.yml`
+and the Exclusion Sheet stay at the root, because there they are configuration
+or declaration, never data. Filing never overwrites and never guesses: an
+existing destination is skipped and reported, and the same DFM id present both
+loose and filed refuses to file at all rather than deciding which copy the
+analysis is of.
+_Avoid_: import, ingest, tidy up.
 
 **Design**:
 The `design:` section of `project.yaml` — the **authority** for every key
-under a Replicate's `global:` (experiment type, detection `params:`,
+under a Member's `global:` (experiment type, detection `params:`,
 `well_names`, `transform_licks`, `constants:`, `experimental_design_factors`).
-A Replicate that deviates on any of them fails to load, not merely warns.
-Left free per Replicate: the whole `dfms:` block — DFM count and chamber →
+A Member that deviates on any of them fails to load, not merely warns.
+Left free per Member: the whole `dfms:` block — DFM count and chamber →
 treatment assignment — and per-DFM `params:` overrides
 restricted to the *physical* keys (`pi_direction`, `chamber_sets`). A
 per-DFM override of an analysis key is rejected inside a Project; a
@@ -80,7 +120,7 @@ the derived numeric parameter), experiment type (the layer above).
 
 **Facet**:
 A named time window within a recording, fixed by the Design's
-`facet_cutoffs:` so every Replicate is windowed identically. Facets are a
+`facet_cutoffs:` so every Member is windowed identically. Facets are a
 **column**, not a directory: analysis writes `feeding_summary.csv` plus
 `feeding_summary_facet.csv` carrying a Facet column. The Hub's Start/End
 controls select a Facet rather than filtering the load. Replaces the
@@ -90,22 +130,26 @@ used by binned summaries).
 
 **Excluded Chamber**:
 A chamber removed from every result. Two live sources, both applied before
-pooling: a row in that Replicate's `remove_chambers.csv` under the active
+pooling: a row in that Member's `remove_chambers.csv` under the active
 exclusion group, and `auto_remove_chambers()` driven by the Design's
 `constants:` cutoffs. (A third, `excluded_chambers:` in a `dfms:` entry, was
 already deprecated before this overhaul — the loader warns and ignores it.)
-The file stays per-Replicate — which chambers are bad is a fact about that
+The file stays per-Member — which chambers are bad is a fact about that
 recording — but the Design names the active `exclusion_group:`, so every
-Replicate is filtered by the same rule. The Combined Analysis stacks only
+Member is filtered by the same rule. Authoring in bulk is the **Exclusion
+Sheet**'s job, one level up. A Member whose declaration is newer than its saved
+`feeding_summary.csv` reads **"re-run needed"** rather than "analyzed": those
+results describe a chamber population nobody asked for, and a date beside them
+would be true about a number that is not. The Combined Analysis stacks only
 filtered rows and writes an aggregated exclusions table (Experiment, DFM,
 Chamber, Source, Note) into the Project Report.
 _Avoid_: dropped chamber, filtered chamber, QC filter (data quality is a
 separate, always-reported concern).
 
 **Combined Analysis**:
-The Project-level results built by stacking each Replicate's *filtered*
+The Project-level results built by stacking each Member's *filtered*
 feeding summaries (auto-removals already applied) with an added `Experiment`
-column. Because DFM ids repeat across Replicates, DFM is only ever
+column. Because DFM ids repeat across Members, DFM is only ever
 interpreted **within** an Experiment. Statistics run twice: per-chamber
 pooled tests matching the plots, beside a linear mixed model with treatment
 fixed and **DFM nested within Experiment** as the random structure.
@@ -113,9 +157,9 @@ _Avoid_: merged analysis, meta-analysis.
 
 **Project Report**:
 The Project-level PDF: pooled figures rendered from the Combined Analysis,
-the pooled + mixed statistics tables, and a per-Replicate summary table
-(chamber counts, exclusions). Replicates never get their own figure sets in
-it — that is what a Replicate's own report is for.
+the pooled + mixed statistics tables, and a per-Member summary table
+(chamber counts, exclusions). Members never get their own figure sets in
+it — that is what a Member's own report is for.
 
 **Publication Figure**:
 A hand-curated, journal-ready vector figure (SVG with editable text, or PDF)
@@ -157,16 +201,20 @@ output/plots area below. All controls live in a tile's **anchored panel**
 (one open at a time). Tiles never move or hide — an inapplicable tile dims
 and its panel holds the fix. The selection names the working container — a
 Batch or a Project. The Hub is **Project-first**: an experiment is loaded
-only by double-clicking its row in the Project panel's replicates table, so
+only by double-clicking its row in the Project panel's members table, so
 there is no Load tile; the parallel/executor/max_workers options live in the
-Project panel.
+Project panel. Double-clicking a Batch row opens the Project panel and
+double-clicking a member opens the Analyze panel — selecting is only ever a
+step toward doing something. The Batch and Project tiles are **never dimmed**,
+because their panels hold the controls that fix the empty state; a dimmed
+tile's panel dims its cards too, and every card stays clickable.
 _Avoid_: card column (the pre-overhaul layout), Load card.
 
 **Experiment Script**:
 A saved, re-runnable step list of experiment-level actions. Lives in an
-Experiment Directory's `flic_config.yaml` `scripts:` — or, for Replicates,
+Experiment Directory's `flic_config.yaml` `scripts:` — or, for Members,
 centrally in the Project's `experiment_scripts:`, where one recipe serves
-every Replicate without being copied. Central scripts run only through the
+every Member without being copied. Central scripts run only through the
 `run_in_experiments` bridge.
 _Avoid_: recipe, macro, pipeline, job.
 
@@ -174,7 +222,7 @@ _Avoid_: recipe, macro, pipeline, job.
 A saved step list of project-level actions in `project.yaml` `scripts:`.
 Same shape and visual editor as an Experiment Script, but a **separate action
 registry** — levels cannot mix; the only bridge is `run_in_experiments`,
-which runs a named Experiment Script in every Replicate. There is no third
+which runs a named Experiment Script in every Member. There is no third
 (Batch) script level: what a Batch Run executes IS a Project Script, named by
 `batch.yaml`'s `script:` key.
 
@@ -187,15 +235,47 @@ re-running the analysis deletes it.
 _Avoid_: AI analysis, AI interpretation.
 
 **Batch**:
-A directory whose *immediate* subdirectories holding a `project.yaml` are its
-Projects. Purely a processing convenience for running many Projects
-unattended: it is not itself a Project, holds no analysis of its own, and
-never pools across Projects. A **Batch Run** executes one designated Project
-Script in every Project, continue-on-error. Nothing marks a Batch — being one
-is structural; an optional `batch.yaml` appears only to name the designated
-`script:` or hold central `project_scripts:`.
+A directory with at least one Project **anywhere beneath it** (ADR-0009).
+Discovery is recursive and **prunes at each Project** — a Project's
+subdirectories are its Members by definition, so the walk never looks inside
+one — which makes grouping folders (`Sept2026/`, `Archive/2025/`) transparent
+and means no Member can be analyzed twice in one run. Purely a processing
+convenience for running many Projects unattended: it is not itself a Project,
+holds no analysis of its own, and never pools across Projects. A **Batch Run**
+executes one designated Project Script in every checked Project,
+continue-on-error, after a **Preflight** states what will run. Nothing marks a
+Batch — being one is structural; an optional `batch.yaml` appears only to name
+the designated `script:` or hold central `project_scripts:`, and only the
+selected Batch's file governs. A Project inside a Batch is keyed by its POSIX
+path relative to the Batch root (`Sept2026/ProjA`), so a top-level Project keeps
+its bare name and every designation and sheet row written before recursion still
+resolves.
 _Avoid_: batch target, subdir-batch mode, yaml-batch mode (all retired, see
-ADR-0006), study, collection, batch root.
+ADR-0006), study, collection, batch root; **member** for a Project inside one.
+
+**Preflight**:
+The modal a Batch Run always opens first: the discovered Projects with their
+relative-path keys, their usable-member counts, and every Blocked Member with
+its reason and the action that clears it; a preview of the Exclusion Sheet with
+one switch to decline it for this run; then Run or Cancel. Shown even when
+nothing is wrong, because with recursive discovery the target list is the one
+thing no other surface states. Not a gate: it repairs and confirms, it never
+refuses.
+_Avoid_: confirmation dialog, wizard.
+
+**Exclusion Sheet**:
+A `remove_chambers.csv` (or `.xlsx`) at a **Batch root or a Project root** —
+one level above the per-Member files — whose rows name a project, member, DFM,
+chamber, group and reason. Applying it writes those rows down into each
+Member's own `remove_chambers.csv`. It is a **writer, never an overlay**:
+nothing reads the sheet at analysis time, so a sheet that is deleted or never
+applied changes no result. The standing declaration always wins — a chamber
+already declared is never rewritten and a differing reason is reported as a
+**conflict** — because a Batch Run re-applies the sheet every time. Selecting a
+Batch *reports* its sheet; only a Batch Run or an explicit button applies one,
+and then only to the Projects actually running.
+_Avoid_: exclusion overlay, removal config, the CSV (ambiguous with the
+per-Member file it writes into).
 
 ### Cross-app
 
@@ -229,18 +309,23 @@ _Avoid_: manual, documentation, the docs, USAGE.
 
 ## Relationships
 
-- A **Batch** holds **Projects**; a **Project** holds **Replicates**; a
-  **Replicate** is an **Experiment Directory**. Membership at every level is
-  by marker file (`project.yaml`, `flic_config.yaml`) and by *immediate*
-  children only — never by depth.
+- A **Batch** holds **Projects**; a **Project** holds **Members**; a
+  **Member** is an **Experiment Directory**. Membership is by marker file
+  (`project.yaml`, `flic_config.yaml`). A Project's Members are its *immediate*
+  children; a Batch's Projects may sit at any depth, found by a walk that prunes
+  at each Project (ADR-0009).
+- **Blocked** is a property of a **Member**, never of its **Project**, and never
+  refuses a run. Discovery, blocked status, and filing are Batch-level concerns
+  but Member-level facts, so the Project panel and the **Preflight** read the
+  same classification.
 - A **Project**'s **Design** is the authority for every `global:` key in its
-  Replicates; the `dfms:` block stays free, as do per-DFM overrides of the
-  physical keys. A Replicate normally omits `global:` entirely and inherits.
+  Members; the `dfms:` block stays free, as do per-DFM overrides of the
+  physical keys. A Member normally omits `global:` entirely and inherits.
 - An **Experiment Type** selects exactly one **Chamber Layout**, fixes the
   **Facet** cutoffs, and declares the report set. Script actions are gated on
   both: `plot_well_comparison` needs a Chamber Layout, `plot_breaking_point`
   needs an Experiment Type.
-- The **Combined Analysis** stacks Replicate summaries; the **Project Report**
+- The **Combined Analysis** stacks Member summaries; the **Project Report**
   and the **Publication Figures** are both rendered from it — the report by
   matplotlib, the figures by plotnine from a **Plot Spec** + **Plot Style**.
 - **Experiment Scripts** and **Project Scripts** have separate action
@@ -254,21 +339,31 @@ _Avoid_: manual, documentation, the docs, USAGE.
 
 ## Example dialogue
 
-> **Dev:** "Two Replicates both have a DFM 1. Do those chambers share a random
+> **Dev:** "Two Members both have a DFM 1. Do those chambers share a random
 > effect in the pooled model?"
-> **Domain expert:** "No. DFM ids are per-recording — DFM 1 in one Replicate
+> **Domain expert:** "No. DFM ids are per-recording — DFM 1 in one Member
 > is a different physical device from DFM 1 in another. DFM is nested within
 > Experiment, never grouped across it."
 >
-> **Dev:** "A Replicate needs `feeding_threshold: 22` because its rig is
+> **Dev:** "A Member needs `feeding_threshold: 22` because its rig is
 > noisier. Can it override the Design?"
-> **Domain expert:** "No. The Design owns every `global:` key — that Replicate
+> **Domain expert:** "No. The Design owns every `global:` key — that Member
 > fails to load. Either the whole Project uses 22, or that recording isn't a
-> Replicate of this Project. Only `pi_direction` and `chamber_sets` vary, and
+> Member of this Project. Only `pi_direction` and `chamber_sets` vary, and
 > only per-DFM, because those describe hardware rather than analysis."
 
 ## Flagged ambiguities
 
+- "replicate" was the sibling app's word for a Project's children and was
+  borrowed wholesale. Resolved: a pyflic Project's children are **Members** —
+  different experiments addressing one question, not repeats — and the word
+  *replicate* is retired everywhere except the Exclusion Sheet's accepted header
+  spellings, where it stays for sheets already written. `Project.member_names`
+  and friends keep `experiment_*` aliases so notebooks written earlier still
+  run.
+- "member" would also have been the natural word for a Project inside a Batch.
+  Resolved: it is not used there. A Project is a **Project** at every level, and
+  the Batch layer calls its entries `BatchProject`.
 - "project" meant *one experiment* before this overhaul and now means the
   *pooling parent*. Resolved: one recording is an **Experiment Directory**;
   `Experiment.project_dir` is renamed. See ADR-0005.

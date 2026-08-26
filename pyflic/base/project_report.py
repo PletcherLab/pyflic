@@ -1,10 +1,10 @@
 """The Project Report: pooled figures, pooled + mixed statistics, and a
-per-Replicate summary table (ADR-0005).
+per-Member summary table (ADR-0005).
 
-Replicates never get their own figure sets here — that is what a Replicate's own
+Members never get their own figure sets here — that is what a Member's own
 report is for.  The whole point of the Project level is that the figures are
 *pooled*: one figure per metric drawn from the Combined Analysis, with the
-per-Replicate detail collapsed into a single table.
+per-Member detail collapsed into a single table.
 
 The report renders with matplotlib, the same as the per-experiment report; the
 vector Publication Figures are a separate path through plotnine.  The two share
@@ -23,13 +23,13 @@ from . import pubfigures
 from .pdf_report import _figure_page, _table_page, _text_page
 
 
-def replicate_table(project) -> pd.DataFrame:
-    """One row per Replicate: what went in, and what was left out."""
+def member_table(project) -> pd.DataFrame:
+    """One row per Member: what went in, and what was left out."""
     rows = []
-    for name in project.experiment_names:
-        status = project.experiment_status(name)
+    for name in project.member_names:
+        status = project.member_status(name)
         rows.append({
-            "Replicate": name,
+            "Member": name,
             "DFMs": status["dfms"],
             "Chambers": status["chambers"] if status["chambers"] is not None else "—",
             "Analyzed": "yes" if status["analyzed"] else "NO",
@@ -46,7 +46,7 @@ def cover_text(project, summary: pd.DataFrame | None,
         f"Directory    : {project.project_directory}",
         f"Experiment   : {project.experiment_type.display_name}",
         f"Layout       : {project.chamber_layout}",
-        f"Replicates   : {len(project.experiment_names)}",
+        f"Members   : {len(project.member_names)}",
     ]
     if summary is not None:
         lines.append(f"Chambers     : {len(summary)} pooled")
@@ -66,13 +66,13 @@ def cover_text(project, summary: pd.DataFrame | None,
     if missing:
         lines.append("")
         lines.append(
-            "OMITTED — no saved analysis, so these replicates are NOT part of "
+            "OMITTED — no saved analysis, so these members are NOT part of "
             "any pooled number in this report:")
         for name in missing:
             lines.append(f"  - {name}")
     if project.warnings:
         lines.append("")
-        lines.append("Notes on replicate differences:")
+        lines.append("Notes on member differences:")
         for warning in project.warnings:
             lines.append(f"  - {warning}")
     return "\n".join(lines)
@@ -99,7 +99,7 @@ def _pooled_figure(project, plot_id: str, facet, binned, specs):
         return None
     spec = specs.plots.get(plot_id) or pubfigures.default_spec(
         plot_id, well_a=_well_a_name(project))
-    ## Pooled figures mark their replicates by default: seeing the batch
+    ## Pooled figures mark their members by default: seeing the batch
     ## structure inside a pooled cloud is most of why one pools at all.
     if "Experiment" in df.columns and plot_id not in specs.plots:
         spec.mark_experiments = True
@@ -128,7 +128,7 @@ def write_project_report(project, path: str | Path | None = None, *,
     summary, facet, missing = project.combined_frames()
     if summary is None:
         raise ValueError(
-            f"No replicate in '{project.name}' has a saved analysis to pool.")
+            f"No member in '{project.name}' has a saved analysis to pool.")
 
     specs = pubfigures.load_project_specs(project.project_directory)
     _facet_frame, binned = pubfigures.project_frames(project)
@@ -143,7 +143,7 @@ def write_project_report(project, path: str | Path | None = None, *,
     with PdfPages(path) as pdf:
         _text_page(pdf, f"Project report — {project.name}",
                    cover_text(project, summary, missing))
-        _table_page(pdf, "Replicates", replicate_table(project))
+        _table_page(pdf, "Members", member_table(project))
 
         for plot_id in report_set:
             if plot_id not in pubfigures.PLOT_TYPES:
@@ -164,10 +164,10 @@ def write_project_report(project, path: str | Path | None = None, *,
 
         exclusions = project.aggregated_exclusions()
         if len(exclusions):
-            _table_page(pdf, "Excluded chambers (all replicates)", exclusions)
+            _table_page(pdf, "Excluded chambers (all members)", exclusions)
         else:
             _text_page(pdf, "Excluded chambers",
-                       "No chambers were excluded in any replicate.")
+                       "No chambers were excluded in any member.")
 
         if ai_summary:
             try:

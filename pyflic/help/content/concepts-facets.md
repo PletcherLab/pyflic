@@ -21,7 +21,7 @@ gives three facets: `0-10 min`, `10-70 min`, `70+ min`.
 Older versions wrote windowed results into `analysis_0_360/` directories, so an output path
 was a function of the window you happened to ask for. That is retired. Two things made it
 untenable: outputs are now always in `analysis/`, and pooling could not work — a Combined
-Analysis stacking replicates would have to *guess* which of a replicate's window
+Analysis stacking members would have to *guess* which of a member's window
 directories was the one to pool.
 
 ## Half-open windows
@@ -50,7 +50,7 @@ global:
 
 ## Facets in a Project
 
-`facet_cutoffs` is part of the design, so every replicate in a Project is windowed
+`facet_cutoffs` is part of the design, so every member in a Project is windowed
 identically by construction. There is nothing to reconcile at pooling time — which is the
 whole point.
 

@@ -62,9 +62,15 @@ _LAZY: dict[str, str] = {
     "TreatmentChamber": ".base.treatment",
     "TwoWellExperiment": ".base.two_well_experiment",
     "load_experiment_yaml": ".base.yaml_config",
-    # Project / Batch (ADR-0005, ADR-0006)
+    # Project / Batch (ADR-0005, ADR-0006, ADR-0009)
     "Project": ".base.project",
     "Batch": ".base.batch",
+    "discover_projects": ".base.batch",
+    "run_batch": ".base.batch",
+    "classify": ".base.layout",
+    "members_in": ".base.layout",
+    "file_recording": ".base.layout",
+    "apply_exclusion_sheet": ".base.batch",
     # Analytics
     "bootstrap_metric": ".base.analytics",
     "bout_transition_matrix": ".base.analytics",
@@ -93,6 +99,12 @@ __all__ = [
     "load_experiment_yaml",
     "Project",
     "Batch",
+    "discover_projects",
+    "run_batch",
+    "classify",
+    "members_in",
+    "file_recording",
+    "apply_exclusion_sheet",
     # Analytics
     "tidy_events",
     "bootstrap_metric",

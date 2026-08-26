@@ -25,7 +25,7 @@ def validate_project_script(project, script: dict) -> list[str]:
     """Problems with *script* before running it, as human-readable lines.
 
     Pre-run validation exists so an overnight Batch Run fails on a typo in the
-    first second rather than after the third replicate's analysis.
+    first second rather than after the third member's analysis.
     """
     problems: list[str] = []
     for index, step in enumerate(script.get("steps") or [], start=1):
@@ -46,17 +46,17 @@ def validate_project_script(project, script: dict) -> list[str]:
                 resolvable = project.find_experiment_script(name) is not None
                 if not resolvable:
                     resolvable = any(
-                        _replicate_script(project, rep, name) is not None
-                        for rep in project.experiment_names)
+                        _member_script(project, rep, name) is not None
+                        for rep in project.member_names)
                 if not resolvable:
                     problems.append(
                         f"step {index}: no Experiment Script named '{name}' in "
                         f"the project's experiment_scripts: or in any "
-                        f"replicate's scripts:")
+                        f"member's scripts:")
             for only in _as_list(step.get("only")):
-                if project is not None and only not in project.experiment_names:
+                if project is not None and only not in project.member_names:
                     problems.append(
-                        f"step {index}: 'only' names replicate '{only}', which "
+                        f"step {index}: 'only' names member '{only}', which "
                         f"is not in this project")
     return problems
 
@@ -67,8 +67,8 @@ def _experiment_action_names() -> set[str]:
     return {a.action for a in ACTIONS}
 
 
-def _replicate_script(project, replicate: str, name: str) -> dict | None:
-    for script in (project.configs.get(replicate, {}).get("scripts") or []):
+def _member_script(project, member: str, name: str) -> dict | None:
+    for script in (project.configs.get(member, {}).get("scripts") or []):
         if isinstance(script, dict) and script.get("name") == name:
             return script
     return None
@@ -104,7 +104,7 @@ def _dispatch(project, action: str, step: dict, log) -> None:
         from ..project import Project
 
         Project(project.project_directory)
-        log(f"    design OK — {len(project.experiment_names)} replicate(s)")
+        log(f"    design OK — {len(project.member_names)} member(s)")
         for warning in project.warnings:
             log(f"    note: {warning}")
         return
@@ -112,21 +112,21 @@ def _dispatch(project, action: str, step: dict, log) -> None:
     if action == "run_in_experiments":
         name = str(step.get("script")).strip()
         only = _as_list(step.get("only"))
-        targets = only or list(project.experiment_names)
+        targets = only or list(project.member_names)
         central = project.find_experiment_script(name)
         failures = 0
-        for replicate in targets:
-            recipe = central or _replicate_script(project, replicate, name)
+        for member in targets:
+            recipe = central or _member_script(project, member, name)
             if recipe is None:
-                log(f"    [{replicate}] no script '{name}' — skipped")
+                log(f"    [{member}] no script '{name}' — skipped")
                 failures += 1
                 continue
             try:
-                _run_experiment_script(project, replicate, recipe, log)
+                _run_experiment_script(project, member, recipe, log)
             except Exception as err:  # noqa: BLE001
                 failures += 1
-                log(f"    [{replicate}] FAILED: {type(err).__name__}: {err}")
-        log(f"    {len(targets) - failures}/{len(targets)} replicate(s) ok")
+                log(f"    [{member}] FAILED: {type(err).__name__}: {err}")
+        log(f"    {len(targets) - failures}/{len(targets)} member(s) ok")
         return
 
     if action == "run_all_analyses":
@@ -136,7 +136,7 @@ def _dispatch(project, action: str, step: dict, log) -> None:
             log=lambda m: log(f"    {m}"))
         if failures:
             raise RuntimeError(
-                f"{len(failures)} replicate(s) failed: " + "; ".join(failures))
+                f"{len(failures)} member(s) failed: " + "; ".join(failures))
         return
 
     if action == "build_combined_analysis":
@@ -183,14 +183,14 @@ def _dispatch(project, action: str, step: dict, log) -> None:
     raise ValueError(f"Unhandled project action '{action}'")
 
 
-def _run_experiment_script(project, replicate: str, recipe: dict, log) -> None:
-    """Run one Experiment Script inside one Replicate.
+def _run_experiment_script(project, member: str, recipe: dict, log) -> None:
+    """Run one Experiment Script inside one Member.
 
-    Goes through the Project so the Replicate loads with the Design's
+    Goes through the Project so the Member loads with the Design's
     ``global:`` inherited and per-DFM overrides restricted.
     """
     from .runner import run_experiment_script
 
-    log(f"    [{replicate}] {recipe.get('name')}")
-    exp = project.load_experiment(replicate)
-    run_experiment_script(exp, recipe, log=lambda m: log(f"      [{replicate}] {m}"))
+    log(f"    [{member}] {recipe.get('name')}")
+    exp = project.load_member(member)
+    run_experiment_script(exp, recipe, log=lambda m: log(f"      [{member}] {m}"))
