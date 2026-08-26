@@ -87,6 +87,14 @@ treatment assignment — and per-DFM `params:` overrides
 restricted to the *physical* keys (`pi_direction`, `chamber_sets`). A
 per-DFM override of an analysis key is rejected inside a Project; a
 standalone Experiment Directory keeps unrestricted overrides.
+Authored in the **Project design** editor (Hub → Project panel), which is also
+what "New Project here…" opens, so a Project states its Design at creation
+rather than acquiring one by accident; a Project with no `design:` falls back
+to validating Members against each other, where the first Member silently
+becomes the standard. The Design is **reinforced downwards**: a Member's config
+opens in the config editor with the Design's values shown read-only and its
+`global:` omitted on save, per-DFM overrides limited to the physical keys, and
+saving a Design offers to delete any `global:` block a Member still carries.
 _Avoid_: defaults, template (a Design is enforced, not inherited-and-
 overridable).
 
@@ -117,6 +125,36 @@ they are derived, never written to disk; only a Custom Experiment states
 `chamber_layout:`.
 _Avoid_: tracking type (nothing is tracked in FLIC), chamber size (that is
 the derived numeric parameter), experiment type (the layer above).
+
+**DFM**:
+One Drosophila Feeding Monitor board — the instrument that samples twelve
+wells (`W1`–`W12`) and writes them as `DFM<id>_<n>.csv`. A recording uses one
+or more; each carries an integer **id** that is the identity used everywhere
+(filenames, `dfms:` keys, per-DFM overrides), not its position in any list.
+_Avoid_: device, board, monitor, plate.
+
+**Chamber**:
+The unit an animal occupies, and the unit every metric is computed for: one
+well under `single_well`, a pair of wells under `two_well`. Chamber count is
+derived from the Chamber Layout — 12 or 6 per DFM — never stated directly.
+_Avoid_: well (a well is the electrode; a two-well chamber has two of them),
+arena, position.
+
+**Experimental Design Factor**:
+A named independent variable declared once for the whole experiment under
+`global.experimental_design_factors:` with its permitted **levels**. Factors
+are **positional**: a chamber assignment is one level per factor in
+declaration order, every factor must get a level, and reordering the
+declaration invalidates every assignment in the file.
+_Avoid_: variable, condition, group, category.
+
+**Treatment**:
+What a Chamber is assigned to, and the pooling key — chambers sharing one
+across DFMs are analysed together. With no Factors declared it is a free
+name; with Factors declared it is the ordered tuple of their levels, written
+comma-separated. A blank assignment omits the Chamber from the config
+entirely; a *partial* one is an error, never a shorter tuple.
+_Avoid_: group, condition, label, cohort.
 
 **Facet**:
 A named time window within a recording, fixed by the Design's
@@ -207,7 +245,10 @@ Project panel. Double-clicking a Batch row opens the Project panel and
 double-clicking a member opens the Analyze panel — selecting is only ever a
 step toward doing something. The Batch and Project tiles are **never dimmed**,
 because their panels hold the controls that fix the empty state; a dimmed
-tile's panel dims its cards too, and every card stays clickable.
+tile's panel dims its cards too, and every card stays clickable. Every other
+tile follows its subject: **Scripts** dims with Analyze and Plots, because it
+is the *member* level — Project Scripts and the Design editor are in the
+**Project** panel, with the Project they act on.
 _Avoid_: card column (the pre-overhaul layout), Load card.
 
 **Experiment Script**:
@@ -325,6 +366,14 @@ _Avoid_: manual, documentation, the docs, USAGE.
   **Facet** cutoffs, and declares the report set. Script actions are gated on
   both: `plot_well_comparison` needs a Chamber Layout, `plot_breaking_point`
   needs an Experiment Type.
+- An **Experiment Directory** holds one or more **DFMs**; a **DFM** holds
+  **Chambers** whose count the **Chamber Layout** derives (12 single-well, 6
+  two-well); each **Chamber** carries at most one **Treatment**. A DFM is
+  identified by its id, never by its ordinal.
+- **Experimental Design Factors** are declared once for the experiment and turn
+  every **Treatment** into an ordered tuple of levels. Declaring, removing, or
+  reordering a Factor rewrites every Chamber assignment in the file — which is
+  why the Config Editor regenerates them rather than leaving it to hand-editing.
 - The **Combined Analysis** stacks Member summaries; the **Project Report**
   and the **Publication Figures** are both rendered from it — the report by
   matplotlib, the figures by plotnine from a **Plot Spec** + **Plot Style**.
@@ -378,6 +427,11 @@ _Avoid_: manual, documentation, the docs, USAGE.
   convention), and the legacy Experiment Scripts named `batch` that
   subdir-batch used to run. The latter have no meaning after ADR-0006 —
   `pyflic lint` reports them; they are renamed by hand.
+- The Config Editor presented **Chamber Size** and **Experiment Type** as two
+  free controls and offered `two_well`/`single_well` as types — the pre-ADR-0007
+  language, still live in the GUI long after the loader moved on. Resolved: the
+  editor names **Chamber Layout**, the Experiment Type owns it, and `(auto)` is
+  spelled **Custom Experiment** because that is what it is.
 - "the docs" was ambiguous between `doc/` (user prose) and `docs/` (ADRs).
   Resolved: user-facing prose is now **help topics**, which live with the
   shipped code; `docs/` holds decision records for developers and nothing

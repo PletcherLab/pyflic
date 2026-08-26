@@ -73,6 +73,26 @@ design:
       TreatmentNew: [Ctrl, Exp]
 ```
 
+## Writing the design
+
+**Project panel → Project design…** is the editor for `project.yaml` — the Project's name,
+its notes, and the whole design. **New Project here…** opens the same editor, so a Project
+states its design when it is created rather than acquiring one later by accident.
+
+The button reads **Project design… (none set)** for a Project with no `design:` block. Such
+a Project still loads, but it validates its members against *each other* instead of against
+an authority: whichever member happens to be first becomes the standard, silently, and
+editing that member moves the standard. Writing a design fixes the rule in one place.
+
+Opening the editor on a folder that is not a Project yet reads the design off the first
+member it finds, which is the migration path — a folder of standalone experiments becomes a
+Project without retyping what they already agree on.
+
+When you save a design, any member carrying a `global:` block of its own is listed and you
+are offered the one repair there is: **delete those blocks so the members inherit**. Their
+`dfms:` and `scripts:` are left untouched. A member that merely duplicates the design is
+duplicating an authority; one that contradicts it stops the Project loading at all.
+
 ## Members inherit, they do not repeat
 
 Because the design owns all of `global:`, a member's `flic_config.yaml` normally holds
@@ -90,6 +110,13 @@ If a `global:` block *is* present — typically a standalone experiment moved in
 it is validated key by key, and any deviation is an error. The trade-off is that a
 member's config is no longer readable on its own; you need its parent to know what it
 means.
+
+That is why the **config editor** reads the parent's design when you open a member's
+config. The global settings are filled in from the design and shown **read-only**, with a
+banner naming the `project.yaml` they came from, and the per-DFM override checkboxes are
+limited to the physical keys. Saving writes `dfms:` (and leaves `scripts:` alone) without
+a `global:` block at all — a member's config cannot be turned into a design violation by
+editing it. A standalone experiment, governed by nothing, keeps every field editable.
 
 ## What stays free
 

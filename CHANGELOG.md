@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### New features
+
+- **Project design editor.** The Project panel gains **Project design…**, an editor for `project.yaml`: the Project's name, its notes, and the `design:` block every member inherits — experiment type, chamber layout, detection parameters, well names, `transform_licks`, facet cutoffs and phase names, the auto-filter constants, the exclusion group and the design factors. **New Project here…** now opens the same editor, so a new Project states its design at creation instead of acquiring one by accident; the button reads *(none set)* for a Project whose members are still being validated against each other. Opening it on a folder that is not a Project yet infers the design from the first member found. Saving a design lists any member carrying a `global:` block of its own and offers to delete those blocks so the members inherit — their `dfms:` and `scripts:` are untouched.
+
+### Changed
+
+- **The design is reinforced in member configs.** Opening a member's `flic_config.yaml` in the config editor now reads the parent Project's design: the global settings are filled in from it and shown read-only behind a banner naming the `project.yaml`, the chamber table is split by the design's factors, and the per-DFM override checkboxes are limited to the physical keys (`pi_direction`, `chamber_sets`). Saving writes no `global:` block at all, so editing a member can no longer produce a config that stops the Project loading. A standalone experiment is governed by nothing and keeps every field editable.
+- **The two script levels sit with what they act on.** Project Scripts moved to the Project panel (pick, **Run**, and **Edit…** which opens the Script Editor on `project.yaml`); the Scripts panel is now the loaded member's Experiment Scripts only, and its tile dims — like Analyze and Plots — until a member is loaded. The Hub's Script Editor button no longer changes which file it opens depending on what happens to be selected.
+
+### Fixed
+
+- **The config editor opened from Member configs… was frozen.** That dialog ran application-modal, so the config editor it launched painted correctly but ignored clicks, keystrokes and the scroll wheel. It is window-modal now, and the editor is raised and focused when it opens. Editing a second member no longer discards the first editor's window.
+- **The config editor's DFM pane could not be reached.** The top pane handed its (tall) minimum height to the splitter, squeezing the DFM tabs to a couple of hundred pixels with no way to scroll to the rest. Both panes scroll now, and the window sizes itself to the screen rather than to a fixed 1020px.
+- **Saving a member config no longer deletes its `scripts:`.** The editor rebuilt the file from its widgets, dropping every key it does not itself edit; it now preserves them.
+- **Scaffolding a single-well member gave it six chambers** instead of twelve when the Project had no member to copy from — the blank chamber block follows the design's chamber layout.
+
+### Visual
+
+- **Inline `?` help buttons are quieter.** They rest in a warm grey and take the amber accent (and a faint amber wash) only under the pointer, instead of a column of amber dots down every parameter form.
+
 ## 2026-05-04
 
 ### New features

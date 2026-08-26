@@ -76,13 +76,23 @@ The **Analyzed** column has three values, not two. **re-run needed** means the m
 population you have since said was wrong.
 
 - **Open a Project** / **New Project here** — choose an existing Project, or write a
-  `project.yaml` into a folder to make it one.
+  `project.yaml` into a folder to make it one. Creating one opens the project editor, so a
+  new Project states its design from the start rather than acquiring one by accident.
+- **Project design…** — the `project.yaml` editor: the Project's name and notes, and the
+  **design** every member inherits — experiment type, detection parameters, well names,
+  the auto-filter constants and the design factors. Reads *(none set)* when the Project
+  has no `design:` block, which means its members are being validated against each other
+  instead of against an authority. See [Projects and members](concepts-project.md).
 - **File unfiled recordings** — moves DFM CSVs sitting at a member's root into its `data/`.
 - **Member configs…** — gives a folder holding DFM CSVs a config scaffolded from an
   existing member. See [Projects and members](concepts-project.md).
 - **Analyze all** / **Combine** / **Create report** — the project-level actions.
 - **View reports** — opens the Project Report and each member's own report.
 - **Apply exclusion sheet…** — see [Excluding chambers in bulk](concepts-exclusions.md).
+- **Project Scripts** — pick one and **Run** it, or **Edit…** to open the Script Editor on
+  `project.yaml`. Project Scripts live here, with the Project they act on: they need no
+  loaded member, and they are available the moment a Project is open. See
+  [Scripts](scripts-overview.md).
 
 ## Analyze panel
 
@@ -97,8 +107,13 @@ Project's publication figures. See [Plot catalogue](plots-catalog.md) and
 
 ## Scripts panel
 
-Both script levels, kept visibly apart: Project Scripts from `project.yaml` above,
-Experiment Scripts for the loaded member below. See [Scripts](scripts-overview.md).
+**Experiment Scripts for the loaded member**, and nothing else — the tile is dimmed and
+its controls disabled until a member is loaded, like Analyze and Plots. Scripts named in
+the Project's `experiment_scripts:` appear here too, so one central recipe serves every
+member without being copied into each.
+
+Project Scripts are *not* here: they are in the Project panel, because they act on the
+Project and are runnable with no member loaded. See [Scripts](scripts-overview.md).
 
 ## AI panel
 

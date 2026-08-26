@@ -83,13 +83,33 @@ def _tint_for(category: Category | None) -> str:
 
 
 #: Amber used for help affordances, light/dark.  Matches the dirty-state
-#: colour already used by the script editor.
+#: colour already used by the script editor.  This is the *accent*: hover,
+#: focus, the one help button in a window's top bar.
 HELP_COLOR: dict[str, str] = {"light": "#d97706", "dark": "#fbbf24"}
 
+#: Resting colour for inline ``?`` markers.  A form with a help button on
+#: every row turned into a column of amber dots that read louder than the
+#: fields themselves, so at rest they sit back in a warm grey and only take
+#: the accent under the pointer.
+HELP_COLOR_MUTED: dict[str, str] = {"light": "#a8a29e", "dark": "#9c968e"}
 
-def help_color() -> str:
-    """The amber that help buttons use in the current theme."""
-    return HELP_COLOR[resolved_mode()]
+
+def help_color(*, muted: bool = False) -> str:
+    """The colour help buttons use in the current theme.
+
+    *muted* asks for the quiet resting tint used by inline ``?`` markers;
+    the default is the amber accent used on hover and for top-bar buttons.
+    """
+    table = HELP_COLOR_MUTED if muted else HELP_COLOR
+    return table[resolved_mode()]
+
+
+def help_hover_background() -> str:
+    """A faint amber wash for a help button under the pointer."""
+    hexcol = HELP_COLOR[resolved_mode()].lstrip("#")
+    r, g, b = (int(hexcol[i:i + 2], 16) for i in (0, 2, 4))
+    alpha = 0.16 if resolved_mode() == "light" else 0.22
+    return f"rgba({r}, {g}, {b}, {alpha})"
 
 
 def icon(name: str, category: Category | None = None, color: str | None = None) -> QIcon:

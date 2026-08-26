@@ -23,11 +23,13 @@ import yaml
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -49,6 +51,7 @@ from PyQt6.QtWidgets import (
 
 from .gui_env import sanitize_input_method_environment
 from .ui import ActionButton, Card, Category, TopBar, apply_theme, icon, resolved_mode
+from .ui.icons import help_color
 from .ui import settings as ui_settings
 
 # ---------------------------------------------------------------------------
@@ -314,6 +317,37 @@ class ParamsForm(QWidget):
         for form, row_idx in self._two_well_rows:
             form.setRowVisible(row_idx, show)
 
+    def set_read_only(self, read_only: bool, *, reason: str = "") -> None:
+        """Show the values but refuse edits — for a Member of a Project, whose
+        detection parameters belong to the Design (ADR-0005)."""
+        for widget in self._input_widgets.values():
+            widget.setEnabled(not read_only)
+            widget.setToolTip(reason if read_only else "")
+        for check in self._enable_checks.values():
+            check.setEnabled(not read_only)
+            check.setToolTip(reason if read_only else "")
+
+    def restrict_overrides(self, allowed: set[str] | None, *,
+                           reason: str = "") -> None:
+        """Allow only *allowed* keys to be overridden (override mode only).
+
+        Inside a Project only the *physical* keys may vary per DFM; an analysis
+        key overridden on one DFM reintroduces exactly the divergence the
+        Design outlaws, one level lower and much harder to see.  ``None``
+        lifts the restriction.
+        """
+        if not self._override_mode:
+            return
+        for key, check in self._enable_checks.items():
+            permitted = allowed is None or key in allowed
+            if not permitted and check.isChecked():
+                check.setChecked(False)
+            check.setEnabled(permitted)
+            check.setToolTip("" if permitted else reason)
+            if not permitted:
+                self._input_widgets[key].setEnabled(False)
+                self._input_widgets[key].setToolTip(reason)
+
 
 # ---------------------------------------------------------------------------
 # FactorsWidget
@@ -352,6 +386,7 @@ class FactorsWidget(QWidget):
         btn_layout.addWidget(remove_btn)
         btn_layout.addStretch()
         layout.addWidget(btn_row)
+        self._buttons = (add_btn, remove_btn)
 
     def _add_row(self) -> None:
         r = self._table.rowCount()
@@ -379,6 +414,16 @@ class FactorsWidget(QWidget):
 
     def get_factor_names(self) -> list[str]:
         return list(self.get_factors().keys())
+
+    def set_read_only(self, read_only: bool, *, reason: str = "") -> None:
+        """Show the factors but refuse edits — a Member inherits them."""
+        self._table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers if read_only
+            else QAbstractItemView.EditTrigger.AllEditTriggers)
+        self._table.setToolTip(reason if read_only else "")
+        for button in self._buttons:
+            button.setEnabled(not read_only)
+            button.setToolTip(reason if read_only else "")
 
     def load_factors(self, factors: dict) -> None:
         self._table.setRowCount(0)
@@ -482,6 +527,11 @@ class DFMWidget(QWidget):
         outer.addWidget(over_card)
 
     # ------------------------------------------------------------------
+
+    def set_override_restriction(self, allowed: set[str] | None, *,
+                                 reason: str = "") -> None:
+        """Limit which parameters this DFM may override (Project rule)."""
+        self._params_form.restrict_overrides(allowed, reason=reason)
 
     def _on_chamber_cell_changed(self, item: QTableWidgetItem) -> None:
         col = item.column()
@@ -664,14 +714,34 @@ class FLICConfigEditor(QMainWindow):
         self._current_path: Path | None = None
         self._dfm_widgets: list[DFMWidget] = []
         self._script_editor_window: Any | None = None
+        #: The config as read from disk.  Saving rewrites ``global:`` and
+        #: ``dfms:`` and leaves every other key — ``scripts:`` above all —
+        #: exactly as it was found; rebuilding the file from the widgets alone
+        #: deleted a member's Experiment Scripts on the first save.
+        self._loaded_raw: dict[str, Any] = {}
+        #: The Design governing this file, when it is a Member of a Project,
+        #: and the project.yaml it came from.  ``None`` for a standalone
+        #: experiment, which is governed by nothing.
+        self._design: dict[str, Any] | None = None
+        self._design_source: str | None = None
 
         self.setWindowTitle("FLIC Config Editor")
-        self.resize(960, 1020)
+        ## 1020px tall is what the two panes want; on a laptop screen that is
+        ## taller than the desktop, and the window manager's shrink used to
+        ## come out of the DFM pane.  Fit the screen instead.
+        self.resize(960, self._preferred_height(1020))
 
         self._build_menu()
         self._build_ui()
         self._install_help()
         self._auto_load(initial_path)
+
+    @staticmethod
+    def _preferred_height(wanted: int) -> int:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return wanted
+        return max(600, min(wanted, screen.availableGeometry().height() - 80))
 
     def _install_help(self) -> None:
         """Add the Help menu and the F1 shortcut.
@@ -795,6 +865,23 @@ class FLICConfigEditor(QMainWindow):
         top_layout.setSpacing(8)
         top_layout.setContentsMargins(6, 6, 6, 6)
 
+        ## Says, once and at the top, why the whole left/right row below is
+        ## read-only.  Every alternative (a tooltip per field, a greyed form
+        ## with no explanation) leaves someone clicking a field that will
+        ## never take a keystroke.
+        self._design_banner = QLabel("")
+        self._design_banner.setObjectName("PyflicDesignBanner")
+        self._design_banner.setWordWrap(True)
+        self._design_banner.setVisible(False)
+        self._design_banner.setStyleSheet(
+            f"QLabel#PyflicDesignBanner {{"
+            f"  color: {help_color()};"
+            f"  border: 1px solid {help_color()};"
+            f"  border-radius: 6px;"
+            f"  padding: 6px 10px;"
+            f"}}")
+        top_layout.addWidget(self._design_banner)
+
         # Side-by-side row: Experiment Settings (left) + Global Parameters (right)
         side_row = QHBoxLayout()
         side_row.setContentsMargins(0, 0, 0, 0)
@@ -903,7 +990,16 @@ class FLICConfigEditor(QMainWindow):
         self._factors_widget._table.model().rowsInserted.connect(self._on_factors_changed)
         self._factors_widget._table.model().rowsRemoved.connect(self._on_factors_changed)
 
-        splitter.addWidget(top_widget)
+        ## The top pane scrolls.  Its cards (experiment settings, global
+        ## parameters, factors) have a tall minimum, and a bare widget hands
+        ## that minimum to the splitter — which then squeezed the DFM pane to
+        ## a couple of hundred pixels no matter what sizes were set below.
+        top_scroll = QScrollArea()
+        top_scroll.setWidgetResizable(True)
+        top_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        top_scroll.setWidget(top_widget)
+        top_scroll.setMinimumHeight(160)
+        splitter.addWidget(top_scroll)
 
         # ---- Bottom pane: DFM Tabs --------------------------------------
         dfm_card = Card("DFM Configuration", Category.NEUTRAL)
@@ -989,6 +1085,7 @@ class FLICConfigEditor(QMainWindow):
                 self._dfm_widgets.append(w)
                 tab_scroll = QScrollArea()
                 tab_scroll.setWidgetResizable(True)
+                tab_scroll.setFrameShape(QFrame.Shape.NoFrame)
                 tab_scroll.setWidget(w)
                 self._dfm_tabs.addTab(tab_scroll, f"DFM {dfm_id}")
 
@@ -1017,7 +1114,7 @@ class FLICConfigEditor(QMainWindow):
                     if isinstance(cfg, dict):
                         self._current_path = candidate
                         self.setWindowTitle(f"FLIC Config Editor — {candidate.name}")
-                        self._populate_from_yaml(cfg)
+                        self._load_config(cfg)
                 except Exception as exc:
                     self.statusBar().showMessage(
                         f"Could not auto-load {candidate.name}: {exc}.  Use File → Open to load manually."
@@ -1029,8 +1126,6 @@ class FLICConfigEditor(QMainWindow):
     # ------------------------------------------------------------------
 
     def _collect_yaml(self) -> dict[str, Any]:
-        cfg: dict[str, Any] = {}
-
         global_params = self._global_params.get_values()
         global_params["chamber_size"] = self._chamber_size()
         global_section: dict[str, Any] = {"params": global_params}
@@ -1083,9 +1178,114 @@ class FLICConfigEditor(QMainWindow):
         if factors:
             global_section["experimental_design_factors"] = factors
 
-        cfg["global"] = global_section
+        ## Start from the file as it was read so keys this editor knows
+        ## nothing about survive — a member's scripts: above all, which a
+        ## rebuilt-from-widgets config used to delete on the first save.
+        cfg = {k: v for k, v in self._loaded_raw.items()
+               if k not in ("global", "dfms", "DFMs")}
+        if self._design:
+            ## A Member inherits global: from the Design.  Writing one here
+            ## would at best duplicate the authority and at worst contradict
+            ## it, and a contradiction stops the whole Project loading.
+            cfg.pop("global", None)
+        else:
+            cfg["global"] = global_section
         cfg["dfms"] = [w.get_dict() for w in self._dfm_widgets]
         return cfg
+
+    def _load_config(self, cfg: dict[str, Any]) -> None:
+        """Populate from *cfg* — with the Project Design standing in for
+        ``global:`` when the file is a Member of one.
+
+        The substitution happens *before* the widgets are filled rather than
+        after, because the design's factors decide how a chamber assignment is
+        read: "w1118, M" is two factor levels under a two-factor design and a
+        single treatment name under none, and the second reading rewrites the
+        cell.
+        """
+        self._loaded_raw = dict(cfg)
+        self._read_design()
+        effective = dict(cfg)
+        if self._design:
+            effective["global"] = self._design_as_global()
+        self._populate_from_yaml(effective)
+        self._apply_design()
+
+    def _design_as_global(self) -> dict[str, Any]:
+        """The Design shaped like a ``global:`` block the editor can load.
+
+        The one addition is ``params.chamber_size``: the Design never states it
+        (the Experiment Type owns the layout it comes from), but every widget
+        here is sized by it.
+        """
+        from . import experiment_types
+
+        design = dict(self._design or {})
+        item = experiment_types.get_experiment_type(
+            design.get("experiment_type"))
+        params = dict(design.get("params") or {})
+        params["chamber_size"] = item.resolve_chamber_size(design)
+        design["params"] = params
+        return design
+
+    def _read_design(self) -> None:
+        """Find the Design governing the file being edited, if any."""
+        self._design = None
+        self._design_source = None
+        if self._current_path is None:
+            return
+        from . import project as project_mod
+
+        try:
+            design, source = project_mod.design_for_member(
+                self._current_path.parent)
+        except Exception:  # noqa: BLE001 - a bad project.yaml governs nothing
+            return
+        if design:
+            self._design = design
+            self._design_source = source
+
+    def _apply_design(self) -> None:
+        """Lock the fields the Project Design owns, and say why.
+
+        A Member of a Project does not own ``global:`` — the Design does, and a
+        Member that states anything different **fails to load** (ADR-0005).
+        The editor therefore shows what is actually in force and refuses the
+        edit here, rather than letting someone type a value that will break
+        the Project the next time it is opened.
+        """
+        governed = bool(self._design)
+        reason = (f"Owned by the Project design in {self._design_source}"
+                  if governed else "")
+
+        for widget in (self._chamber_size_combo, self._experiment_type_combo,
+                       self._well_a_edit, self._well_b_edit,
+                       self._transform_licks_check, self._min_raw_licks_edit,
+                       self._max_dur_edit, self._max_events_edit):
+            widget.setEnabled(not governed)
+            widget.setToolTip(reason)
+        self._global_params.set_read_only(governed, reason=reason)
+        self._factors_widget.set_read_only(governed, reason=reason)
+
+        from .yaml_config import PHYSICAL_DFM_KEYS
+
+        for widget in self._dfm_widgets:
+            widget.set_override_restriction(
+                set(PHYSICAL_DFM_KEYS) if governed else None,
+                reason=("Inside a Project only the physical keys may vary per "
+                        "DFM — an analysis key overridden here would "
+                        "reintroduce the divergence the design outlaws."))
+
+        self._design_banner.setVisible(governed)
+        if governed:
+            self._design_banner.setText(
+                "<b>These settings belong to the Project design.</b>  This "
+                "experiment is a member of the Project at "
+                f"<code>{self._design_source}</code> and inherits every "
+                "global setting from it — shown here, edited there (Hub → "
+                "Project → Project design…).  Saving leaves this file's "
+                "<code>global:</code> out entirely, which is what makes the "
+                "inheritance work.")
 
     def _populate_from_yaml(self, cfg: dict[str, Any]) -> None:
         global_cfg = cfg.get("global", {}) or {}
@@ -1164,6 +1364,10 @@ class FLICConfigEditor(QMainWindow):
 
     def _new(self) -> None:
         self._current_path = None
+        self._loaded_raw = {}
+        self._design = None
+        self._design_source = None
+        self._apply_design()
         self.setWindowTitle("FLIC Config Editor")
         self._well_a_edit.clear()
         self._well_b_edit.clear()
@@ -1208,7 +1412,7 @@ class FLICConfigEditor(QMainWindow):
                 raise ValueError("File does not contain a YAML mapping.")
             self._current_path = Path(path)
             self.setWindowTitle(f"FLIC Config Editor — {self._current_path.name}")
-            self._populate_from_yaml(cfg)
+            self._load_config(cfg)
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Failed to load config:\n{exc}")
 

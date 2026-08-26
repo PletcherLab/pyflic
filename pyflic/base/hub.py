@@ -425,8 +425,21 @@ class AnalysisHubWindow(QMainWindow):
         open_btn.clicked.connect(self._choose_project)
         row.addWidget(open_btn)
         new_btn = ActionButton("New Project here…", Category.LOAD, "new")
+        new_btn.setToolTip(
+            "Write a project.yaml — its name, its notes, and the design every "
+            "member of it inherits.")
         new_btn.clicked.connect(self._create_project)
         row.addWidget(new_btn)
+        self.design_btn = ActionButton("Project design…", Category.ANALYZE,
+                                       "settings")
+        self.design_btn.setToolTip(
+            "Edit the design in project.yaml: experiment type, detection "
+            "parameters, well names, the auto-filter constants and the design "
+            "factors.  Every member inherits it, and a member that "
+            "contradicts it fails to load.")
+        self.design_btn.clicked.connect(self._edit_project_design)
+        row.addWidget(self.design_btn)
+        row.addStretch(1)
         card.add_body(row)
 
         self.project_table = self._table(["Member", "DFMs", "Chambers",
@@ -508,6 +521,29 @@ class AnalysisHubWindow(QMainWindow):
         self.project_sheet_btn = sheet_btn
         views.addStretch(1)
         card.add_body(views)
+
+        ## Project Scripts live with the Project, not in the Scripts panel:
+        ## they act on the Project (pool, report, run_in_experiments) and are
+        ## available the moment one is open, with no member loaded.  The
+        ## Scripts panel is the *member* level and nothing else — the same
+        ## split PyTrackingAnalysis draws.
+        card.add_section_label("Project Scripts (project.yaml)")
+        srow = QHBoxLayout()
+        self.project_script = QComboBox()
+        self.project_script.setMinimumWidth(200)
+        srow.addWidget(self.project_script, 1)
+        self.run_project_script_btn = ActionButton("Run", Category.SCRIPTS,
+                                                   "play", primary=True)
+        self.run_project_script_btn.clicked.connect(self._run_project_script)
+        srow.addWidget(self.run_project_script_btn)
+        self.edit_project_scripts_btn = ActionButton(
+            "Edit…", Category.SCRIPTS, "scripts")
+        self.edit_project_scripts_btn.setToolTip(
+            "Open the Script Editor on this Project's project.yaml.")
+        self.edit_project_scripts_btn.clicked.connect(
+            self._open_project_script_editor)
+        srow.addWidget(self.edit_project_scripts_btn)
+        card.add_body(srow)
         self.panels["project"].add_card(card)
 
     def _build_analyze_panel(self) -> None:
@@ -581,32 +617,39 @@ class AnalysisHubWindow(QMainWindow):
         self.panels["plots"].add_card(card)
 
     def _build_scripts_panel(self) -> None:
-        card = Card("Scripts", Category.SCRIPTS, icon_name="scripts",
-                    subtitle="Two levels, separate registries. The only bridge "
-                             "is run_in_experiments.")
-        card.add_section_label("Project Scripts (project.yaml)")
-        prow = QHBoxLayout()
-        self.project_script = QComboBox()
-        self.project_script.setMinimumWidth(200)
-        prow.addWidget(self.project_script, 1)
-        run_p = ActionButton("Run", Category.SCRIPTS, "play", primary=True)
-        run_p.clicked.connect(self._run_project_script)
-        prow.addWidget(run_p)
-        card.add_body(prow)
+        """The **member** script level, and only that.
 
-        card.add_section_label("Experiment Scripts (loaded member)")
+        Project Scripts are authored and run from the Project panel: they act
+        on the Project itself and need no member.  Keeping both levels here
+        made the panel readable while a Project was open with nothing loaded,
+        which is precisely when half of it could not run.
+        """
+        card = Card("Scripts", Category.SCRIPTS, icon_name="scripts",
+                    subtitle="Experiment Scripts for the loaded member.  "
+                             "Project Scripts live in the Project panel — the "
+                             "two registries never mix; the only bridge is "
+                             "run_in_experiments.")
+        self.scripts_hint = QLabel("")
+        self.scripts_hint.setWordWrap(True)
+        card.add_body(self.scripts_hint)
+
         erow = QHBoxLayout()
         self.experiment_script = QComboBox()
         self.experiment_script.setMinimumWidth(200)
         erow.addWidget(self.experiment_script, 1)
-        run_e = ActionButton("Run", Category.SCRIPTS, "play")
-        run_e.clicked.connect(self._run_experiment_script)
-        erow.addWidget(run_e)
+        self.run_experiment_script_btn = ActionButton("Run", Category.SCRIPTS,
+                                                      "play", primary=True)
+        self.run_experiment_script_btn.clicked.connect(
+            self._run_experiment_script)
+        erow.addWidget(self.run_experiment_script_btn)
         card.add_body(erow)
 
-        edit_btn = ActionButton("Open Script Editor", Category.SCRIPTS, "script")
-        edit_btn.clicked.connect(self._open_script_editor)
-        card.add_body(edit_btn)
+        self.edit_scripts_btn = ActionButton("Open Script Editor",
+                                             Category.SCRIPTS, "scripts")
+        self.edit_scripts_btn.setToolTip(
+            "Open the Script Editor on the loaded member's flic_config.yaml.")
+        self.edit_scripts_btn.clicked.connect(self._open_script_editor)
+        card.add_body(self.edit_scripts_btn)
         self.panels["scripts"].add_card(card)
 
     def _build_ai_panel(self) -> None:
@@ -790,17 +833,52 @@ class AnalysisHubWindow(QMainWindow):
         self.refresh()
 
     def _create_project(self) -> None:
+        """Write a project.yaml — through the design editor, always.
+
+        A Project created with no ``design:`` validates its members against
+        *each other* instead (the legacy mode), which means the first member
+        edited silently becomes the standard.  Stating the design up front is
+        the whole point of the level.
+        """
         path = QFileDialog.getExistingDirectory(
             self, "Choose a folder to become a Project")
         if not path:
             return
-        try:
-            created = project_mod.create_project_file(path)
-            self.log.append_line(f"Wrote {created}")
-            self._set_project(project_mod.Project(path))
-        except Exception as err:  # noqa: BLE001
-            QMessageBox.critical(self, "Could not create Project", str(err))
+        self._run_design_editor(path)
+
+    def _edit_project_design(self) -> None:
+        directory = (self.project.project_directory
+                     if self.project is not None else self._current_dir())
+        if directory is None:
+            QMessageBox.information(
+                self, "No Project",
+                "Open a Project first, or use 'New Project here…' to make "
+                "one.")
             return
+        self._run_design_editor(directory)
+
+    def _run_design_editor(self, directory: str) -> None:
+        from .design_editor import ProjectDesignDialog
+
+        dialog = ProjectDesignDialog(self, start_dir=directory)
+        if not dialog.exec() or not dialog.saved_dir:
+            return
+        saved = dialog.saved_dir
+        self.log.append_line(
+            f"Wrote {os.path.join(saved, project_mod.PROJECT_FILENAME)}")
+        for name in getattr(dialog, "adopted", []) or []:
+            self.log.append_line(
+                f"[design] {name}: removed its own global: — it now inherits "
+                f"the project design")
+        try:
+            self._set_project(project_mod.Project(saved))
+        except Exception as err:  # noqa: BLE001
+            ## A Project whose members contradict the new design refuses to
+            ## load.  Say so here rather than leaving the old one selected as
+            ## though nothing had happened.
+            self._set_project(None)
+            QMessageBox.critical(self, "Project does not load", str(err))
+            self._log_issue(f"ERROR: {err}")
         self._invalidate_batch_scan()
         self.refresh()
 
@@ -1594,24 +1672,32 @@ class AnalysisHubWindow(QMainWindow):
         self._qc.show()
 
     def _open_script_editor(self) -> None:
+        """The Script Editor on the **loaded member's** flic_config.yaml.
+
+        One button, one file.  Project Scripts have their own button in the
+        Project panel, because "whichever level happens to be selected" is not
+        something a Save should depend on.
+        """
+        if not self._require_experiment():
+            return
+        config = os.path.join(str(self.experiment.experiment_dir),
+                              "flic_config.yaml")
+        self._show_script_editor(config)
+
+    def _open_project_script_editor(self) -> None:
+        if not self._require_project():
+            return
+        self._show_script_editor(
+            os.path.join(self.project.project_directory,
+                         project_mod.PROJECT_FILENAME))
+
+    def _show_script_editor(self, config: str) -> None:
         from .script_editor import ScriptEditorWindow
 
-        ## The editor edits one yaml. A Project's own scripts live in
-        ## project.yaml, a member's in its flic_config.yaml — so the file to
-        ## open follows what is loaded, not what is merely selected.
-        if self.experiment is not None:
-            config = os.path.join(str(self.experiment.experiment_dir),
-                                  "flic_config.yaml")
-        elif self.project is not None:
-            config = os.path.join(self.project.project_directory,
-                                  "project.yaml")
-        else:
-            QMessageBox.information(
-                self, "Nothing to edit",
-                "Open a Project, or load a member, first.")
-            return
         self._script_editor = ScriptEditorWindow(config)
         self._script_editor.show()
+        self._script_editor.raise_()
+        self._script_editor.activateWindow()
 
     def _open_plot_editor(self) -> None:
         if not self._require_project():
@@ -1918,8 +2004,14 @@ class AnalysisHubWindow(QMainWindow):
         if self.project is None:
             tile.set_summary(["no project open", "open one to begin"])
             for widget in (self.file_btn, self.scaffold_btn,
-                           self.view_reports_btn, self.project_sheet_btn):
+                           self.view_reports_btn, self.project_sheet_btn,
+                           self.project_script, self.run_project_script_btn,
+                           self.edit_project_scripts_btn):
                 widget.setEnabled(False)
+            ## The design editor stays live with nothing open: it is how a
+            ## folder becomes a Project in the first place.
+            self.design_btn.setEnabled(True)
+            self.design_btn.setText("Project design…")
             return
         project = self.project
 
@@ -1996,6 +2088,20 @@ class AnalysisHubWindow(QMainWindow):
         names = [s["name"] for s in project.scripts]
         names += [n for n in BUILTIN_PROJECT_SCRIPTS if n not in names]
         self.project_script.addItems(names)
+        for widget in (self.project_script, self.run_project_script_btn,
+                       self.edit_project_scripts_btn, self.design_btn):
+            widget.setEnabled(True)
+        ## A Project with no design: validates its members against each other
+        ## rather than against an authority — say so on the button that fixes
+        ## it, since nothing else in the Hub would ever mention it.
+        declared = bool(project.design_global)
+        self.design_btn.setText(
+            "Project design…" if declared else "Project design… (none set)")
+        self.design_btn.setToolTip(
+            self.design_btn.toolTip().split("\n\n")[0]
+            + ("" if declared else
+               "\n\nThis Project declares no design: — its members are "
+               "validated against each other instead."))
 
     @staticmethod
     def _paint_blocked_row(table, row: int, item) -> None:
@@ -2025,7 +2131,11 @@ class AnalysisHubWindow(QMainWindow):
                 self.tiles[tile_key].set_summary(["no member loaded", ""])
             self.plot_metric.clear()
             self.experiment_script.clear()
-            self.tiles["scripts"].set_dimmed(self.project is None)
+            self.scripts_hint.setText(
+                "No member is loaded — Experiment Scripts run on one.  "
+                "Double-click a member row in the Project panel.  A Project's "
+                "own scripts are in the Project panel.")
+            self.tiles["scripts"].set_dimmed(True)
             self._refresh_scripts_tile()
             return
 
@@ -2061,16 +2171,26 @@ class AnalysisHubWindow(QMainWindow):
             if isinstance(script, dict) and script.get("name") not in names:
                 names.append(script.get("name"))
         self.experiment_script.addItems([n for n in names if n])
+        central = len(self.project.experiment_scripts) \
+            if self.project is not None else 0
+        self.scripts_hint.setText(
+            f"Experiment Scripts for '{self.experiment_name}'"
+            + (f" — {central} of them served centrally from the Project's "
+               f"experiment_scripts:." if central else "."))
         self.tiles["scripts"].set_dimmed(False)
         self._refresh_scripts_tile()
 
     def _refresh_scripts_tile(self) -> None:
-        project_count = self.project_script.count()
-        experiment_count = self.experiment_script.count()
+        count = self.experiment_script.count()
+        has_member = self.experiment is not None
         self.tiles["scripts"].set_summary([
-            f"{project_count} project script(s)",
-            f"{experiment_count} experiment script(s)",
+            str(self.experiment_name) if has_member else "no member loaded",
+            f"{count} experiment script(s)" if has_member
+            else "load one to run scripts",
         ])
+        for widget in (self.experiment_script, self.run_experiment_script_btn,
+                       self.edit_scripts_btn):
+            widget.setEnabled(has_member)
 
     def _refresh_tools_tile(self) -> None:
         from .ui import resolved_mode
@@ -2123,7 +2243,9 @@ class AnalysisHubWindow(QMainWindow):
             "project": False,        # its panel holds "Open a Project…"
             "analyze": not has_experiment,
             "plots": not has_experiment,
-            "scripts": not (has_project or has_experiment),
+            ## Scripts is the member level now: with no member loaded there
+            ## is no script to pick and no config to edit.
+            "scripts": not has_experiment,
             "ai": not has_project,
             "tools": False,
         }
@@ -2173,6 +2295,13 @@ class MemberConfigsDialog(QDialog):
         self._project = project
         self.setWindowTitle(f"Member configs — {project.name}")
         self.setMinimumSize(560, 420)
+        ## Window-modal, not application-modal.  Edit opens a config editor as
+        ## a separate top-level window; an application-modal dialog blocks
+        ## input to every other window in the app, so that editor came up
+        ## looking alive but ignoring clicks, keys and the scroll wheel.
+        ## Window modality blocks only this dialog's parent chain (the hub),
+        ## leaving the parentless editor interactive.
+        self.setWindowModality(Qt.WindowModality.WindowModal)
 
         outer = QVBoxLayout(self)
         outer.setSpacing(10)
@@ -2290,8 +2419,29 @@ class MemberConfigsDialog(QDialog):
 
         path = os.path.join(self._project.member_dir(chosen[0]),
                             project_mod.CONFIG_FILENAME)
-        self._hub._config_editor = FLICConfigEditor(path)
-        self._hub._config_editor.show()
+        ## Held in a list: one editor per member, so editing a second member
+        ## does not drop the reference to the first and take its window (and
+        ## any unsaved edits) with it.
+        editors = getattr(self._hub, "_config_editors", None)
+        if editors is None:
+            editors = self._hub._config_editors = []
+        ## Drop the ones the user has already closed, so the list does not
+        ## grow for the life of the session.  A window whose C++ side has gone
+        ## raises from isVisible() rather than answering.
+        kept = []
+        for old in editors:
+            try:
+                if old.isVisible():
+                    kept.append(old)
+            except RuntimeError:
+                pass
+        editors[:] = kept
+        editor = FLICConfigEditor(path)
+        editors.append(editor)
+        self._hub._config_editor = editor
+        editor.show()
+        editor.raise_()
+        editor.activateWindow()
 
 
 def main() -> None:

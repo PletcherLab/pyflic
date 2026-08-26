@@ -143,6 +143,105 @@ def create_project_file(project_dir, name: str | None = None,
     return path
 
 
+def read_design(project_dir) -> dict:
+    """The ``design:`` section of *project_dir*'s ``project.yaml``, or ``{}``.
+
+    Deliberately file-level rather than a :class:`Project` method: a Project
+    whose Members contradict the Design refuses to construct, and the Design is
+    exactly what the caller needs in order to *repair* that.  The config editor
+    also reads it for a single Member, with no Project loaded at all.
+    """
+    marker = os.path.join(str(project_dir), PROJECT_FILENAME)
+    if not os.path.isfile(marker):
+        return {}
+    try:
+        with open(marker, encoding="utf-8") as handle:
+            meta = yaml.safe_load(handle) or {}
+    except Exception:  # noqa: BLE001 - an unreadable project.yaml is not a design
+        return {}
+    return dict(meta.get("design") or {})
+
+
+def design_for_member(experiment_dir) -> tuple[dict, str] | tuple[None, None]:
+    """The Design governing the Experiment Directory at *experiment_dir*.
+
+    Returns ``(design_global, project_yaml_path)`` when the directory is a
+    Member of a Project that declares a Design, and ``(None, None)`` for a
+    standalone experiment — which is governed by nothing and stays free.
+    """
+    parent = os.path.dirname(os.path.abspath(str(experiment_dir)))
+    design = read_design(parent)
+    design_global = dict(design.get("global") or {})
+    if not design_global:
+        return None, None
+    return design_global, os.path.join(parent, PROJECT_FILENAME)
+
+
+def members_stating_global(project_dir) -> list[tuple[str, bool]]:
+    """Members that carry a ``global:`` block of their own.
+
+    Each entry is ``(member name, agrees with the design)``.  A Member that
+    agrees is merely duplicating the Design; one that does not will refuse to
+    load, and both are fixed the same way — by deleting the block so the
+    Member inherits (:func:`adopt_design`).
+    """
+    design_global = dict(read_design(project_dir).get("global") or {})
+    out: list[tuple[str, bool]] = []
+    for entry in sorted(os.listdir(str(project_dir))):
+        sub = os.path.join(str(project_dir), entry)
+        if not os.path.isdir(sub) or not is_experiment_dir(sub):
+            continue
+        try:
+            with open(os.path.join(sub, CONFIG_FILENAME),
+                      encoding="utf-8") as handle:
+                cfg = yaml.safe_load(handle) or {}
+        except Exception:  # noqa: BLE001 - an unreadable member is not one of these
+            continue
+        own = cfg.get("global")
+        if not own:
+            continue
+        agrees = all(
+            key in DESIGN_KEYS
+            and _normalize(value) == _normalize(design_global.get(key))
+            for key, value in dict(own).items())
+        out.append((entry, agrees))
+    return out
+
+
+def adopt_design(project_dir, names=None) -> list[str]:
+    """Delete the ``global:`` block from each named Member so it inherits.
+
+    The Design is the authority (ADR-0005); a Member's own ``global:`` can only
+    duplicate it or contradict it.  Removing the block is therefore the repair
+    for both, and it is the only edit made — ``dfms:``, ``scripts:`` and every
+    other key are written back untouched.
+
+    Returns the names actually changed.
+    """
+    if not (read_design(project_dir).get("global") or {}):
+        ## Without a Design there is nothing to inherit: stripping the blocks
+        ## would leave the Members with no global: at all.
+        raise ValueError(
+            f"{project_dir} declares no design: — write one before asking its "
+            f"members to inherit it")
+    changed: list[str] = []
+    targets = list(names) if names is not None else \
+        [name for name, _agrees in members_stating_global(project_dir)]
+    for name in targets:
+        path = os.path.join(str(project_dir), name, CONFIG_FILENAME)
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            cfg = yaml.safe_load(handle) or {}
+        if "global" not in cfg:
+            continue
+        cfg.pop("global")
+        with open(path, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(cfg, handle, sort_keys=False, allow_unicode=True)
+        changed.append(name)
+    return changed
+
+
 class _NameShim:
     """Duck-typed ``arena`` so an AI payload builder that reads
     ``experiment.arena.experiment_name`` works on a Project unchanged."""
@@ -488,13 +587,19 @@ class Project:
         dfms = [by_id[i] for i in sorted(by_id)]
         return {"dfms": dfms}, notes
 
-    @staticmethod
-    def _blank_chamber_block(template: list) -> dict:
-        """An unassigned chamber mapping shaped like the template's."""
+    def _blank_chamber_block(self, template: list) -> dict:
+        """An unassigned chamber mapping shaped like the template's.
+
+        With no template — the first Member of a Project that so far is only a
+        Design — the shape comes from the Design's Chamber Layout, because a
+        single-well experiment has twelve chambers and a two-well six.  A fixed
+        six here gave a single-well member half a plate.
+        """
         for node in template:
             if isinstance(node, dict) and isinstance(node.get("chambers"), dict):
                 return {k: "" for k in node["chambers"]}
-        return {i: "" for i in range(1, 7)}
+        n_chambers = 12 if self.chamber_layout == "single_well" else 6
+        return {i: "" for i in range(1, n_chambers + 1)}
 
     def scaffold_member(self, name: str) -> tuple[str, list[str]]:
         """Give Member *name* a design-conformant ``flic_config.yaml``.

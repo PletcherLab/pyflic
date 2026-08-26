@@ -1,8 +1,8 @@
 # What a script is
 
-A **script** is a named recipe: a list of steps under one name, run from the Hub's Scripts
-panel. Instead of clicking Load, then Basic analysis, then three plots every time you
-revisit an experiment, you define that sequence once and run it in a click.
+A **script** is a named recipe: a list of steps under one name, run from the Hub. Instead
+of clicking Load, then Basic analysis, then three plots every time you revisit an
+experiment, you define that sequence once and run it in a click.
 
 Scripts also make an analysis reproducible. The sequence lives in the config alongside the
 parameters that produced the results, so re-running months later gives the same output
@@ -13,10 +13,16 @@ without anyone remembering which buttons were pressed in which order.
 There are two script levels with **separate action registries**. They cannot mix: a
 project-level step in an Experiment Script is an error, and vice versa.
 
-| Level | Lives in | Acts on |
-|---|---|---|
-| **Experiment Script** | a member's `flic_config.yaml` `scripts:`, or a Project's `experiment_scripts:` | one loaded member |
-| **Project Script** | `project.yaml` `scripts:` | the Project as a whole |
+| Level | Lives in | Acts on | Run from |
+|---|---|---|---|
+| **Experiment Script** | a member's `flic_config.yaml` `scripts:`, or a Project's `experiment_scripts:` | one loaded member | the **Scripts** panel |
+| **Project Script** | `project.yaml` `scripts:` | the Project as a whole | the **Project** panel |
+
+Each level is run from the panel of the thing it acts on, so the level a script belongs to
+is never a question of which combo box you happened to click. The Scripts tile is dimmed
+until a member is loaded, for the same reason Analyze and Plots are: with nothing loaded
+there is nothing for an Experiment Script to run on. Project Scripts, needing no member,
+stay available the moment a Project is open.
 
 There is no third level. What a [Batch Run](scripts-batch.md) executes IS a Project Script.
 

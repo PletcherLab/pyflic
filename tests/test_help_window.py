@@ -152,17 +152,19 @@ def test_missing_topic_renders_a_message(window):
 
 def test_help_button_retints_on_theme_change(app):
     from pyflic.base.ui import apply_theme
-    from pyflic.base.ui.icons import help_color
+    from pyflic.base.ui.icons import help_color, help_hover_background
     from pyflic.help import HelpButton
 
     apply_theme(app, mode="light")
     btn = HelpButton("getting-started")
-    light = help_color()
+    ## The resting tint is muted; the amber accent survives as the hover wash.
+    light = help_hover_background()
     assert light in btn.styleSheet()
+    assert help_color(muted=True) != help_color(), "resting tint should be quieter"
 
     apply_theme(app, mode="dark")
     app.processEvents()
-    dark = help_color()
+    dark = help_hover_background()
     assert dark != light, "the two themes should use different amber"
     assert dark in btn.styleSheet(), "help button kept the previous theme's colour"
 

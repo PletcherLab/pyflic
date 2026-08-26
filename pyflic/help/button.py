@@ -11,7 +11,7 @@ from PyQt6.QtCore import QEvent, QSize, Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QToolButton, QWidget
 
-from ..base.ui.icons import help_color, icon
+from ..base.ui.icons import help_color, help_hover_background, icon
 from . import topics as _topics
 from .window import open_help
 
@@ -27,9 +27,10 @@ class HelpButton(QToolButton):
     ``ref`` is a topic id, optionally with an anchor:
     ``"reference-parameters#feeding_event_link_gap"``.
 
-    Rendered in amber rather than a category colour: help is an affordance that
-    belongs to no analysis category, and the warm tint makes it findable
-    against the blue/green/orange controls it sits beside.
+    Rendered in a warm grey at rest and amber under the pointer: help belongs
+    to no analysis category, and a form row with a ``?`` on every line should
+    not read as a column of warnings.  The amber is kept for hover, where it
+    confirms the thing is live.
     """
 
     def __init__(
@@ -44,6 +45,9 @@ class HelpButton(QToolButton):
         self._topic_id, self._anchor = _topics.parse_ref(ref)
         self._size = size
         self._color: str | None = None
+        self._accent: str | None = None
+        self._icon_rest = None
+        self._icon_hover = None
         self._restyling = False
         self.setIconSize(QSize(size - 4, size - 4))
         self.setFixedSize(size, size)
@@ -55,26 +59,40 @@ class HelpButton(QToolButton):
         self.clicked.connect(self._open)
 
     def _apply_theme(self) -> None:
-        """Re-resolve the amber for the theme currently in force."""
+        """Re-resolve the resting and hover tints for the theme in force."""
         if self._restyling:
             return
-        col = help_color()
+        col = help_color(muted=True)
         if col == self._color:
             return
         self._color = col
+        self._accent = help_color()
+        self._icon_rest = icon("help", color=col)
+        self._icon_hover = icon("help", color=self._accent)
         self._restyling = True
         try:
-            self.setIcon(icon("help", color=col))
+            self.setIcon(self._icon_hover if self.underMouse() else self._icon_rest)
             self.setStyleSheet(
                 f"QToolButton {{"
                 f"  border: none;"
                 f"  border-radius: {self._size // 2}px;"
                 f"  background: transparent;"
                 f"}}"
-                f"QToolButton:hover {{ background: {col}; }}"
+                f"QToolButton:hover {{ background: {help_hover_background()}; }}"
             )
         finally:
             self._restyling = False
+
+    def enterEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        """Take the amber accent while the pointer is on the button."""
+        if self._icon_hover is not None:
+            self.setIcon(self._icon_hover)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        if self._icon_rest is not None:
+            self.setIcon(self._icon_rest)
+        super().leaveEvent(event)
 
     def changeEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         """Re-tint when the application theme changes.

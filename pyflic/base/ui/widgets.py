@@ -350,7 +350,14 @@ class ActionButton(QPushButton):
             f"  color: {fg};"
             f"}}"
             f"QPushButton:hover {{ background: {col}; color: white; }}"
-            f"QPushButton:disabled {{ color: palette(mid); border-left-color: palette(mid); }}"
+            ## The background too, not just the text: a disabled *primary*
+            ## button kept the highlight fill and read as the live thing to
+            ## click in a panel where nothing was clickable.
+            f"QPushButton:disabled {{"
+            f"  background: palette(button);"
+            f"  color: palette(mid);"
+            f"  border-left-color: palette(mid);"
+            f"}}"
         )
 
 
