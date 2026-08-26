@@ -12,35 +12,63 @@ Use it for your first configuration. Hand-editing YAML is fine once you know the
 see [Configuration file structure](config-structure.md) — but there is no advantage to
 starting there.
 
-## Sections
+## The two tabs
 
-**Parameters** — the detection parameters. Each field carries a `?` that opens
-[Parameter reference](reference-parameters.md) at that parameter, so you can read what a
-value does without leaving the form.
+**Experiment** — everything that applies to the recording as a whole: the
+Experiment Type, the Chamber Layout it implies, well names, the detection
+parameters, and the factors of your design. Each parameter field carries a `?`
+that opens [Parameter reference](reference-parameters.md) at that parameter, so
+you can read what a value does without leaving the form.
 
-**Factors** — declare a factorial design. Adding a factor here regenerates the chamber
-assignment fields to match, which is the main reason to use the editor rather than hand
-editing: adding a factor by hand means rewriting every chamber assignment in the file. See
-[Factorial designs](config-factors.md).
+Declaring a factor here regenerates the chamber assignment fields on the other
+tab to match, which is the main reason to use the editor rather than hand
+editing: adding a factor by hand means rewriting every chamber assignment in
+the file. See [Factorial designs](config-factors.md).
 
-**DFMs** — one tab per device, each with its own parameter overrides and chamber
-assignments. Per-DFM overrides are how counterbalancing is set up; see
+**DFMs & Chambers** — one tab down the left side per device, each with its own
+chamber assignments and parameter overrides. **Add DFM** and **Remove DFM** sit
+below the list; Remove acts on the DFM you have selected and names it before it
+discards anything. Per-DFM overrides are how counterbalancing is set up; see
 [`pi_direction`](reference-parameters.md#pi_direction).
 
 ## Things worth knowing
 
-**`chamber_size` is required and cannot be inferred.** It determines which physical wells
-form a chamber, so the editor asks for it before it can lay out the chamber fields. Setting
-it wrong silently reinterprets the whole plate.
+**The Experiment Type owns the Chamber Layout.** Choose *Hedonic Feeding* or
+*Progressive Ratio* and the layout is fixed for you — shown, but not editable,
+because those assays are two-well by definition. Only a **Custom Experiment**
+chooses its own layout. The editor writes `chamber_layout:` for a Custom
+Experiment and `experiment_type:` for a typed one, and `params.chamber_size` for
+neither: it is derived from the layout, never stored.
 
-**Chamber count follows chamber size.** `chamber_size: 1` gives 12 chambers per DFM;
-`chamber_size: 2` gives 6. Change the size and the chamber fields change with it.
+**Chamber count follows the Chamber Layout.** Single-well gives 12 chambers per
+DFM; two-well gives 6. Change the layout and the chamber fields change with it —
+and if that would discard assignments you have already made, the editor names
+them and asks first.
 
-**The editor writes canonical parameter names.** Older aliases such as `link_gap` and
-`tasting_low` are still accepted when read, but what gets written is the canonical name.
+**Auto-filter thresholds show the type's defaults as grey placeholder text.**
+Leaving a threshold blank does not mean "no filtering": it means the Experiment
+Type's default applies. Type a value only to override it. A Custom Experiment
+has no defaults, so there a blank field really does skip the filter.
 
-**Exclusions do not live here.** `excluded_chambers` in YAML is ignored at load time.
-Chamber exclusions belong in `remove_chambers.csv` — see
+**Factor assignments are positional and must be complete.** With two factors
+declared, every assigned chamber needs a level in both columns — the columns are
+read in declaration order, so a half-filled row is an incomplete assignment, not
+a shorter one. The editor marks the gap and leaves that chamber out of the file
+rather than writing something that would read back wrong.
+
+**Problems are counted on the tab they live on.** A ⚠ and a number on a tab
+label means something there needs attention — a Hedonic experiment with no well
+names, a chamber missing a factor level. Saving with problems outstanding is
+allowed; the editor lists them first so you are choosing to.
+
+**The editor writes canonical parameter names.** Older aliases such as `link_gap`
+and `tasting_low` are still accepted when read, but what gets written is the
+canonical name. The same goes for configurations written before pyflic split
+Experiment Type from Chamber Layout: `experiment_type: two_well` still opens — as
+a Custom Experiment with that layout — and saving migrates it.
+
+**Exclusions do not live here.** `excluded_chambers` in YAML is ignored at load
+time. Chamber exclusions belong in `remove_chambers.csv` — see
 [exclusions](config-dfms-chambers.md#excluding-chambers).
 
 ## After saving
