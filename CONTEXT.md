@@ -88,7 +88,8 @@ restricted to the *physical* keys (`pi_direction`, `chamber_sets`). A
 per-DFM override of an analysis key is rejected inside a Project; a
 standalone Experiment Directory keeps unrestricted overrides.
 Authored in the **Project design** editor (Hub → Project panel), which is also
-what "New Project here…" opens, so a Project states its Design at creation
+what "Create Project…" and "Initialize this folder…" open, so a Project states
+its Design at creation
 rather than acquiring one by accident; a Project with no `design:` falls back
 to validating Members against each other, where the first Member silently
 becomes the standard. The Design is **reinforced downwards**: a Member's config
@@ -249,6 +250,13 @@ tile's panel dims its cards too, and every card stays clickable. Every other
 tile follows its subject: **Scripts** dims with Analyze and Plots, because it
 is the *member* level — Project Scripts and the Design editor are in the
 **Project** panel, with the Project they act on.
+The Project panel offers **three ways in and no more** — the folder is a
+Project / does not exist / exists without a `project.yaml` — plus the editor
+for the one that is open, and the **Members** row repeats the trio one level
+down (Create member / Initialize existing folder / Member configs). The cases
+are disjoint by construction: each button refuses the others' case and names
+the one that handles it, so "which button is mine" is never a guess. Mirrors
+PyTrackingAnalysis's Create/Load and Experiments cards.
 _Avoid_: card column (the pre-overhaul layout), Load card.
 
 **Experiment Script**:

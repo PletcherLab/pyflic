@@ -368,35 +368,89 @@ class Project:
     def _validate_against_design(self) -> list[str]:
         problems: list[str] = []
         for name in self.member_names:
-            own = self._own_global(name)
-            for key, value in own.items():
-                if key not in DESIGN_KEYS:
-                    ## An unknown global key is not silently blessed: the
-                    ## Design owns global:, so anything it does not name has
-                    ## nowhere legitimate to come from.
-                    problems.append(
-                        f"{name}: global key '{key}' is not part of the "
-                        f"project design (the design owns global:)")
+            problems += self._design_problems(name, self.configs[name],
+                                              self.design_global)
+        return problems
+
+    def _design_problems(self, label: str, config: dict,
+                         design_global: dict) -> list[str]:
+        """Why *config* would not be a conforming Member under *design_global*.
+
+        One config at a time, by design: the same test serves the Members on
+        disk at load and a config that is not in the Project yet — one about to
+        be copied in from elsewhere — so the second can be refused *before* it
+        is written rather than after it has made the Project unloadable.
+        """
+        from .yaml_config import PHYSICAL_DFM_KEYS, _normalize_param_overrides
+
+        problems: list[str] = []
+        for key, value in dict(config.get("global") or {}).items():
+            if key not in DESIGN_KEYS:
+                ## An unknown global key is not silently blessed: the Design
+                ## owns global:, so anything it does not name has nowhere
+                ## legitimate to come from.
+                problems.append(
+                    f"{label}: global key '{key}' is not part of the "
+                    f"project design (the design owns global:)")
+                continue
+            expected = design_global.get(key)
+            if key == "experiment_type":
+                ## The registry is case-insensitive and the editor writes the
+                ## canonical spelling, so a hand-written 'hedonic' under a
+                ## design saying 'Hedonic' names the same type.  Comparing the
+                ## strings made that a fatal deviation.
+                if experiment_types.get_experiment_type(value).name == \
+                        experiment_types.get_experiment_type(expected).name:
                     continue
-                expected = self.design_global.get(key)
-                if _normalize(value) != _normalize(expected):
-                    problems.append(
-                        f"{name}: global.{key} is {value!r} but the project "
-                        f"design requires {expected!r}")
-            ## Per-DFM overrides are checked here too, so a Project fails to
-            ## load rather than failing later inside one member's load.
-            for node in (self.configs[name].get("dfms") or []):
-                if not isinstance(node, dict):
-                    continue
-                over = node.get("params") or node.get("parameters") or {}
-                from .yaml_config import PHYSICAL_DFM_KEYS, _normalize_param_overrides
-                illegal = sorted(set(_normalize_param_overrides(over))
-                                 - PHYSICAL_DFM_KEYS)
-                if illegal:
-                    problems.append(
-                        f"{name}: DFM {node.get('id')} overrides params "
-                        f"{illegal}; only {sorted(PHYSICAL_DFM_KEYS)} may vary "
-                        f"per DFM inside a Project")
+            if _normalize(value) != _normalize(expected):
+                problems.append(
+                    f"{label}: global.{key} is {value!r} but the project "
+                    f"design requires {expected!r}")
+        ## Per-DFM overrides are checked here too, so a Project fails to load
+        ## rather than failing later inside one member's load.
+        for node in (config.get("dfms") or []):
+            if not isinstance(node, dict):
+                continue
+            over = node.get("params") or node.get("parameters") or {}
+            illegal = sorted(set(_normalize_param_overrides(over))
+                             - PHYSICAL_DFM_KEYS)
+            if illegal:
+                problems.append(
+                    f"{label}: DFM {node.get('id')} overrides params "
+                    f"{illegal}; only {sorted(PHYSICAL_DFM_KEYS)} may vary "
+                    f"per DFM inside a Project")
+        return problems
+
+    def design_problems_for(self, config: dict,
+                            label: str = "this config") -> list[str]:
+        """Why *config* would not be a conforming Member of this Project.
+
+        Empty list means it would be accepted.  Used before a config is copied
+        into a Member directory: a non-conforming Member stops the whole
+        Project loading, and undoing the copy afterwards is hand work.
+        """
+        if not isinstance(config, dict):
+            return [f"{label}: not a YAML mapping — this is not a "
+                    f"{CONFIG_FILENAME}."]
+        if "dfms" not in config and "DFMs" not in config:
+            return [f"{label}: no 'dfms:' section — this is not a "
+                    f"{CONFIG_FILENAME}."]
+        if self.design_global:
+            return self._design_problems(label, config, self.design_global)
+        ## Legacy Project (no design: section): the Members are the authority,
+        ## so a newcomer has to agree with the first of them.
+        if not self.member_names:
+            return []
+        reference = self._own_global(self.member_names[0])
+        own = dict(config.get("global") or {})
+        problems: list[str] = []
+        for key in DESIGN_KEYS:
+            if key not in reference and key not in own:
+                continue
+            if _normalize(own.get(key)) != _normalize(reference.get(key)):
+                problems.append(
+                    f"{label}: global.{key} is {own.get(key)!r} but "
+                    f"'{self.member_names[0]}' has {reference.get(key)!r}")
         return problems
 
     def _validate_agreement(self) -> list[str]:
@@ -609,6 +663,12 @@ class Project:
         Project".  Never overwrites an existing config — a member's chamber
         assignments are hand-made.
         """
+        if not name or name != os.path.basename(name) or name in (".", ".."):
+            ## The name is joined onto the Project directory, so a separator
+            ## in it writes a config (and a data/ folder) outside the Project.
+            raise ValueError(
+                f"'{name}' is not a member name — it must be a single folder "
+                f"name inside the Project")
         directory = self.member_dir(name)
         config_path = os.path.join(directory, CONFIG_FILENAME)
         if os.path.isfile(config_path):

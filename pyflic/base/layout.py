@@ -325,6 +325,37 @@ def members_in(project_dir) -> list[MemberLayout]:
     return found
 
 
+def initializable_dirs(project_dir) -> list[MemberLayout]:
+    """Immediate subdirectories of *project_dir* with no ``flic_config.yaml``.
+
+    The candidates for "initialize this existing folder as a Member".
+    :func:`members_in` answers the narrower question — what is already
+    experiment-*shaped* — and a folder somebody made and dropped a recording
+    into loose, or has not filled yet, is exactly the one that needs
+    initializing.  It must not be invisible for not being shaped like a Member
+    yet.
+
+    Output directories are excluded by name, as there; a directory that already
+    has a config is a Member and has nothing to initialize.
+    """
+    found: list[MemberLayout] = []
+    seen: set[str] = set()
+    for name in _entries(project_dir):
+        if name.startswith("."):
+            continue
+        path = os.path.join(str(project_dir), name)
+        if not os.path.isdir(path) or has_config(path):
+            continue
+        if name.lower() in _NOT_MEMBERS:
+            continue
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        found.append(classify(path))
+    return found
+
+
 # ---------------------------------------------------------------------------
 # Filing an Unfiled Recording
 # ---------------------------------------------------------------------------

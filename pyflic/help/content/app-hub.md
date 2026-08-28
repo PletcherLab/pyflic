@@ -75,17 +75,55 @@ The **Analyzed** column has three values, not two. **re-run needed** means the m
 `remove_chambers.csv` is newer than its saved analysis: those results describe a chamber
 population you have since said was wrong.
 
-- **Open a Project** / **New Project here** — choose an existing Project, or write a
-  `project.yaml` into a folder to make it one. Creating one opens the project editor, so a
-  new Project states its design from the start rather than acquiring one by accident.
-- **Project design…** — the `project.yaml` editor: the Project's name and notes, and the
-  **design** every member inherits — experiment type, detection parameters, well names,
-  the auto-filter constants and the design factors. Reads *(none set)* when the Project
-  has no `design:` block, which means its members are being validated against each other
-  instead of against an authority. See [Projects and members](concepts-project.md).
-- **File unfiled recordings** — moves DFM CSVs sitting at a member's root into its `data/`.
-- **Member configs…** — gives a folder holding DFM CSVs a config scaffolded from an
-  existing member. See [Projects and members](concepts-project.md).
+### Getting a Project open — four buttons, three cases
+
+There are three states a folder can be in before it is a Project, so there are three ways
+in, plus the editor for the one already open. They are disjoint: each refuses the other
+two's case and names the button that handles it.
+
+- **Open a Project…** — the folder exists *and* already has a `project.yaml`. Choosing the
+  one already open re-reads it from disk, so members added or analysed outside the Hub show
+  up: the picker is the reload.
+- **Create Project…** — nothing exists yet. Name the folder in the dialog's Directory field
+  (its browser will make one), fill in the design, and the `project.yaml` is written into
+  it.
+- **Initialize this folder…** — the folder exists, usually with experiment folders already
+  in it, but has no `project.yaml`. It keeps its own name, its subdirectories become the
+  members, and the design shown is **inferred from the first one that already has a
+  config**. This is the path for a study started before Projects existed. Point it at an
+  Experiment Directory and it offers to initialize the *parent* instead, so that experiment
+  becomes a member.
+- **Project design…** — reopens the editor on the loaded Project's `project.yaml`. Disabled
+  until one is open, because it edits the Project in hand. Reads *(none set)* when that
+  Project has no `design:` block, which means its members are being validated against each
+  other instead of against an authority.
+
+See [Projects and members](concepts-project.md).
+### Adding a member — the same three cases, one level down
+
+All three inherit the design, so all three stay disabled until a Project is open: a member
+with nothing to conform to is not a member.
+
+- **Create member…** — the member does not exist yet. Give it a name; the Hub makes the
+  folder and its `data/`, and scaffolds a `flic_config.yaml` from the design. It refuses a
+  name that already has a config, and refuses one whose folder already exists — that is the
+  next button's job. Then it offers the two ways to finish: **Edit config…** opens the
+  scaffold, **Copy config from…** replaces it with a config chosen from disk, *checked
+  against the design before it is written*. A copy that would not conform is not made at
+  all; the mismatches are listed and the scaffold stays.
+- **Initialize existing folder… (n)** — the folder is already in the Project but has no
+  config. It lists the candidates with what was found in each. Loose files are **filed
+  first** — the recording into `data/`, everything else into `extra_files/` — and only then
+  is the config scaffolded and the config editor opened, because a recording left at the
+  root would make the freshly configured member look empty. An ambiguous or unreadable
+  folder is refused rather than guessed at. The count is how many candidates there are.
+- **Member configs…** — the bulk view: every folder with its config status, so the missing
+  ones can be created and the existing ones opened without hunting through the file system.
+
+**Double-click a blocked row** to fix it in place: a row with no config offers to scaffold
+one and open it; an unfiled recording offers to file itself.
+
+- **File unfiled recordings** — the same filing in bulk, for every member that needs it.
 - **Analyze all** / **Combine** / **Create report** — the project-level actions.
 - **View reports** — opens the Project Report and each member's own report.
 - **Apply exclusion sheet…** — see [Excluding chambers in bulk](concepts-exclusions.md).

@@ -46,8 +46,10 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -419,17 +421,33 @@ class AnalysisHubWindow(QMainWindow):
                     subtitle="Members of one Project — different experiments "
                              "addressing one question, pooled by the Combined "
                              "Analysis.  Double-click a member to load it.")
-        row = QHBoxLayout()
+        ## Three ways in and the editor for the one that is open, in a 2×2
+        ## grid: the folder already is a Project / there is no folder yet /
+        ## the folder exists but has no project.yaml.  They are disjoint on
+        ## purpose — each refuses the other two's case and names the button
+        ## that handles it, so nobody has to guess which one their situation
+        ## is.  Mirrors PyTrackingAnalysis's Create/Load card.
         open_btn = ActionButton("Open a Project…", Category.LOAD, "open",
                                 primary=True)
+        open_btn.setToolTip(
+            "Open a folder that already holds a project.yaml.  Choosing the "
+            "one already open re-reads it from disk — members added or "
+            "analyzed outside the Hub show up.")
         open_btn.clicked.connect(self._choose_project)
-        row.addWidget(open_btn)
-        new_btn = ActionButton("New Project here…", Category.LOAD, "new")
+        new_btn = ActionButton("Create Project…", Category.LOAD, "new")
         new_btn.setToolTip(
-            "Write a project.yaml — its name, its notes, and the design every "
-            "member of it inherits.")
+            "Make a Project that does not exist yet: choose where it goes, "
+            "name it, and state the design every member inherits.  The folder "
+            "is created for you.")
         new_btn.clicked.connect(self._create_project)
-        row.addWidget(new_btn)
+        init_btn = ActionButton("Initialize this folder…", Category.LOAD,
+                                "project")
+        init_btn.setToolTip(
+            "Turn a folder you already have into a Project: it keeps its own "
+            "name, the experiment folders already inside it become its "
+            "members, and the design is inferred from the first one that has "
+            "a config.  This is the path for a study started before Projects.")
+        init_btn.clicked.connect(self._initialize_project_folder)
         self.design_btn = ActionButton("Project design…", Category.ANALYZE,
                                        "settings")
         self.design_btn.setToolTip(
@@ -438,9 +456,13 @@ class AnalysisHubWindow(QMainWindow):
             "factors.  Every member inherits it, and a member that "
             "contradicts it fails to load.")
         self.design_btn.clicked.connect(self._edit_project_design)
-        row.addWidget(self.design_btn)
-        row.addStretch(1)
-        card.add_body(row)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        for i, button in enumerate((open_btn, new_btn, init_btn,
+                                    self.design_btn)):
+            grid.addWidget(button, i // 2, i % 2)
+        card.add_body(grid)
 
         self.project_table = self._table(["Member", "DFMs", "Chambers",
                                           "Analyzed", "Report"])
@@ -451,9 +473,47 @@ class AnalysisHubWindow(QMainWindow):
         self.project_table.itemDoubleClicked.connect(self._project_row_activated)
         card.add_body(self.project_table)
 
-        ## Repairs, in the panel that lists what needs them (ADR-0009).  Both
-        ## stay visible and simply disable: a button that vanishes when there
-        ## is nothing to fix teaches nobody that it exists.
+        ## The same three cases as the Project above, one level down: the
+        ## member exists (the table), it does not exist at all (Create), or its
+        ## folder does but its flic_config.yaml does not (Initialize) — with
+        ## the bulk view for doing the third in quantity.  All three inherit
+        ## the design, so all three need a Project open.
+        card.add_section_label("Members")
+        self.create_member_btn = ActionButton("Create member…",
+                                              Category.LOAD, "new")
+        self.create_member_btn.setToolTip(
+            "Make a member folder that does not exist yet: it gets a data/ "
+            "folder and a flic_config.yaml scaffolded from the design, so the "
+            "design holds by construction.  Everything but the name and the "
+            "chamber assignments is inherited.")
+        self.create_member_btn.clicked.connect(self._create_member)
+        self.init_member_btn = ActionButton("Initialize existing folder…",
+                                            Category.LOAD, "project")
+        self.init_member_btn.setToolTip(
+            "Adopt a folder already sitting in the Project that has no "
+            "flic_config.yaml: any loose recording is filed into data/ (and "
+            "everything else loose into extra_files/), the config is "
+            "scaffolded from the design, and the config editor opens on it.")
+        self.init_member_btn.clicked.connect(self._initialize_member_folder)
+        self.scaffold_btn = ActionButton("Member configs…", Category.LOAD,
+                                         "config")
+        self.scaffold_btn.setToolTip(
+            "The bulk view: every folder in the Project with its config "
+            "status, so the missing ones can be created and the existing ones "
+            "opened without hunting through the file system.")
+        self.scaffold_btn.clicked.connect(self._open_member_configs)
+        member_grid = QGridLayout()
+        member_grid.setHorizontalSpacing(8)
+        member_grid.setVerticalSpacing(8)
+        for i, button in enumerate((self.create_member_btn,
+                                    self.init_member_btn, self.scaffold_btn)):
+            member_grid.addWidget(button, 0, i)
+            member_grid.setColumnStretch(i, 1)
+        card.add_body(member_grid)
+
+        ## The one repair that is safe in bulk keeps its own row, and stays
+        ## visible while disabled: a button that vanishes when there is
+        ## nothing to fix teaches nobody that it exists (ADR-0009).
         self.repair_row = QHBoxLayout()
         self.file_btn = ActionButton("File unfiled recordings",
                                      Category.TOOLS, "file")
@@ -464,14 +524,6 @@ class AnalysisHubWindow(QMainWindow):
             "overwritten.")
         self.file_btn.clicked.connect(self._file_unfiled)
         self.repair_row.addWidget(self.file_btn)
-        self.scaffold_btn = ActionButton("Member configs…", Category.LOAD,
-                                         "new")
-        self.scaffold_btn.setToolTip(
-            "Give a folder that holds DFM CSVs a design-conformant "
-            "flic_config.yaml, scaffolded from an existing member and "
-            "reconciled against the DFMs actually in its data/.")
-        self.scaffold_btn.clicked.connect(self._open_member_configs)
-        self.repair_row.addWidget(self.scaffold_btn)
         self.repair_row.addStretch(1)
         card.add_body(self.repair_row)
 
@@ -840,11 +892,29 @@ class AnalysisHubWindow(QMainWindow):
         edited silently becomes the standard.  Stating the design up front is
         the whole point of the level.
         """
-        path = QFileDialog.getExistingDirectory(
-            self, "Choose a folder to become a Project")
-        if not path:
-            return
-        self._run_design_editor(path)
+        ## No pre-picker: the dialog's own Directory field is where the new
+        ## folder is named, and its file browser will create one.  Asking for
+        ## an existing folder first is the *other* button's question.
+        start = self.project.project_directory if self.project is not None \
+            else (self._current_dir() or os.getcwd())
+        self._run_design_editor(start)
+
+    def _initialize_project_folder(self) -> None:
+        """The third way in: a folder that exists but has no project.yaml.
+
+        Open a Project wants the marker already there and Create Project makes
+        the folder itself, so this one is for the study that was under way
+        before Projects existed — its subdirectories become the members and
+        its design is read off the first of them that has a config.
+        """
+        ## Prefilling a folder that is already a Project would only earn the
+        ## dialog's "that one is a Project already" refusal.
+        start = ""
+        if self.project is None:
+            current = self._current_dir()
+            if current and not project_mod.is_project_dir(current):
+                start = current
+        self._run_design_editor(start, initialize=True)
 
     def _edit_project_design(self) -> None:
         directory = (self.project.project_directory
@@ -857,10 +927,12 @@ class AnalysisHubWindow(QMainWindow):
             return
         self._run_design_editor(directory)
 
-    def _run_design_editor(self, directory: str) -> None:
+    def _run_design_editor(self, directory: str, *,
+                           initialize: bool = False) -> None:
         from .design_editor import ProjectDesignDialog
 
-        dialog = ProjectDesignDialog(self, start_dir=directory)
+        dialog = ProjectDesignDialog(self, start_dir=directory,
+                                     initialize_existing=initialize)
         if not dialog.exec() or not dialog.saved_dir:
             return
         saved = dialog.saved_dir
@@ -1083,18 +1155,46 @@ class AnalysisHubWindow(QMainWindow):
         name = cell.text()
         blocked = {m.name: m for m in self.project.blocked_members()}
         if name in blocked:
-            member = blocked[name]
-            QMessageBox.information(
-                self, "Blocked member",
-                f"{member.name}: {member.detail or member.status}\n\n"
-                + ("Use 'File unfiled recordings' below to move its DFM CSVs "
-                   "into data/." if member.fix == "file"
-                   else "Use 'Member configs…' below to give it a config."
-                   if member.fix == "config"
-                   else "Nothing here can be fixed automatically."))
+            self._offer_blocked_fix(blocked[name])
             return
         self._load_member(name)
         self._open_panel("analyze")
+
+    def _offer_blocked_fix(self, member) -> None:
+        """Double-clicking a Blocked Member offers the repair, rather than
+        naming the button that would have done it.
+
+        The row is where somebody notices the problem, so it is where the fix
+        belongs; the buttons below stay, because a repair nobody discovers by
+        double-clicking is still one that has to be findable.
+        """
+        detail = f"{member.name}: {member.detail or member.status}"
+        if member.fix == "config":
+            answer = QMessageBox.question(
+                self, "Blocked member",
+                f"{detail}\n\nGive it a flic_config.yaml scaffolded from the "
+                "project design, and open it in the config editor?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            if self._scaffold_member(member.name) is None:
+                return
+            self._reload_project()
+            self._open_config_editor_on(
+                Path(self.project.member_dir(member.name))
+                / project_mod.CONFIG_FILENAME)
+            return
+        if member.fix == "file":
+            answer = QMessageBox.question(
+                self, "Blocked member",
+                f"{detail}\n\nFile its DFM CSVs into data/ now?  Everything "
+                "else loose goes to extra_files/; YAML files and "
+                "remove_chambers.csv stay where they are.")
+            if answer == QMessageBox.StandardButton.Yes:
+                self._file_unfiled()
+            return
+        QMessageBox.information(
+            self, "Blocked member",
+            f"{detail}\n\nNothing here can be fixed automatically.")
 
     # ------------------------------------------------------------------
     # Loading
@@ -1404,6 +1504,221 @@ class AnalysisHubWindow(QMainWindow):
                 self._log_issue(f"[file] {member.name}: {name} skipped — {why}")
         self._reload_project()
 
+    def _create_member(self) -> None:
+        """The member does not exist yet: make its folder and scaffold it.
+
+        Everything but the name and the chamber assignments comes from the
+        Project's design, so the only thing worth asking for is the name.
+        """
+        if not self._require_project():
+            return
+        project = self.project
+        name, ok = QInputDialog.getText(
+            self, "Create member", "New member folder name:")
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        directory = Path(project.member_dir(name))
+        if project_mod.is_experiment_dir(directory):
+            QMessageBox.warning(self, "Create member",
+                                f"'{name}' already exists and has a config.")
+            return
+        if directory.exists():
+            ## The other scenario, and it has its own button: initializing
+            ## files what is already in there instead of assuming an empty
+            ## folder.
+            QMessageBox.warning(
+                self, "Create member",
+                f"'{name}' already exists.\n\nUse 'Initialize existing "
+                "folder…' to give the folder you already have a config.")
+            return
+        if self._scaffold_member(name) is None:
+            return
+        self._reload_project()
+        ## The scaffold is a starting point, not the config: its chamber
+        ## assignments are blank (or the first member's).  Both ways of
+        ## finishing it are one click away rather than left to be found.
+        self._finish_new_member_config(name, directory)
+
+    def _scaffold_member(self, name: str) -> str | None:
+        """Scaffold *name*'s flic_config.yaml from the design, with its notes.
+
+        Shared by Create member, Initialize existing folder, and the blocked
+        row's offer — one place decides what a scaffolded member looks like.
+        """
+        if self.project is None:
+            return None
+        try:
+            path, notes = self.project.scaffold_member(name)
+        except Exception as err:  # noqa: BLE001
+            self._log_issue(f"[member] {name}: FAILED — {err}")
+            QMessageBox.warning(self, "Could not scaffold", f"{name}: {err}")
+            return None
+        self.log.append_line(f"[member] scaffolded {name}: {path}")
+        for note in notes:
+            self.log.append_line(f"[member]   {note}")
+        return path
+
+    def _finish_new_member_config(self, name: str, directory: Path) -> None:
+        """Offer the two ways to finish a just-created member's config.
+
+        Copying is the common case for the second and later members of a run —
+        the same plate layout as one that already works.  It is checked
+        against the design *before* it is written, and anything that would not
+        conform sends the user to the editor instead, scaffold still in place.
+        """
+        box = QMessageBox(self)
+        box.setWindowTitle("Create member")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(f"'{name}' is ready, with a flic_config.yaml scaffolded "
+                    "from the project design.")
+        box.setInformativeText(
+            "Edit it now, or replace it with a config copied from a member "
+            "that is already set up.")
+        edit_btn = box.addButton("Edit config…",
+                                 QMessageBox.ButtonRole.AcceptRole)
+        copy_btn = box.addButton("Copy config from…",
+                                 QMessageBox.ButtonRole.ActionRole)
+        box.setDefaultButton(edit_btn)
+        box.exec()
+        if box.clickedButton() is copy_btn \
+                and self._copy_member_config(name, directory):
+            self._reload_project()
+            return
+        ## Either they chose to edit, or the copy did not happen — and a
+        ## member left on its scaffold is one nobody has assigned chambers in.
+        self._open_config_editor_on(directory / project_mod.CONFIG_FILENAME)
+
+    def _copy_member_config(self, name: str, directory: Path) -> bool:
+        """Replace *name*'s scaffold with a config chosen from elsewhere.
+
+        True when the copy was made.  False means nothing was written — the
+        user cancelled, or the chosen file would not be a conforming member —
+        and the caller opens the editor on the scaffold that is still there.
+        """
+        import shutil
+
+        project = self.project
+        if project is None:
+            return False
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, f"Choose a flic_config.yaml to copy into '{name}'",
+            project.project_directory,
+            "FLIC config (flic_config.yaml);;YAML files (*.yaml *.yml);;"
+            "All files (*)")
+        if not chosen:
+            QMessageBox.information(
+                self, "Copy config",
+                "No file chosen — opening the scaffolded config in the config "
+                "editor instead.")
+            return False
+        source = Path(chosen)
+        target = directory / project_mod.CONFIG_FILENAME
+        if source.resolve() == target.resolve():
+            QMessageBox.warning(
+                self, "Copy config",
+                f"That is '{name}'s own config.\n\nOpening it in the config "
+                "editor instead.")
+            return False
+        import yaml as _yaml
+
+        try:
+            config = _yaml.safe_load(source.read_text(encoding="utf-8"))
+        except Exception as err:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "Copy config",
+                f"'{source.name}' could not be read:\n{err}\n\nOpening the "
+                "scaffolded config in the config editor instead.")
+            return False
+        ## Checked BEFORE it is written: a non-conforming member makes the
+        ## whole Project refuse to load, and the copy would then have to be
+        ## found and undone by hand.
+        problems = project.design_problems_for(config, source.name)
+        if problems:
+            QMessageBox.warning(
+                self, "Copy config",
+                f"'{source.name}' does not fit this Project's design:\n  - "
+                + "\n  - ".join(problems[:6])
+                + ("\n  - …" if len(problems) > 6 else "")
+                + "\n\nNothing was copied.  Opening the scaffolded config in "
+                "the config editor instead.")
+            return False
+        try:
+            shutil.copyfile(source, target)
+        except Exception as err:  # noqa: BLE001
+            QMessageBox.warning(self, "Copy config",
+                                f"Could not copy '{source.name}':\n{err}")
+            return False
+        self.log.append_line(f"[member] {name}: copied {source} to {target}")
+        ## Conforming is not the same as ready: a copied config carries the
+        ## other member's chamber assignments, which are about that plate.
+        self.log.append_line(
+            f"[member]   check {name}'s chamber → treatment assignments — "
+            f"they came from {source.parent.name}.")
+        return True
+
+    def _initialize_member_folder(self) -> None:
+        """The member's folder exists but its config does not: file what is
+        loose in it, scaffold the config, and open the editor.
+
+        Filing first, config second: the config editor's view of the member
+        (and every analysis after it) reads ``data/``, so a recording still
+        sitting at the root would make the freshly configured member look
+        empty.
+        """
+        if not self._require_project():
+            return
+        project = self.project
+        candidates = layout_mod.initializable_dirs(project.project_directory)
+        if not candidates:
+            QMessageBox.information(
+                self, "Initialize existing folder",
+                f"Every folder in '{project.name}' already has a "
+                "flic_config.yaml.\n\nUse 'Create member…' to make a new "
+                "one.")
+            return
+        labels = [f"{item.name}  —  {item.status or 'empty'}"
+                  for item in candidates]
+        choice, ok = QInputDialog.getItem(
+            self, "Initialize existing folder",
+            f"Folder to make a member of '{project.name}':", labels, 0, False)
+        if not ok or not choice:
+            return
+        item = candidates[labels.index(choice)]
+
+        ## Re-classify rather than trusting the listing: it was built before
+        ## the user had a chance to change anything on disk.
+        state = layout_mod.classify(item.directory)
+        if state.status in (layout_mod.AMBIGUOUS, layout_mod.UNREADABLE):
+            QMessageBox.warning(
+                self, "Initialize existing folder",
+                f"'{state.name}': {state.detail or state.status}\n\nThis one "
+                "has to be sorted out by hand.")
+            return
+        if state.status == layout_mod.UNFILED:
+            plan = layout_mod.file_recording(item.directory,
+                                             log=self.log.append_line)
+            if plan.refused:
+                ## A same-id collision or an unwritable target: stop before
+                ## writing the config, so a retry after the fix does the whole
+                ## job rather than half of it.
+                QMessageBox.warning(
+                    self, "Initialize existing folder",
+                    f"Could not file '{state.name}': {plan.refused}")
+                return
+            self.log.append_line(f"[file] {state.name}: {plan.describe()}")
+            for skipped, why in plan.skipped:
+                self.log.append_line(
+                    f"[file] {state.name}: {skipped} skipped — {why}")
+
+        if self._scaffold_member(item.name) is None:
+            return
+        self._reload_project()
+        ## The point of this button is the editor: a scaffolded config still
+        ## needs its chamber assignments before the member means anything.
+        self._open_config_editor_on(
+            Path(item.directory) / project_mod.CONFIG_FILENAME)
+
     def _open_member_configs(self) -> None:
         """The one design-aware scaffolding path (ADR-0009).
 
@@ -1655,13 +1970,41 @@ class AnalysisHubWindow(QMainWindow):
         return None
 
     def _open_config_editor(self) -> None:
-        from .config_editor import FLICConfigEditor
-
         directory = self._current_dir()
         config = os.path.join(directory, "flic_config.yaml") if directory else None
-        self._config_editor = FLICConfigEditor(
+        self._open_config_editor_on(
             config if config and os.path.isfile(config) else None)
-        self._config_editor.show()
+
+    def _open_config_editor_on(self, path) -> None:
+        """Open a config editor window on *path* and keep it alive.
+
+        Held in a list: one editor per member, so opening a second does not
+        drop the reference to the first and take its window (and any unsaved
+        edits) with it.
+        """
+        from .config_editor import FLICConfigEditor
+
+        editors = getattr(self, "_config_editors", None)
+        if editors is None:
+            editors = self._config_editors = []
+        ## Drop the ones the user has already closed, so the list does not
+        ## grow for the life of the session.  A window whose C++ side has gone
+        ## raises from isVisible() rather than answering.
+        kept = []
+        for old_editor in editors:
+            try:
+                if old_editor.isVisible():
+                    kept.append(old_editor)
+            except RuntimeError:
+                pass
+        editors[:] = kept
+        editor = FLICConfigEditor(str(path) if path is not None else None)
+        editors.append(editor)
+        self._config_editor = editor
+        editor.show()
+        editor.raise_()
+        editor.activateWindow()
+        return editor
 
     def _open_qc_viewer(self) -> None:
         if not self._require_experiment():
@@ -2006,11 +2349,13 @@ class AnalysisHubWindow(QMainWindow):
             for widget in (self.file_btn, self.scaffold_btn,
                            self.view_reports_btn, self.project_sheet_btn,
                            self.project_script, self.run_project_script_btn,
-                           self.edit_project_scripts_btn):
+                           self.edit_project_scripts_btn,
+                           self.create_member_btn, self.init_member_btn,
+                           ## The editor for the Project that is open, so it
+                           ## waits for one.  The two buttons beside it are
+                           ## the ways to make a Project when there is none.
+                           self.design_btn):
                 widget.setEnabled(False)
-            ## The design editor stays live with nothing open: it is how a
-            ## folder becomes a Project in the first place.
-            self.design_btn.setEnabled(True)
             self.design_btn.setText("Project design…")
             return
         project = self.project
@@ -2089,8 +2434,17 @@ class AnalysisHubWindow(QMainWindow):
         names += [n for n in BUILTIN_PROJECT_SCRIPTS if n not in names]
         self.project_script.addItems(names)
         for widget in (self.project_script, self.run_project_script_btn,
-                       self.edit_project_scripts_btn, self.design_btn):
+                       self.edit_project_scripts_btn, self.design_btn,
+                       self.create_member_btn, self.init_member_btn):
             widget.setEnabled(True)
+        ## Initializing needs a candidate: a folder in the Project with no
+        ## config of its own.  Disabled but present, so the button still says
+        ## the case exists.
+        pending_dirs = layout_mod.initializable_dirs(project.project_directory)
+        self.init_member_btn.setEnabled(bool(pending_dirs))
+        self.init_member_btn.setText(
+            f"Initialize existing folder… ({len(pending_dirs)})"
+            if pending_dirs else "Initialize existing folder…")
         ## A Project with no design: validates its members against each other
         ## rather than against an authority — say so on the button that fixes
         ## it, since nothing else in the Hub would ever mention it.
@@ -2415,33 +2769,9 @@ class MemberConfigsDialog(QDialog):
         chosen = self._selected()
         if chosen is None:
             return
-        from .config_editor import FLICConfigEditor
-
         path = os.path.join(self._project.member_dir(chosen[0]),
                             project_mod.CONFIG_FILENAME)
-        ## Held in a list: one editor per member, so editing a second member
-        ## does not drop the reference to the first and take its window (and
-        ## any unsaved edits) with it.
-        editors = getattr(self._hub, "_config_editors", None)
-        if editors is None:
-            editors = self._hub._config_editors = []
-        ## Drop the ones the user has already closed, so the list does not
-        ## grow for the life of the session.  A window whose C++ side has gone
-        ## raises from isVisible() rather than answering.
-        kept = []
-        for old in editors:
-            try:
-                if old.isVisible():
-                    kept.append(old)
-            except RuntimeError:
-                pass
-        editors[:] = kept
-        editor = FLICConfigEditor(path)
-        editors.append(editor)
-        self._hub._config_editor = editor
-        editor.show()
-        editor.raise_()
-        editor.activateWindow()
+        self._hub._open_config_editor_on(path)
 
 
 def main() -> None:

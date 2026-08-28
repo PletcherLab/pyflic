@@ -76,8 +76,13 @@ design:
 ## Writing the design
 
 **Project panel → Project design…** is the editor for `project.yaml` — the Project's name,
-its notes, and the whole design. **New Project here…** opens the same editor, so a Project
-states its design when it is created rather than acquiring one later by accident.
+its notes, and the whole design. **Create Project…** and **Initialize this folder…** open
+the same editor, so a Project states its design when it is created rather than acquiring
+one later by accident.
+
+Three ways in, because a folder can be in three states: it already has a `project.yaml`
+(**Open a Project…**), it does not exist yet (**Create Project…**), or it exists without one
+(**Initialize this folder…**). Each refuses the other two's case rather than guessing.
 
 The button reads **Project design… (none set)** for a Project with no `design:` block. Such
 a Project still loads, but it validates its members against *each other* instead of against
@@ -154,8 +159,23 @@ root those are configuration and declaration, never data. Nothing is ever overwr
 
 ## Adding a member
 
-Drop a folder with a `data/` directory of DFM CSVs into the Project. It appears in the
-Project panel as a blocked member with `no config`; **Member configs…** gives it one.
+The same three cases, one level down — **Create member…** when it does not exist yet,
+**Initialize existing folder…** when the folder is there but its config is not, and
+**Member configs…** for doing the second in bulk. Double-clicking a blocked row offers the
+same repair in place.
+
+Right after **Create member…** the Hub asks how to finish the config: **Edit config…**
+opens the scaffold, or **Copy config from…** replaces it with a config from a member that
+already works — the common case for the second and later members of a run. A copy is
+**checked against the design before it is written**, using the same test every member
+passes at load. That ordering is the point: a non-conforming member makes the whole Project
+refuse to load, and you would otherwise have to find and undo the copy by hand. A copy that
+conforms is still not necessarily *ready* — it carries the other member's chamber
+assignments, which are about that plate.
+
+**Initialize existing folder…** files what is loose before it configures anything: the DFM
+CSVs into `data/`, everything else into `extra_files/`. A config written first would
+describe a member whose data the loader cannot see.
 
 Scaffolding copies the `dfms:` block from the first existing member — members of one
 design almost always reuse the plate layout, and retyping forty-eight chamber assignments is

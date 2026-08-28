@@ -70,10 +70,19 @@ class ProjectDesignDialog(QDialog):
     """
 
     def __init__(self, parent: QWidget | None = None,
-                 start_dir: str | Path | None = None) -> None:
+                 start_dir: str | Path | None = None, *,
+                 initialize_existing: bool = False) -> None:
         super().__init__(parent)
+        ## Two of the three ways into a Project share this dialog: creating the
+        ## directory outright, and initializing one that is already on disk.
+        ## The design half is identical; only the directory and the name
+        ## differ, so the mode is a flag, not a subclass.
+        self._initialize = bool(initialize_existing)
         self.saved_dir: str | None = None
-        self.setWindowTitle("Project design")
+        #: Members whose own ``global:`` was removed on save so they inherit.
+        self.adopted: list[str] = []
+        self.setWindowTitle("Initialize existing folder"
+                            if self._initialize else "Project design")
         self.setMinimumSize(720, 620)
         ## Window-modal: the Hub behind it is what this edits, but a config
         ## editor or help window opened alongside must stay usable.
@@ -84,6 +93,11 @@ class ProjectDesignDialog(QDialog):
         outer.setSpacing(8)
 
         intro = QLabel(
+            "Turn a folder you already have into a Project: it keeps its own "
+            "name, its subdirectories become the Members, and the design below "
+            "is inferred from the first one that already has a config.  This "
+            "writes project.yaml into it."
+            if self._initialize else
             "A Project is a directory whose subdirectories are its Members — "
             "different experiments addressing one question.  The design below "
             "is written to project.yaml and is the <b>authority</b> for every "
@@ -151,6 +165,13 @@ class ProjectDesignDialog(QDialog):
 
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("defaults to the directory name")
+        if self._initialize:
+            ## The folder IS the Project, so it names it — shown rather than
+            ## hidden, so what it will be called is not a surprise.
+            self.name_edit.setReadOnly(True)
+            self.name_edit.setToolTip(
+                "The chosen folder's own name — initializing in place does "
+                "not rename it.")
         form.addRow("Project name:", self.name_edit)
 
         self.notes_edit = QPlainTextEdit()
@@ -305,10 +326,59 @@ class ProjectDesignDialog(QDialog):
 
     def _browse(self) -> None:
         chosen = QFileDialog.getExistingDirectory(
-            self, "Choose (or create) the Project directory",
+            self,
+            "Choose the folder to initialize" if self._initialize
+            else "Choose (or create) the Project directory",
             self.dir_edit.text() or os.getcwd())
         if chosen:
             self.dir_edit.setText(chosen)
+
+    def _resolve_existing_directory(self, directory: str) -> str | None:
+        """The folder to initialize, or None after explaining why not.
+
+        The three ways into a Project stay disjoint: this one is for a folder
+        that exists and has no project.yaml.  A missing folder is Create
+        Project's job; one that already has a project.yaml is Open a
+        Project's.
+        """
+        path = os.path.abspath(os.path.expanduser(directory))
+        name = os.path.basename(os.path.normpath(path))
+        if not os.path.isdir(path):
+            self._warn(
+                f"'{directory}' is not a folder on disk.\n\nInitializing "
+                "works on a folder you already have; use 'Create Project…' to "
+                "make a new one.")
+            return None
+        if project_mod.is_project_dir(path):
+            QMessageBox.information(
+                self, self.windowTitle(),
+                f"'{name}' already has a {project_mod.PROJECT_FILENAME} — it "
+                "is a Project already.\n\nUse 'Open a Project…' to work in "
+                "it, or 'Project design…' to change its design.")
+            return None
+        if project_mod.is_experiment_dir(path):
+            parent = os.path.dirname(os.path.normpath(path))
+            answer = QMessageBox.question(
+                self, self.windowTitle(),
+                f"'{name}' is an Experiment Directory, not a Project.\n\n"
+                f"Initialize '{os.path.basename(parent)}' instead, so "
+                f"'{name}' becomes one of its members?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+            if project_mod.is_project_dir(parent):
+                QMessageBox.information(
+                    self, self.windowTitle(),
+                    f"'{os.path.basename(parent)}' is already a Project — use "
+                    "'Open a Project…' to work in it.")
+                return None
+            ## Show the retarget without re-running the prefill: the design in
+            ## the widgets may already have been edited by hand.
+            self.dir_edit.blockSignals(True)
+            self.dir_edit.setText(parent)
+            self.dir_edit.blockSignals(False)
+            self.name_edit.setText(os.path.basename(parent))
+            path = parent
+        return path
 
     # ------------------------------------------------------------------
     # Loading an existing project.yaml
@@ -317,7 +387,8 @@ class ProjectDesignDialog(QDialog):
     def _prefill_from_dir(self) -> None:
         directory = self.dir_edit.text().strip()
         if not directory or not os.path.isdir(directory):
-            self.setWindowTitle("New Project")
+            self.setWindowTitle("Initialize existing folder"
+                                if self._initialize else "New Project")
             return
         if project_mod.is_project_dir(directory):
             try:
@@ -337,7 +408,11 @@ class ProjectDesignDialog(QDialog):
         ## Not a Project yet: a folder of experiments about to become one
         ## still has a design — read it off the first member so the dialog
         ## opens on what is already there rather than on defaults.
-        self.setWindowTitle("New Project")
+        self.setWindowTitle("Initialize existing folder" if self._initialize
+                            else "New Project")
+        if self._initialize:
+            self.name_edit.setText(os.path.basename(
+                os.path.normpath(directory)))
         inferred = self._design_from_members(directory)
         if inferred:
             self._load_design(inferred)
@@ -472,9 +547,15 @@ class ProjectDesignDialog(QDialog):
     def _save(self) -> None:
         directory = self.dir_edit.text().strip()
         if not directory:
-            self._warn("Choose the Project directory.")
+            self._warn("Choose the folder to initialize." if self._initialize
+                       else "Choose the Project directory.")
             return
-        if project_mod.is_experiment_dir(directory):
+        if self._initialize:
+            resolved = self._resolve_existing_directory(directory)
+            if resolved is None:
+                return
+            directory = resolved
+        elif project_mod.is_experiment_dir(directory):
             ## A project.yaml beside a flic_config.yaml makes a Project whose
             ## only member would be its own root — zero members and nothing to
             ## pool.  The Project belongs on the parent.
@@ -490,7 +571,11 @@ class ProjectDesignDialog(QDialog):
             os.makedirs(directory, exist_ok=True)
             project_mod.create_project_file(
                 directory,
-                self.name_edit.text().strip() or None,
+                ## In place: the folder names the Project, even when the
+                ## confirmation above moved the target up to the parent.
+                os.path.basename(os.path.normpath(directory))
+                if self._initialize
+                else self.name_edit.text().strip() or None,
                 self.notes_edit.toPlainText().strip(),
                 design=design)
         except Exception as err:  # noqa: BLE001
