@@ -304,6 +304,14 @@ class PlotEditorWindow(QMainWindow):
             f"{self.project.name} — {len(self.project.member_names)} "
             f"member(s), {self.project.chamber_layout}")
         self._reload_lists()
+        ## Baseline for the close-time save, taken through the same
+        ## normalization the close performs (widget round-trip + pruning the
+        ## specs that selection lazily created for unchecked plots): closing
+        ## an editor nobody changed must not rewrite the file.
+        self._apply_content()
+        self._apply_style()
+        self._prune_unchecked_plots()
+        self._opened_payload = self._specs_payload()
 
     def _choose_project(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Choose a Project")
@@ -584,11 +592,44 @@ class PlotEditorWindow(QMainWindow):
         self.preview_label.setPixmap(pixmap)
         self.preview_label.setText("")
 
+    def _specs_payload(self) -> str:
+        """The state a save would write, as a comparable string."""
+        import yaml as _yaml
+
+        return _yaml.safe_dump({
+            "default_style": self.specs.default_style,
+            "styles": {n: s.to_dict() for n, s in self.specs.styles.items()},
+            "plots": {i: p.to_dict() for i, p in self.specs.plots.items()},
+        }, sort_keys=True)
+
+    def _prune_unchecked_plots(self) -> None:
+        """Drop specs for plots the list shows unchecked.
+
+        The check state is the membership authority — unchecking pops the
+        spec — but merely *selecting* a row lazily creates one so the form
+        has something to edit.  Saving those would define plots nobody
+        checked, and they would come back checked on the next open.  Specs
+        for plots the current layout does not list are kept untouched.
+        """
+        listed: set[str] = set()
+        checked: set[str] = set()
+        for i in range(self.plot_list.count()):
+            item = self.plot_list.item(i)
+            plot_id = item.data(Qt.ItemDataRole.UserRole)
+            listed.add(plot_id)
+            if item.checkState() == Qt.CheckState.Checked:
+                checked.add(plot_id)
+        for plot_id in list(self.specs.plots):
+            if plot_id in listed and plot_id not in checked:
+                self.specs.plots.pop(plot_id)
+
     def _save_specs(self) -> None:
         if self.project is None:
             return
+        self._prune_unchecked_plots()
         path = pubfigures.save_project_specs(
             self.project.project_directory, self.specs)
+        self._opened_payload = self._specs_payload()
         QMessageBox.information(self, "Saved", f"Wrote {path}")
 
     def _render(self) -> None:
@@ -600,6 +641,32 @@ class PlotEditorWindow(QMainWindow):
             self, "Figures rendered",
             f"Wrote {len(written)} figure(s) into "
             f"{os.path.join(self.project.project_directory, 'figures')}")
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Closing flushes the full state — every named style and every
+        defined plot's spec — into plot_specs.yaml, so nothing designed in
+        the dialog is lost to a forgotten Save (mirrors PyTrackingAnalysis's
+        Plot Editor).
+
+        Two subtleties.  Text still sitting in a line edit has not commited —
+        ``editingFinished`` fires on focus-out, and closeEvent arrives before
+        any — so the widget handlers run first.  And an editor nobody changed
+        writes nothing: a save round-trips the file through the spec model,
+        which prunes keys it does not know, so a look-and-close must not
+        rewrite the yaml.
+        """
+        if self.project is not None:
+            self._apply_content()
+            self._apply_style()
+            self._prune_unchecked_plots()
+            if self._specs_payload() != getattr(self, "_opened_payload", None):
+                try:
+                    pubfigures.save_project_specs(
+                        self.project.project_directory, self.specs)
+                except Exception as err:  # noqa: BLE001
+                    QMessageBox.warning(
+                        self, "Could not save plot_specs.yaml", str(err))
+        super().closeEvent(event)
 
 
 def main() -> None:

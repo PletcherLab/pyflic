@@ -16,8 +16,8 @@ mechanical rather than archaeological.
 which introduced the ledger; pyflic follows the convention, it does not define
 it.
 
-**Upstream baseline:** `PyTrackingAnalysis@8d71a42` (2026-08-24), raised from the
-pre-recursive-discovery state by the pass below.
+**Upstream baseline:** `PyTrackingAnalysis@067e38e` (2026-08-30), raised from
+`8d71a42` by the ribbon pass below.
 
 | File here | Upstream path | Relationship |
 |---|---|---|
@@ -33,6 +33,29 @@ pre-recursive-discovery state by the pass below.
 | `pyflic/base/exclusion_sheet.py` | `pytrackinganalysis/removals.py` (sheet half only) | **reimplemented** on the same contract — `find_sheet` / `read_sheet` / `plan_sheet` / `apply_sheet`, standing-declaration-wins, conflict reporting, root-escape refusal. The unit is a chamber, and the target is the Member's existing `remove_chambers.csv` rather than a new sidecar |
 | `pyflic/base/hub.py` | `pytrackinganalysis/apps/hub.py` | **structure ported, body rewritten** — same tile strip and panel model, FLIC domain. Now also the cached recursive scan, the batch table with keys/status/red rows/context menu/check column, card dimming, always-lit Batch and Project tiles, tab suppression, stream logging, "View reports", project-wide YAML validation, and the panel-flow changes (double-click a Batch row → Project, double-click a member → Analyze) |
 | `pyflic/base/ai/__init__.py` | `pytrackinganalysis/batch.py` (narrative half) | **reimplemented** — `generate_batch_narrative` synthesizes the Projects' own narratives into one at the Batch root, on the same "synthesis, not pooling" contract |
+
+### The 2026-08-30 pass (the ribbon)
+
+Ported (ADR-0012 here, mirroring upstream's ADR-0012 and its 2026-08-29
+follow-ups): the two-row ribbon — wide container tiles (Batch · Project ·
+Experiment, `StatusTile(wide=True)` at 1.75×¾) over a collapsible sub-strip of
+compact title-only subtiles (Analyze · Plots · Scripts · AI, 38px, status in
+the tooltip) that the Experiment group tile expands; the group tile as the one
+dimmed-*and*-inert tile (`set_clickable`); one-thing-open-at-a-time between the
+group and a container panel; narrow button-column subtile panels; the
+three-card Project panel (Create/Load with the three disjoint ways in plus
+full-width Validate YAMLs and the always-visible project summary, Experiments,
+Analysis built hidden until a Project opens); the Project-level
+publication-figure buttons on the Analysis card rather than the Plots panel;
+the tile/card color pairing (Batch=LOAD blue, Project=neutral,
+Experiment=QC red) with `Category.AI` and upstream's surface palette; the Plot
+Editor flushing every style and spec to `plot_specs.yaml` on close (skipping
+the write when nothing changed — a look-and-close must not rewrite the file);
+and the default `batch` Project Script carrying its explanatory `notes:`, with
+its steps spelling out the whole unattended run (analyze → pool → report →
+figures) because pyflic's `project_report`, unlike upstream's, does not analyze
+members itself.  Tools keeps its chip and panel for now — upstream removed
+theirs, and this one is expected to follow.
 
 ### The 2026-08-24 pass
 

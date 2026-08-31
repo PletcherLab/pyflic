@@ -23,6 +23,7 @@ class Category(str, Enum):
     PLOTS = "plots"
     QC = "qc"
     SCRIPTS = "scripts"
+    AI = "ai"
     TOOLS = "tools"
     NEUTRAL = "neutral"
 
@@ -42,6 +43,7 @@ PALETTE: dict[Category, CategoryColors] = {
     Category.PLOTS:   CategoryColors("#ea580c", "#fb923c"),
     Category.QC:      CategoryColors("#dc2626", "#f87171"),
     Category.SCRIPTS: CategoryColors("#9333ea", "#a855f7"),
+    Category.AI:      CategoryColors("#0d9488", "#2dd4bf"),
     Category.TOOLS:   CategoryColors("#475569", "#94a3b8"),
     Category.NEUTRAL: CategoryColors("#64748b", "#94a3b8"),
 }
@@ -69,21 +71,23 @@ def category_color(category: Category, mode: ThemeMode | None = None) -> str:
 #: Chrome surfaces for the tile strip, tiles, and anchored panels.  Kept here
 #: rather than derived from the Qt palette so the strip reads as one deliberate
 #: band in both themes instead of inheriting whatever qdarktheme picks.
+## Values mirror PyTrackingAnalysis's ui/theme.py so the two Hubs read as one
+## family of apps.
 _SURFACES: dict[str, dict[str, str]] = {
     "light": {
-        "band":   "#eef2f7",
+        "band":   "#f4f5f7",
         "base":   "#ffffff",
-        "hover":  "#f8fafc",
-        "border": "#cbd5e1",
+        "hover":  "#e4e7ea",
+        "border": "#c4c8cc",
         "text":   "#0f172a",
         "muted":  "#64748b",
     },
     "dark": {
-        "band":   "#161b22",
-        "base":   "#1c2128",
-        "hover":  "#22272e",
-        "border": "#30363d",
-        "text":   "#e6edf3",
+        "band":   "#26292d",
+        "base":   "#1f2226",
+        "hover":  "#33383e",
+        "border": "#3f444b",
+        "text":   "#e1e5e9",
         "muted":  "#8b949e",
     },
 }

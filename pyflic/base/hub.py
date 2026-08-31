@@ -1,15 +1,20 @@
-"""The pyflic Analysis Hub — a tile strip over a full-width output area.
+"""The pyflic Analysis Hub — a two-row tile ribbon over a full-width output
+area.
 
-Replaces the pre-overhaul card column.  The strip across the top is
-Batch · Project · Analyze · Plots · Scripts · AI · Tools plus a status readout
-filling the remaining width; every control lives in a tile's anchored panel,
-one open at a time.
+Mirrors PyTrackingAnalysis's Hub.  The top strip is the containment hierarchy
+read left to right — Batch · Project · Experiment — as wide tiles, plus Tools
+and a status readout filling the remaining width.  The Experiment tile opens
+no panel of its own: it expands a sub-strip of four compact, title-only
+subtiles — Analyze · Plots · Scripts · AI — the tools that act on the loaded
+member, enabled only while one is loaded.  Every control lives in a tile's
+anchored panel, one open at a time.
 
 Two rules shape it:
 
 * **Tiles never move or hide.**  An inapplicable tile dims and its panel holds
   the control that fixes the missing state, so the strip is a stable map rather
-  than a shifting menu.
+  than a shifting menu.  The one exception is the Experiment group tile, which
+  opens no panel: with nothing loaded it is inert as well as dimmed.
 * **Project-first.**  The selection names the working container — a Batch or a
   Project — and an experiment is loaded *only* by double-clicking its row in the
   Project panel's members table.  There is no Load tile: the load options
@@ -82,16 +87,32 @@ from .ui import settings as ui_settings
 from .ui.tiles import TILE_HEIGHT, ClickAwayFilter, StatusReadout, StatusTile, TilePanel
 from .ui.widgets import ActionButton, Card
 
-#: (key, title, icon, category, panel width).  Order is strip order.
+#: Top strip: (key, title, icon, category, panel width).  Order is strip
+#: order — the containment hierarchy reads left to right (a Batch holds
+#: Projects, a Project holds members, and the loaded member holds the tools
+#: that act on it), then Tools.  Three container levels want three colors:
+#: Batch tints LOAD-blue, Project stays neutral, Experiment is QC-red —
+#: otherwise unused on the ribbon.  The Experiment tile opens no panel
+#: (width 0): it expands the sub-strip.
 TILE_SPECS: list[tuple[str, str, str, Category, int]] = [
-    ("batch",   "Batch",   "batch",    Category.NEUTRAL, 640),
-    ("project", "Project", "project",  Category.LOAD,    720),
-    ("analyze", "Analyze", "analyze",  Category.ANALYZE, 520),
-    ("plots",   "Plots",   "plots",    Category.PLOTS,   520),
-    ("scripts", "Scripts", "scripts",  Category.SCRIPTS, 560),
-    ("ai",      "AI",      "ai",       Category.TOOLS,   480),
-    ("tools",   "Tools",   "tools",    Category.TOOLS,   480),
+    ("batch",      "Batch",      "batch",   Category.LOAD,    620),
+    ("project",    "Project",    "project", Category.NEUTRAL, 640),
+    ("experiment", "Experiment", "member",  Category.QC,      0),
+    ("tools",      "Tools",      "tools",   Category.TOOLS,   480),
 ]
+
+#: The Experiment sub-strip: compact, title-only subtiles for the tools that
+#: act on the loaded member.  Their panels are deliberately narrow — a column
+#: of buttons, and a button only needs its label.
+SUBTILE_SPECS: list[tuple[str, str, str, Category, int]] = [
+    ("analyze", "Analyze", "analyze", Category.ANALYZE, 310),
+    ("plots",   "Plots",   "plots",   Category.PLOTS,   300),
+    ("scripts", "Scripts", "scripts", Category.SCRIPTS, 390),
+    ("ai",      "AI",      "ai",      Category.AI,      300),
+]
+
+#: The subtile keys, for "is this an experiment-level panel" checks.
+EXPERIMENT_SUBTILES = tuple(spec[0] for spec in SUBTILE_SPECS)
 
 
 # ---------------------------------------------------------------------------
@@ -179,24 +200,49 @@ class AnalysisHubWindow(QMainWindow):
         root.setContentsMargins(10, 8, 10, 10)
         root.setSpacing(8)
 
-        # ---- strip ----------------------------------------------------
-        strip_host = QWidget()
-        self._strip = QHBoxLayout(strip_host)
+        # ---- ribbon: strip + collapsible sub-strip --------------------
+        ## Distinct chips with a hairline seam, mirroring PyTrackingAnalysis:
+        ## every tile keeps its own rounded corners and the 2px spacing is the
+        ## seam.
+        self._strip_host = QWidget()
+        self._strip = QHBoxLayout(self._strip_host)
         self._strip.setContentsMargins(0, 0, 0, 0)
         self._strip.setSpacing(2)
-        strip_host.setFixedHeight(TILE_HEIGHT + 2)
+        self._strip_host.setFixedHeight(TILE_HEIGHT + 2)
         self.tiles: dict[str, StatusTile] = {}
-        for index, (key, title, icon_name, category, _w) in enumerate(TILE_SPECS):
-            tile = StatusTile(key, title, icon_name, category)
-            tile.clicked.connect(self._on_tile_clicked)
-            left = 5 if index == 0 else 0
-            right = 0
-            tile.set_rounding(left, right)
+        for key, title, icon_name, category, _w in TILE_SPECS:
+            ## Container tiles are wide; Tools stays a regular chip (it will
+            ## probably go away, as it did in PyTrackingAnalysis).
+            tile = StatusTile(key, title, icon_name, category,
+                              wide=(key != "tools"))
+            if key == "experiment":
+                ## The Experiment tile opens no panel: it expands the
+                ## sub-strip of experiment-level subtiles.
+                tile.clicked.connect(lambda _k: self._toggle_experiment())
+            else:
+                tile.clicked.connect(self._on_tile_clicked)
             self._strip.addWidget(tile)
             self.tiles[key] = tile
         self.readout = StatusReadout()
         self._strip.addWidget(self.readout, 1)
-        root.addWidget(strip_host)
+        root.addWidget(self._strip_host)
+
+        ## The sub-strip is a second, shorter row of title-only chips that the
+        ## Experiment tile expands and collapses.  Hidden, it takes no space.
+        self._experiment_expanded = False
+        self._sub_strip_host = QWidget()
+        self._sub_strip = QHBoxLayout(self._sub_strip_host)
+        self._sub_strip.setContentsMargins(0, 0, 0, 0)
+        self._sub_strip.setSpacing(2)
+        self._sub_strip_host.setFixedHeight(StatusTile.COMPACT_HEIGHT + 2)
+        for key, title, icon_name, category, _w in SUBTILE_SPECS:
+            tile = StatusTile(key, title, icon_name, category, compact=True)
+            tile.clicked.connect(self._on_tile_clicked)
+            self._sub_strip.addWidget(tile)
+            self.tiles[key] = tile
+        self._sub_strip.addStretch(1)
+        self._sub_strip_host.hide()
+        root.addWidget(self._sub_strip_host)
 
         # ---- output / plots -------------------------------------------
         ## Two logs, not one: a Batch Run's ordinary output runs to thousands
@@ -210,9 +256,11 @@ class AnalysisHubWindow(QMainWindow):
         root.addWidget(splitter, 1)
 
         # ---- panels ----------------------------------------------------
+        ## Every tile except the Experiment group tile owns a panel.
         self.panels: dict[str, TilePanel] = {}
-        for key, _t, _i, _c, width in TILE_SPECS:
-            self.panels[key] = TilePanel(key, width, central)
+        for key, _t, _i, _c, width in TILE_SPECS + SUBTILE_SPECS:
+            if width:
+                self.panels[key] = TilePanel(key, width, central)
         self._build_panels()
         self._install_panel_help()
         for panel in self.panels.values():
@@ -294,7 +342,7 @@ class AnalysisHubWindow(QMainWindow):
         A Batch Run executes one designated Project Script in every checked
         Project — there is no third script level, and a Batch never pools
         results across Projects."""
-        card = Card("Batch", Category.NEUTRAL, icon_name="batch",
+        card = Card("Batch", Category.LOAD, icon_name="batch",
                     subtitle="Run a Project Script in every Project of this "
                              "folder.  Projects are found recursively, so "
                              "grouping folders are transparent.")
@@ -417,38 +465,46 @@ class AnalysisHubWindow(QMainWindow):
         self.panels["batch"].add_card(card)
 
     def _build_project_panel(self) -> None:
-        card = Card("Project", Category.LOAD, icon_name="project",
-                    subtitle="Members of one Project — different experiments "
-                             "addressing one question, pooled by the Combined "
-                             "Analysis.  Double-click a member to load it.")
+        """Three sections, top to bottom, mirroring PyTrackingAnalysis's
+        Project panel: project identity (Create/Load), the members
+        (Experiments), then what to do with them (Analysis)."""
+        self._build_project_create_card()
+        self._build_project_experiments_card()
+        self._build_project_analysis_card()
+
+    def _build_project_create_card(self) -> None:
+        card = Card("Create/Load", Category.NEUTRAL, icon_name="project",
+                    subtitle="Open a Project directory and edit its "
+                             "project.yaml.")
+        self.project_create_card = card
         ## Three ways in and the editor for the one that is open, in a 2×2
         ## grid: the folder already is a Project / there is no folder yet /
         ## the folder exists but has no project.yaml.  They are disjoint on
         ## purpose — each refuses the other two's case and names the button
         ## that handles it, so nobody has to guess which one their situation
-        ## is.  Mirrors PyTrackingAnalysis's Create/Load card.
-        open_btn = ActionButton("Open a Project…", Category.LOAD, "open",
+        ## is.
+        open_btn = ActionButton("Open Project", Category.NEUTRAL, "browse",
                                 primary=True)
         open_btn.setToolTip(
             "Open a folder that already holds a project.yaml.  Choosing the "
             "one already open re-reads it from disk — members added or "
             "analyzed outside the Hub show up.")
         open_btn.clicked.connect(self._choose_project)
-        new_btn = ActionButton("Create Project…", Category.LOAD, "new")
+        new_btn = ActionButton("Create project…", Category.NEUTRAL, "new")
         new_btn.setToolTip(
             "Make a Project that does not exist yet: choose where it goes, "
             "name it, and state the design every member inherits.  The folder "
             "is created for you.")
         new_btn.clicked.connect(self._create_project)
-        init_btn = ActionButton("Initialize this folder…", Category.LOAD,
-                                "project")
+        init_btn = ActionButton("Initialize existing directory…",
+                                Category.NEUTRAL, "project")
         init_btn.setToolTip(
             "Turn a folder you already have into a Project: it keeps its own "
             "name, the experiment folders already inside it become its "
             "members, and the design is inferred from the first one that has "
             "a config.  This is the path for a study started before Projects.")
         init_btn.clicked.connect(self._initialize_project_folder)
-        self.design_btn = ActionButton("Project design…", Category.ANALYZE,
+        self.design_btn = ActionButton("Project design…", Category.NEUTRAL,
                                        "settings")
         self.design_btn.setToolTip(
             "Edit the design in project.yaml: experiment type, detection "
@@ -462,8 +518,36 @@ class AnalysisHubWindow(QMainWindow):
         for i, button in enumerate((open_btn, new_btn, init_btn,
                                     self.design_btn)):
             grid.addWidget(button, i // 2, i % 2)
+            grid.setColumnStretch(i % 2, 1)
+        ## Not a fifth way into a Project — the check you run over the one
+        ## that is open, so it spans its own full-width row.
+        validate_btn = ActionButton("Validate YAMLs", Category.NEUTRAL, "lint")
+        validate_btn.setToolTip(
+            "Check this Project's project.yaml and every member's "
+            "flic_config.yaml — parse errors and semantic problems alike.  "
+            "Results go to the log.  (With no Project open, the current "
+            "selection is checked instead.)")
+        ## Explicitly the Project's scope: the Tools-panel validator follows
+        ## the selection, which prefers the loaded member's folder — a
+        ## Project-panel button that skipped every other member would claim a
+        ## validation it never ran.
+        validate_btn.clicked.connect(
+            lambda: self._validate_yaml(
+                self.project.project_directory if self.project else None))
+        grid.addWidget(validate_btn, 2, 0, 1, 2)
         card.add_body(grid)
 
+        ## The loaded-project description lives in this always-visible card so
+        ## a Project-load failure is readable even while the sections below
+        ## stay down.
+        self.project_summary = QLabel("")
+        self.project_summary.setWordWrap(True)
+        card.add_body(self.project_summary)
+        self.panels["project"].add_card(card)
+
+    def _build_project_experiments_card(self) -> None:
+        card = Card("Experiments", Category.NEUTRAL, icon_name="member")
+        self.project_experiments_card = card
         self.project_table = self._table(["Member", "DFMs", "Chambers",
                                           "Analyzed", "Report"])
         self.project_table.setToolTip(
@@ -472,30 +556,33 @@ class AnalysisHubWindow(QMainWindow):
             "tooltip and the repair buttons below clear it.")
         self.project_table.itemDoubleClicked.connect(self._project_row_activated)
         card.add_body(self.project_table)
+        hint = QLabel("Double-click a member to load it as the current "
+                      "experiment.")
+        hint.setStyleSheet("color: palette(mid); font-style: italic;")
+        card.add_body(hint)
 
-        ## The same three cases as the Project above, one level down: the
-        ## member exists (the table), it does not exist at all (Create), or its
-        ## folder does but its flic_config.yaml does not (Initialize) — with
-        ## the bulk view for doing the third in quantity.  All three inherit
-        ## the design, so all three need a Project open.
-        card.add_section_label("Members")
+        ## The same three cases as the Project one level up: the member exists
+        ## (the table), it does not exist at all (Create), or its folder does
+        ## but its flic_config.yaml does not (Initialize) — with the bulk view
+        ## for doing the third in quantity.  All three inherit the design, so
+        ## all three need a Project open.
         self.create_member_btn = ActionButton("Create member…",
-                                              Category.LOAD, "new")
+                                              Category.NEUTRAL, "new")
         self.create_member_btn.setToolTip(
             "Make a member folder that does not exist yet: it gets a data/ "
             "folder and a flic_config.yaml scaffolded from the design, so the "
             "design holds by construction.  Everything but the name and the "
             "chamber assignments is inherited.")
         self.create_member_btn.clicked.connect(self._create_member)
-        self.init_member_btn = ActionButton("Initialize existing folder…",
-                                            Category.LOAD, "project")
+        self.init_member_btn = ActionButton("Initialize existing directory…",
+                                            Category.NEUTRAL, "project")
         self.init_member_btn.setToolTip(
             "Adopt a folder already sitting in the Project that has no "
             "flic_config.yaml: any loose recording is filed into data/ (and "
             "everything else loose into extra_files/), the config is "
             "scaffolded from the design, and the config editor opens on it.")
         self.init_member_btn.clicked.connect(self._initialize_member_folder)
-        self.scaffold_btn = ActionButton("Member configs…", Category.LOAD,
+        self.scaffold_btn = ActionButton("Member configs…", Category.NEUTRAL,
                                          "config")
         self.scaffold_btn.setToolTip(
             "The bulk view: every folder in the Project with its config "
@@ -539,28 +626,40 @@ class AnalysisHubWindow(QMainWindow):
         opts.addWidget(self.spin_workers)
         opts.addStretch(1)
         card.add_body(opts)
+        self.panels["project"].add_card(card)
 
-        card.add_section_label("Project actions")
-        acts = QHBoxLayout()
+    def _build_project_analysis_card(self) -> None:
+        """What to do with the members: pool, report, publication figures,
+        and the Project Scripts that do it unattended.
+
+        Built hidden — the whole card appears only when a Project is open,
+        unlike the Experiments card, which stays visible-but-gated so an empty
+        Project still shows where members will appear.
+        """
+        card = Card("Analysis", Category.NEUTRAL, icon_name="analyze")
+        self.project_analysis_card = card
+        ## In the order the work happens: analyze the members, pool them,
+        ## build the report — then review what came out and shape the figures.
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        buttons: list[ActionButton] = []
         for label, icon_name, handler in (
             ("Analyze all", "basic", self._run_all_members),
             ("Combine", "csv", self._build_combined),
             ("Create report", "pdf", self._project_report),
         ):
-            button = ActionButton(label, Category.ANALYZE, icon_name)
+            button = ActionButton(label, Category.NEUTRAL, icon_name)
             button.clicked.connect(handler)
-            acts.addWidget(button)
-        card.add_body(acts)
-
-        views = QHBoxLayout()
-        self.view_reports_btn = ActionButton("View reports", Category.ANALYZE,
+            buttons.append(button)
+        self.view_reports_btn = ActionButton("View reports", Category.NEUTRAL,
                                              "report")
         self.view_reports_btn.setToolTip(
             "Open the Project Report, and each member's own report, in the "
             "system PDF viewer.")
         self.view_reports_btn.clicked.connect(self._view_reports)
-        views.addWidget(self.view_reports_btn)
-        sheet_btn = ActionButton("Apply exclusion sheet…", Category.TOOLS,
+        buttons.append(self.view_reports_btn)
+        sheet_btn = ActionButton("Apply exclusion sheet…", Category.NEUTRAL,
                                  "clear")
         sheet_btn.setToolTip(
             "Read remove_chambers.csv at this Project's root and write its "
@@ -569,27 +668,56 @@ class AnalysisHubWindow(QMainWindow):
             lambda: self._apply_exclusion_sheet(
                 self.project.project_directory if self.project else None,
                 "project"))
-        views.addWidget(sheet_btn)
         self.project_sheet_btn = sheet_btn
-        views.addStretch(1)
-        card.add_body(views)
+        buttons.append(sheet_btn)
+        ## Publication figures are Project-level (plot_specs.yaml and figures/
+        ## live at the project root), so their buttons live here rather than
+        ## in the per-member Plots panel — mirroring PyTrackingAnalysis.
+        editor_btn = ActionButton("Plot editor…", Category.NEUTRAL, "plot")
+        editor_btn.setToolTip(
+            "Design the Project's publication figures.  Specs and styles are "
+            "saved to plot_specs.yaml at the project root.")
+        editor_btn.clicked.connect(self._open_plot_editor)
+        buttons.append(editor_btn)
+        render_btn = ActionButton("Render figures", Category.NEUTRAL, "plot")
+        render_btn.setToolTip(
+            "Re-render the curated figures straight from plot_specs.yaml "
+            "into figures/ — the headless equivalent of the Plot editor's "
+            "save buttons.")
+        render_btn.clicked.connect(self._render_figures)
+        buttons.append(render_btn)
+        ## The project-level entry point for the narrative, so it stays
+        ## reachable with just a Project open — the AI subtile follows the
+        ## Experiment group's gate and needs a loaded member first.
+        ai_btn = ActionButton("AI narrative…", Category.NEUTRAL, "ai")
+        ai_btn.setToolTip(
+            "Generate an AI-written narrative of the Combined Analysis with "
+            "the provider picked in the AI panel.")
+        ai_btn.clicked.connect(self._generate_narrative)
+        buttons.append(ai_btn)
+        for i, button in enumerate(buttons):
+            grid.addWidget(button, i // 3, i % 3)
+        for column in range(3):
+            grid.setColumnStretch(column, 1)
+        card.add_body(grid)
 
         ## Project Scripts live with the Project, not in the Scripts panel:
         ## they act on the Project (pool, report, run_in_experiments) and are
         ## available the moment one is open, with no member loaded.  The
         ## Scripts panel is the *member* level and nothing else — the same
         ## split PyTrackingAnalysis draws.
-        card.add_section_label("Project Scripts (project.yaml)")
         srow = QHBoxLayout()
+        srow.addWidget(QLabel("Script:"))
         self.project_script = QComboBox()
         self.project_script.setMinimumWidth(200)
         srow.addWidget(self.project_script, 1)
-        self.run_project_script_btn = ActionButton("Run", Category.SCRIPTS,
+        self.run_project_script_btn = ActionButton("Run script",
+                                                   Category.NEUTRAL,
                                                    "play", primary=True)
         self.run_project_script_btn.clicked.connect(self._run_project_script)
         srow.addWidget(self.run_project_script_btn)
         self.edit_project_scripts_btn = ActionButton(
-            "Edit…", Category.SCRIPTS, "scripts")
+            "Edit scripts…", Category.NEUTRAL, "scripts")
         self.edit_project_scripts_btn.setToolTip(
             "Open the Script Editor on this Project's project.yaml.")
         self.edit_project_scripts_btn.clicked.connect(
@@ -597,6 +725,8 @@ class AnalysisHubWindow(QMainWindow):
         srow.addWidget(self.edit_project_scripts_btn)
         card.add_body(srow)
         self.panels["project"].add_card(card)
+        ## add_card force-shows reparented cards; this one starts hidden.
+        card.setVisible(False)
 
     def _build_analyze_panel(self) -> None:
         card = Card("Analyze", Category.ANALYZE, icon_name="analyze",
@@ -631,10 +761,13 @@ class AnalysisHubWindow(QMainWindow):
         self.panels["analyze"].add_card(card)
 
     def _build_plots_panel(self) -> None:
+        """Quick figures for the loaded member — and only that.
+
+        Publication figures are Project-level, so the Plot editor and the
+        headless render live on the Project panel's Analysis card instead
+        (mirroring PyTrackingAnalysis)."""
         card = Card("Plots", Category.PLOTS, icon_name="plots",
-                    subtitle="Quick figures for the loaded member, and the "
-                             "Plot Editor for the Project's publication "
-                             "figures.")
+                    subtitle="Quick figures for the loaded member.")
         self.plots_hint = QLabel("")
         self.plots_hint.setWordWrap(True)
         card.add_body(self.plots_hint)
@@ -656,16 +789,6 @@ class AnalysisHubWindow(QMainWindow):
             button.clicked.connect(
                 lambda _c=False, a=action: self._run_plot_action(a))
             card.add_body(button)
-
-        card.add_section_label("Publication figures (project level)")
-        editor_btn = ActionButton("Open Plot Editor", Category.PLOTS, "plot",
-                                  primary=True)
-        editor_btn.clicked.connect(self._open_plot_editor)
-        card.add_body(editor_btn)
-        render_btn = ActionButton("Render figures from plot_specs.yaml",
-                                  Category.PLOTS, "plot")
-        render_btn.clicked.connect(self._render_figures)
-        card.add_body(render_btn)
         self.panels["plots"].add_card(card)
 
     def _build_scripts_panel(self) -> None:
@@ -705,7 +828,7 @@ class AnalysisHubWindow(QMainWindow):
         self.panels["scripts"].add_card(card)
 
     def _build_ai_panel(self) -> None:
-        card = Card("AI summary", Category.TOOLS, icon_name="ai",
+        card = Card("AI summary", Category.AI, icon_name="ai",
                     subtitle="An AI-written narrative of the Combined "
                              "Analysis, generated from the report's own "
                              "content. It summarizes; it never analyzes.")
@@ -727,7 +850,7 @@ class AnalysisHubWindow(QMainWindow):
         mrow.addWidget(self.ai_model, 1)
         card.add_body(mrow)
 
-        gen = ActionButton("Generate narrative", Category.TOOLS, "ai",
+        gen = ActionButton("Generate narrative", Category.AI, "ai",
                            primary=True)
         gen.clicked.connect(self._generate_narrative)
         card.add_body(gen)
@@ -762,9 +885,21 @@ class AnalysisHubWindow(QMainWindow):
 
     def _open_panel(self, key: str) -> None:
         self._close_panel()
+        ## A subtile panel needs the sub-strip showing to have an anchor; a
+        ## container panel and the expanded group are never open together —
+        ## one thing is open at a time.
+        if key in EXPERIMENT_SUBTILES:
+            self._expand_experiment()
+            if not self._experiment_expanded:
+                ## No member loaded, so the group cannot expand — a panel
+                ## anchored to a hidden subtile would float in space.
+                return
+        else:
+            self._collapse_experiment()
         tile = self.tiles[key]
         panel = self.panels[key]
         central = self.centralWidget()
+        self._settle_ribbon_layout()
         top_left = tile.mapTo(central, tile.rect().bottomLeft())
         panel.open_at(top_left.x(), top_left.y() + 4, central.height() - 8)
         tile.set_active(True)
@@ -777,22 +912,78 @@ class AnalysisHubWindow(QMainWindow):
         self.tiles[self._open_key].set_active(False)
         self._open_key = None
 
+    # ---- the Experiment group (sub-strip) -----------------------------
+
+    def _toggle_experiment(self) -> None:
+        if self._experiment_expanded:
+            self._collapse_experiment()
+        else:
+            self._expand_experiment()
+
+    def _expand_experiment(self) -> None:
+        if self.experiment is None or self._experiment_expanded:
+            return
+        ## The group and a container panel are never open together.
+        if self._open_key is not None \
+                and self._open_key not in EXPERIMENT_SUBTILES:
+            self._close_panel()
+        self._experiment_expanded = True
+        self._place_sub_strip()
+        self._sub_strip_host.show()
+        self.tiles["experiment"].set_active(True)
+        self._settle_ribbon_layout()
+
+    def _collapse_experiment(self) -> None:
+        if not self._experiment_expanded:
+            return
+        if self._open_key in EXPERIMENT_SUBTILES:
+            self._close_panel()
+        self._experiment_expanded = False
+        self._sub_strip_host.hide()
+        self.tiles["experiment"].set_active(False)
+        self._settle_ribbon_layout()
+        self._reanchor_open_panel()
+
+    def _place_sub_strip(self) -> None:
+        """Left-indent the sub-strip to the Experiment tile's left edge, so
+        the subtiles read as that tile's contents rather than a second,
+        unrelated row."""
+        x = self.tiles["experiment"].geometry().x()
+        self._sub_strip.setContentsMargins(max(0, x), 0, 0, 0)
+
+    def _settle_ribbon_layout(self) -> None:
+        """Force layout on a just-shown/hidden sub-strip so tile coordinates
+        are real before a panel anchors to them."""
+        for widget in (self.centralWidget(), self._strip_host,
+                       self._sub_strip_host):
+            layout = widget.layout() if widget is not None else None
+            if layout is not None:
+                layout.activate()
+
+    def _reanchor_open_panel(self) -> None:
+        if self._open_key is not None:
+            self._open_panel(self._open_key)
+
     def _handle_click_away(self, event) -> None:
-        """Close the open panel on a click outside it and outside the strip."""
-        if self._open_key is None:
+        """Close the open panel — and fold the sub-strip — on a click outside
+        them and outside the ribbon."""
+        if self._open_key is None and not self._experiment_expanded:
             return
         widget = QApplication.widgetAt(event.globalPosition().toPoint())
         if widget is None:
             return
-        panel = self.panels[self._open_key]
+        panel = self.panels.get(self._open_key) if self._open_key else None
         node = widget
         while node is not None:
-            if node is panel or isinstance(node, StatusTile):
+            if node is panel or isinstance(node, StatusTile) \
+                    or node is self._strip_host or node is self._sub_strip_host:
                 return
             node = node.parentWidget()
         self._close_panel()
+        self._collapse_experiment()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        ## Esc closes only the panel; the expanded group stays.
         if event.key() == Qt.Key.Key_Escape and self._open_key is not None:
             self._close_panel()
             return
@@ -800,8 +991,8 @@ class AnalysisHubWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
-        if self._open_key is not None:
-            self._open_panel(self._open_key)
+        self._place_sub_strip()
+        self._reanchor_open_panel()
 
     def _restyle(self) -> None:
         c = surface_colors()
@@ -922,7 +1113,7 @@ class AnalysisHubWindow(QMainWindow):
         if directory is None:
             QMessageBox.information(
                 self, "No Project",
-                "Open a Project first, or use 'New Project here…' to make "
+                "Open a Project first, or use 'Create project…' to make "
                 "one.")
             return
         self._run_design_editor(directory)
@@ -1145,8 +1336,10 @@ class AnalysisHubWindow(QMainWindow):
         return keys
 
     def _project_row_activated(self, item) -> None:
-        """Double-clicking a member loads it and shows the Analyze panel —
-        loading is only ever a step toward doing something with it."""
+        """Double-clicking a member loads it — and, once loaded, reveals the
+        Analyze panel: loading is only ever a step toward doing something
+        with it.  The reveal waits for the load because the Experiment group
+        the panel hangs from does not exist until a member is loaded."""
         if self.project is None:
             return
         cell = self.project_table.item(item.row(), 0)
@@ -1157,8 +1350,11 @@ class AnalysisHubWindow(QMainWindow):
         if name in blocked:
             self._offer_blocked_fix(blocked[name])
             return
-        self._load_member(name)
-        self._open_panel("analyze")
+        ## Close the panel only when the load actually starts: _start refuses
+        ## while a task is running, and yanking the panel away would then be
+        ## the click's only effect.
+        if self._load_member(name):
+            self._close_panel()
 
     def _offer_blocked_fix(self, member) -> None:
         """Double-clicking a Blocked Member offers the repair, rather than
@@ -1200,49 +1396,86 @@ class AnalysisHubWindow(QMainWindow):
     # Loading
     # ------------------------------------------------------------------
 
+    #: Logged the moment a load starts.  Parsing the first DFM CSV can take a
+    #: while and prints nothing until it finishes, so without this the log sat
+    #: silent and a double-click looked like it had done nothing.
+    _LOADING_NOTE = ("Reading DFM data from disk — this can take a while for "
+                     "large recordings.  Progress appears here as each DFM "
+                     "finishes.")
+
     def _load_kwargs(self) -> dict:
         workers = self.spin_workers.value()
         return {"parallel": self.chk_parallel.isChecked(),
                 "max_workers": workers or None}
 
-    def _load_member(self, name: str) -> None:
+    def _load_member(self, name: str) -> bool:
         project = self.project
         if project is None:
-            return
+            return False
 
         def task():
             return project.load_experiment(name, **self._load_kwargs())
 
         def done(exp):
+            ## The selection can change while the load runs; attaching the
+            ## old Project's member under the new one would show a member
+            ## built from a different design.
+            if self.project is not project:
+                self.log.append_line(
+                    f"[load] '{name}' finished loading after the selection "
+                    "changed — discarded.")
+                return
             self.experiment = exp
             self.experiment_name = name
             self.refresh()
+            self._reveal_analyze()
 
-        self._start(task, f"Loading member '{name}'", done)
+        return self._start(task, f"Loading member '{name}'", done,
+                           note=self._LOADING_NOTE)
 
-    def _load_standalone(self, path: str) -> None:
+    def _load_standalone(self, path: str) -> bool:
         from .yaml_config import load_experiment_yaml
 
         def task():
             return load_experiment_yaml(path, **self._load_kwargs())
 
         def done(exp):
+            if self.project is not None:
+                self.log.append_line(
+                    f"[load] {path} finished loading after a Project was "
+                    "opened — discarded.")
+                return
             self.experiment = exp
             self.experiment_name = os.path.basename(path)
             self.refresh()
+            self._reveal_analyze()
 
-        self._start(task, f"Loading {path}", done)
+        return self._start(task, f"Loading {path}", done,
+                           note=self._LOADING_NOTE)
+
+    def _reveal_analyze(self) -> None:
+        """Open the Analyze panel after a load — loading is only ever a step
+        toward doing something — unless the user opened another panel while
+        the load ran; a reveal must not yank that away."""
+        if self._open_key is None:
+            self._open_panel("analyze")
 
     # ------------------------------------------------------------------
     # Running
     # ------------------------------------------------------------------
 
-    def _start(self, task, label: str, on_done=None) -> None:
+    def _start(self, task, label: str, on_done=None, *,
+               note: str | None = None) -> bool:
+        """Run *task* in the worker.  Returns whether it actually started —
+        callers with a side effect tied to the run (closing the panel a
+        double-click came from) must not perform it on a refusal."""
         if self._worker is not None and self._worker.isRunning():
             QMessageBox.information(self, "Busy",
                                     "A task is already running.")
-            return
+            return False
         self.log.append_line(f"\n=== {label} ===")
+        if note:
+            self.log.append_line(note)
         self._set_running(True)
         worker = Worker(task, self)
         worker.line.connect(self._on_worker_line)
@@ -1259,6 +1492,7 @@ class AnalysisHubWindow(QMainWindow):
         worker.finished_ok.connect(finished)
         self._worker = worker
         worker.start()
+        return True
 
     def _on_worker_line(self, text: str) -> None:
         """Stream a raw stdout chunk into the log.
@@ -1282,6 +1516,10 @@ class AnalysisHubWindow(QMainWindow):
         self._set_running(False)
         self.log.append_line(message)
         self.errors.append_line(message)
+        ## The task may have changed state before failing — a Batch Run
+        ## unloads the member up front — and without this, tiles keep
+        ## describing state that no longer exists until the next success.
+        self.refresh()
         first = message.strip().splitlines()[-1] if message.strip() else "failed"
         QMessageBox.critical(self, "Task failed", first)
 
@@ -1293,9 +1531,18 @@ class AnalysisHubWindow(QMainWindow):
 
     def _set_running(self, running: bool) -> None:
         """Grey the open panel's cards in place rather than closing it — a task
-        finishing should not move the UI out from under the user."""
-        if self._open_key is not None:
-            self.panels[self._open_key].setEnabled(not running)
+        finishing should not move the UI out from under the user.
+
+        Re-enabling walks *every* panel, not just the open one: the open panel
+        can change while a task runs (double-clicking a member greys the
+        Project panel, then switches to Analyze), and re-enabling only the
+        current panel left the one greyed at start disabled for good."""
+        if running:
+            if self._open_key is not None:
+                self.panels[self._open_key].setEnabled(False)
+        else:
+            for panel in self.panels.values():
+                panel.setEnabled(True)
 
     def _tabs_suppressed(self) -> bool:
         """Whether new figure/artifact tabs are being skipped for this run.
@@ -1530,7 +1777,7 @@ class AnalysisHubWindow(QMainWindow):
             QMessageBox.warning(
                 self, "Create member",
                 f"'{name}' already exists.\n\nUse 'Initialize existing "
-                "folder…' to give the folder you already have a config.")
+                "directory…' to give the folder you already have a config.")
             return
         if self._scaffold_member(name) is None:
             return
@@ -1543,7 +1790,7 @@ class AnalysisHubWindow(QMainWindow):
     def _scaffold_member(self, name: str) -> str | None:
         """Scaffold *name*'s flic_config.yaml from the design, with its notes.
 
-        Shared by Create member, Initialize existing folder, and the blocked
+        Shared by Create member, Initialize existing directory, and the blocked
         row's offer — one place decides what a scaffolded member looks like.
         """
         if self.project is None:
@@ -1672,7 +1919,7 @@ class AnalysisHubWindow(QMainWindow):
         candidates = layout_mod.initializable_dirs(project.project_directory)
         if not candidates:
             QMessageBox.information(
-                self, "Initialize existing folder",
+                self, "Initialize existing directory",
                 f"Every folder in '{project.name}' already has a "
                 "flic_config.yaml.\n\nUse 'Create member…' to make a new "
                 "one.")
@@ -1680,7 +1927,7 @@ class AnalysisHubWindow(QMainWindow):
         labels = [f"{item.name}  —  {item.status or 'empty'}"
                   for item in candidates]
         choice, ok = QInputDialog.getItem(
-            self, "Initialize existing folder",
+            self, "Initialize existing directory",
             f"Folder to make a member of '{project.name}':", labels, 0, False)
         if not ok or not choice:
             return
@@ -1691,7 +1938,7 @@ class AnalysisHubWindow(QMainWindow):
         state = layout_mod.classify(item.directory)
         if state.status in (layout_mod.AMBIGUOUS, layout_mod.UNREADABLE):
             QMessageBox.warning(
-                self, "Initialize existing folder",
+                self, "Initialize existing directory",
                 f"'{state.name}': {state.detail or state.status}\n\nThis one "
                 "has to be sorted out by hand.")
             return
@@ -1703,7 +1950,7 @@ class AnalysisHubWindow(QMainWindow):
                 ## writing the config, so a retry after the fix does the whole
                 ## job rather than half of it.
                 QMessageBox.warning(
-                    self, "Initialize existing folder",
+                    self, "Initialize existing directory",
                     f"Could not file '{state.name}': {plan.refused}")
                 return
             self.log.append_line(f"[file] {state.name}: {plan.describe()}")
@@ -1798,9 +2045,15 @@ class AnalysisHubWindow(QMainWindow):
 
         ## A Batch Run rewrites every member's analysis in every Project — a
         ## loaded experiment would survive as a stale copy of results that no
-        ## longer exist.
+        ## longer exist.  Refresh the experiment-level tiles now: the run's
+        ## own refresh only comes when it finishes, and a lit Experiment tile
+        ## naming an unloaded member is a click that silently does nothing.
         self.experiment = None
         self.experiment_name = None
+        self._refresh_experiment_tiles()
+        self._refresh_ai()
+        self._refresh_card_dimming()
+        self._refresh_readout()
 
         def task():
             results = batch_mod.run_batch(
@@ -2074,15 +2327,16 @@ class AnalysisHubWindow(QMainWindow):
 
         self._start(task, f"Lint {directory}")
 
-    def _yaml_validation_targets(self) -> list[Path]:
-        """Every YAML this selection is responsible for, widest first.
+    def _yaml_validation_targets(self, root: str | None = None) -> list[Path]:
+        """Every YAML *root* (default: the selection) is responsible for,
+        widest first.
 
         A Batch has one per Project plus one per member; a Project has its own
         plus its members'.  The point is to find the one bad file *before* an
         unattended run does — which means checking the ones the user never
         opens, not only the one they are looking at.
         """
-        root = self._current_dir()
+        root = root or self._current_dir()
         if not root:
             return []
         base = Path(root)
@@ -2103,8 +2357,9 @@ class AnalysisHubWindow(QMainWindow):
                 seen.append(path)
         return seen
 
-    def _validate_yaml(self) -> None:
-        """Parse every YAML under the selection and report what fails.
+    def _validate_yaml(self, root: str | None = None) -> None:
+        """Parse every YAML under *root* (default: the selection) and report
+        what fails.
 
         Cheap, read-only, and the only way to learn that a hand-edited config
         three folders down is unparseable without waiting for hour three of a
@@ -2112,12 +2367,13 @@ class AnalysisHubWindow(QMainWindow):
         """
         import yaml as _yaml
 
-        targets = self._yaml_validation_targets()
+        root = root or self._current_dir()
+        targets = self._yaml_validation_targets(root)
         if not targets:
             QMessageBox.information(self, "Nothing selected",
                                     "Open a Batch, Project, or member first.")
             return
-        root = Path(self._current_dir())
+        root = Path(root)
 
         def task():
             bad = 0
@@ -2342,10 +2598,15 @@ class AnalysisHubWindow(QMainWindow):
         table.setRowCount(0)
         self.project_script.clear()
         ## Always lit, for the same reason the Batch tile is: its panel holds
-        ## "Open a Project…", the control that fixes the missing state.
+        ## "Open Project", the control that fixes the missing state.
         tile.set_dimmed(False)
+        ## The whole Analysis card appears only with a Project open; the
+        ## Experiments card stays visible-but-gated so an empty state still
+        ## shows where members will appear.
+        self.project_analysis_card.setVisible(self.project is not None)
         if self.project is None:
             tile.set_summary(["no project open", "open one to begin"])
+            self.project_summary.setText("")
             for widget in (self.file_btn, self.scaffold_btn,
                            self.view_reports_btn, self.project_sheet_btn,
                            self.project_script, self.run_project_script_btn,
@@ -2443,8 +2704,8 @@ class AnalysisHubWindow(QMainWindow):
         pending_dirs = layout_mod.initializable_dirs(project.project_directory)
         self.init_member_btn.setEnabled(bool(pending_dirs))
         self.init_member_btn.setText(
-            f"Initialize existing folder… ({len(pending_dirs)})"
-            if pending_dirs else "Initialize existing folder…")
+            f"Initialize existing directory… ({len(pending_dirs)})"
+            if pending_dirs else "Initialize existing directory…")
         ## A Project with no design: validates its members against each other
         ## rather than against an authority — say so on the button that fixes
         ## it, since nothing else in the Hub would ever mention it.
@@ -2456,6 +2717,19 @@ class AnalysisHubWindow(QMainWindow):
             + ("" if declared else
                "\n\nThis Project declares no design: — its members are "
                "validated against each other instead."))
+
+        ## The loaded-project description, in the always-visible Create/Load
+        ## card, so it reads even while the sections below stay down.
+        parts = [f"<b>{project.name}</b> — "
+                 f"{project.experiment_type.display_name} · "
+                 f"{project.chamber_layout}",
+                 f"{len(project.member_names)} member(s), {analyzed} analyzed"]
+        if not declared:
+            parts.append("no design declared — members are validated against "
+                         "each other")
+        for warning in getattr(project, "warnings", []) or []:
+            parts.append(f"⚠ {warning}")
+        self.project_summary.setText("<br>".join(parts))
 
     @staticmethod
     def _paint_blocked_row(table, row: int, item) -> None:
@@ -2475,6 +2749,7 @@ class AnalysisHubWindow(QMainWindow):
 
     def _refresh_experiment_tiles(self) -> None:
         loaded = self.experiment is not None
+        self._refresh_experiment_group_tile()
         for key in ("analyze", "plots"):
             self.tiles[key].set_dimmed(not loaded)
         if not loaded:
@@ -2534,6 +2809,31 @@ class AnalysisHubWindow(QMainWindow):
         self.tiles["scripts"].set_dimmed(False)
         self._refresh_scripts_tile()
 
+    def _refresh_experiment_group_tile(self) -> None:
+        """The gate on the four subtiles: dimmed AND inert with nothing
+        loaded — it opens no panel, so a click could not show the fix; the
+        hint names where it is instead."""
+        tile = self.tiles["experiment"]
+        if self.experiment is None:
+            tile.set_summary(["no member loaded",
+                              "double-click one in Project"])
+            ## Collapse only on the lit→dimmed unload transition, not on
+            ## every refresh — a programmatically opened subtile panel must
+            ## survive the refresh that follows every finished task.
+            if not tile.is_dimmed():
+                self._collapse_experiment()
+            tile.set_dimmed(True)
+            tile.set_clickable(False)
+            return
+        exp = self.experiment
+        layout = getattr(exp, "chamber_layout", None) or "two_well"
+        type_name = getattr(getattr(exp, "experiment_type", None), "name",
+                            "Custom")
+        tile.set_summary([str(self.experiment_name),
+                          f"{type_name} · {layout}"])
+        tile.set_dimmed(False)
+        tile.set_clickable(True)
+
     def _refresh_scripts_tile(self) -> None:
         count = self.experiment_script.count()
         has_member = self.experiment is not None
@@ -2572,7 +2872,13 @@ class AnalysisHubWindow(QMainWindow):
                 "No API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in "
                 "your environment or a .env file, then reopen this panel.")
             return
-        tile.set_dimmed(self.project is None)
+        ## Grouped under the Experiment tile, so it follows the group's gate —
+        ## AND the Project's, because the narrative is about the Project's
+        ## Combined Analysis and generating one refuses without a Project.  A
+        ## standalone experiment (loaded with no Project) must not light a
+        ## tile whose only action is a dead end; the Analysis card carries the
+        ## project-level entry point.
+        tile.set_dimmed(self.experiment is None or self.project is None)
         saved = (ai.read_project_narrative(self.project)
                  if self.project is not None else None)
         tile.set_summary([f"{len(available)} provider(s)",
@@ -2590,17 +2896,18 @@ class AnalysisHubWindow(QMainWindow):
         because a dimmed card is precisely the one holding the control that
         fixes the missing state (ADR-0007).
         """
-        has_project = self.project is not None
         has_experiment = self.experiment is not None
         dim = {
             "batch": False,          # its panel holds "Choose batch folder…"
-            "project": False,        # its panel holds "Open a Project…"
+            "project": False,        # its panel holds "Open Project"
             "analyze": not has_experiment,
             "plots": not has_experiment,
             ## Scripts is the member level now: with no member loaded there
             ## is no script to pick and no config to edit.
             "scripts": not has_experiment,
-            "ai": not has_project,
+            ## AI follows the Experiment group's gate, like its subtile — and
+            ## the Project's, because generating a narrative needs one.
+            "ai": not (has_experiment and self.project is not None),
             "tools": False,
         }
         for key, panel in self.panels.items():

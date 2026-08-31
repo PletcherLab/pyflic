@@ -208,7 +208,7 @@ def test_create_member_refuses_a_folder_that_already_exists(hub, project,
     hub._create_member()
 
     assert not (project / "rep2" / "flic_config.yaml").exists()
-    assert any("Initialize existing folder" in text for text in said)
+    assert any("Initialize existing directory" in text for text in said)
 
 
 def test_create_member_refuses_a_name_that_escapes_the_project(project):

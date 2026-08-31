@@ -81,7 +81,7 @@ class ProjectDesignDialog(QDialog):
         self.saved_dir: str | None = None
         #: Members whose own ``global:`` was removed on save so they inherit.
         self.adopted: list[str] = []
-        self.setWindowTitle("Initialize existing folder"
+        self.setWindowTitle("Initialize existing directory"
                             if self._initialize else "Project design")
         self.setMinimumSize(720, 620)
         ## Window-modal: the Hub behind it is what this edits, but a config
@@ -353,7 +353,7 @@ class ProjectDesignDialog(QDialog):
             QMessageBox.information(
                 self, self.windowTitle(),
                 f"'{name}' already has a {project_mod.PROJECT_FILENAME} — it "
-                "is a Project already.\n\nUse 'Open a Project…' to work in "
+                "is a Project already.\n\nUse 'Open Project' to work in "
                 "it, or 'Project design…' to change its design.")
             return None
         if project_mod.is_experiment_dir(path):
@@ -369,7 +369,7 @@ class ProjectDesignDialog(QDialog):
                 QMessageBox.information(
                     self, self.windowTitle(),
                     f"'{os.path.basename(parent)}' is already a Project — use "
-                    "'Open a Project…' to work in it.")
+                    "'Open Project' to work in it.")
                 return None
             ## Show the retarget without re-running the prefill: the design in
             ## the widgets may already have been edited by hand.
@@ -387,7 +387,7 @@ class ProjectDesignDialog(QDialog):
     def _prefill_from_dir(self) -> None:
         directory = self.dir_edit.text().strip()
         if not directory or not os.path.isdir(directory):
-            self.setWindowTitle("Initialize existing folder"
+            self.setWindowTitle("Initialize existing directory"
                                 if self._initialize else "New Project")
             return
         if project_mod.is_project_dir(directory):
@@ -408,7 +408,7 @@ class ProjectDesignDialog(QDialog):
         ## Not a Project yet: a folder of experiments about to become one
         ## still has a design — read it off the first member so the dialog
         ## opens on what is already there rather than on defaults.
-        self.setWindowTitle("Initialize existing folder" if self._initialize
+        self.setWindowTitle("Initialize existing directory" if self._initialize
                             else "New Project")
         if self._initialize:
             self.name_edit.setText(os.path.basename(

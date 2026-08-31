@@ -298,6 +298,9 @@ class ScriptEditorWindow(QMainWindow):
 
         * Drops empty / None fields (so the yaml stays tidy).
         * Ensures ``steps`` is a list of dicts (drops empty steps).
+        * Preserves keys the editor does not understand — the seeded batch
+          script's ``notes:``, or anything hand-written — a save must not be
+          the event that deletes them.
         """
         out: dict[str, Any] = {}
         name = script.get("name", "")
@@ -305,6 +308,10 @@ class ScriptEditorWindow(QMainWindow):
             out["name"] = name.strip()
         else:
             out["name"] = "(unnamed)"
+        for key, value in script.items():
+            if key in ("name", "steps") or value in (None, "", [], {}):
+                continue
+            out[key] = value
         steps_raw = script.get("steps") or []
         out["steps"] = [
             ScriptEditorWindow._clean_step(s) for s in steps_raw
@@ -449,7 +456,13 @@ class ScriptEditorWindow(QMainWindow):
     def _commit_canvas_to_model(self) -> None:
         if self._active_idx < 0:
             return
-        self._scripts[self._active_idx] = self._canvas.current_script()
+        ## Merge, don't replace: the canvas edits only name and steps, and a
+        ## script may carry keys it never showed — the seeded batch script's
+        ## notes:, or anything hand-written — which a replace would silently
+        ## delete on the next save.
+        merged = dict(self._scripts[self._active_idx])
+        merged.update(self._canvas.current_script())
+        self._scripts[self._active_idx] = merged
 
     # ==================================================================
     # Dirty-state + preview

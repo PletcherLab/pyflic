@@ -171,15 +171,27 @@ def builtin_project_script(name: str) -> dict | None:
 def default_project_script() -> dict:
     """The Project Script written into every new ``project.yaml``.
 
-    Named ``batch`` for the job it does rather than the built-in it was seeded
-    from, so a reader of the yaml can see what a Batch Run will do there.  It
-    holds the Report Pipeline's steps — preferred over the Standard Pipeline
-    for an unattended run because it does not gate on ``validate_design``,
-    which would fail Projects mid-migration.
+    Named ``batch`` for the job it does rather than a built-in it was seeded
+    from, so a reader of the yaml can see what a Batch Run will do there.
+    The steps spell out the whole unattended run — analyze, pool, report,
+    figures — because ``project_report`` here builds the Combined Analysis
+    only when it is *missing* and never analyzes a member itself; a seeded
+    script of report+figures alone fails a fresh Project outright and pools
+    stale results on an old one.  (Upstream's ``project_report`` analyzes
+    internally, which is why its seed is shorter.)  Deliberately no
+    ``validate_design`` step, which would fail Projects mid-migration.
     """
     return {
         "name": "batch",
+        "notes": "Created with the project, and what a Batch Run runs here "
+                 "unless another script is designated.  Analyzes every "
+                 "member, pools the results into the Combined Analysis, "
+                 "builds the Project Report, then renders curated figures.  "
+                 "Edit or replace it in the Script Editor — a project with "
+                 "no script here is reported and skipped by a Batch Run.",
         "steps": [
+            {"action": "run_all_analyses"},
+            {"action": "build_combined_analysis"},
             {"action": "project_report"},
             {"action": "render_publication_figures"},
         ],

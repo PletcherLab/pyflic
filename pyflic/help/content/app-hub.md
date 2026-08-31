@@ -13,9 +13,12 @@ a Batch.
 
 ## Layout
 
-A horizontal **tile strip** runs across the top: Batch · Project · Analyze · Plots ·
-Scripts · AI · Tools, with a **status readout** filling the strip to their right. Below it
-is a full-width output and plots area.
+A **tile ribbon** runs across the top. The top strip is the containment hierarchy read
+left to right — wide **Batch · Project · Experiment** tiles — then **Tools** and a
+**status readout** filling the strip to their right. The Experiment tile opens no panel
+of its own: it expands a second, shorter row of four compact subtiles — **Analyze ·
+Plots · Scripts · AI** — the tools that act on the loaded member. Below the ribbon is a
+full-width output and plots area.
 
 Each tile shows only live status — how many members, which one is loaded, how many
 scripts. All the *controls* live in the tile's **anchored panel**, which drops down when
@@ -25,11 +28,19 @@ the background, or press Esc to close it.
 **Tiles never move or hide.** A tile that does not apply yet is *dimmed* — Analyze is dim
 until a member is loaded — but it stays clickable, because its panel holds the control
 that fixes the missing state. Its panel's cards are greyed to match, and they stay
-clickable too. The strip is a map, not a menu that rearranges itself.
+clickable too. The strip is a map, not a menu that rearranges itself. The one exception
+is the Experiment tile: it opens no panel, so with nothing loaded a click could not show
+the fix — it goes inert as well as dimmed, and its hint names where the fix is
+(double-click a member in the Project panel).
 
-**Batch and Project are never dimmed.** Their panels hold "Choose batch folder…" and "Open
-a Project…" — the controls that fix the empty state — so a closed-looking tile there would
-be pointing away from the only way forward.
+**Batch and Project are never dimmed.** Their panels hold "Choose batch folder…" and
+"Open Project" — the controls that fix the empty state — so a closed-looking tile there
+would be pointing away from the only way forward.
+
+**One thing is open at a time.** Expanding the Experiment group closes a container
+panel and vice versa; a click in the background closes the open panel *and* folds the
+group; Esc closes only the panel. The subtiles' panels are narrow columns of buttons,
+and their status lives in each subtile's tooltip.
 
 ## Project-first
 
@@ -62,10 +73,14 @@ See [Running many projects at once](scripts-batch.md).
 
 ## Project panel
 
-The members table is the centre of the Hub: one row per member, with its DFM count,
+Three cards, top to bottom, answering three questions: **Create/Load** (which Project?),
+**Experiments** (which members does it hold?), and **Analysis** (what to do with them —
+shown only while a Project is open).
+
+The Experiments card's members table is the centre of the Hub: one row per member, with its DFM count,
 chamber count, and whether it has been analysed and reported. Double-click a row to load
-it — the Analyze panel opens on it, because loading is only ever a step toward doing
-something with it.
+it — once the load finishes, the Experiment group expands and the Analyze panel opens,
+because loading is only ever a step toward doing something with it.
 
 **Red rows are blocked members** — folders a run cannot use as they stand, including ones
 the Project cannot even see yet because they have no config. Hover for the reason. These
@@ -81,14 +96,14 @@ There are three states a folder can be in before it is a Project, so there are t
 in, plus the editor for the one already open. They are disjoint: each refuses the other
 two's case and names the button that handles it.
 
-- **Open a Project…** — the folder exists *and* already has a `project.yaml`. Choosing the
+- **Open Project** — the folder exists *and* already has a `project.yaml`. Choosing the
   one already open re-reads it from disk, so members added or analysed outside the Hub show
   up: the picker is the reload.
-- **Create Project…** — nothing exists yet. Name the folder in the dialog's Directory field
+- **Create project…** — nothing exists yet. Name the folder in the dialog's Directory field
   (its browser will make one), fill in the design, and the `project.yaml` is written into
   it.
-- **Initialize this folder…** — the folder exists, usually with experiment folders already
-  in it, but has no `project.yaml`. It keeps its own name, its subdirectories become the
+- **Initialize existing directory…** — the folder exists, usually with experiment folders
+  already in it, but has no `project.yaml`. It keeps its own name, its subdirectories become the
   members, and the design shown is **inferred from the first one that already has a
   config**. This is the path for a study started before Projects existed. Point it at an
   Experiment Directory and it offers to initialize the *parent* instead, so that experiment
@@ -97,6 +112,11 @@ two's case and names the button that handles it.
   until one is open, because it edits the Project in hand. Reads *(none set)* when that
   Project has no `design:` block, which means its members are being validated against each
   other instead of against an authority.
+
+**Validate YAMLs**, on its own full-width row, is not a fifth way in: it checks the open
+Project's `project.yaml` and every member's `flic_config.yaml` and reports to the log.
+The loaded-project summary sits below the buttons, in this always-visible card, so a
+Project that fails to load is explained even while the sections below stay down.
 
 See [Projects and members](concepts-project.md).
 ### Adding a member — the same three cases, one level down
@@ -111,7 +131,7 @@ with nothing to conform to is not a member.
   scaffold, **Copy config from…** replaces it with a config chosen from disk, *checked
   against the design before it is written*. A copy that would not conform is not made at
   all; the mismatches are listed and the scaffold stays.
-- **Initialize existing folder… (n)** — the folder is already in the Project but has no
+- **Initialize existing directory… (n)** — the folder is already in the Project but has no
   config. It lists the candidates with what was found in each. Loose files are **filed
   first** — the recording into `data/`, everything else into `extra_files/` — and only then
   is the config scaffolded and the config editor opened, because a recording left at the
@@ -124,13 +144,23 @@ with nothing to conform to is not a member.
 one and open it; an unfiled recording offers to file itself.
 
 - **File unfiled recordings** — the same filing in bulk, for every member that needs it.
+
+### The Analysis card
+
+Appears when a Project is open, in the order the work happens:
+
 - **Analyze all** / **Combine** / **Create report** — the project-level actions.
 - **View reports** — opens the Project Report and each member's own report.
 - **Apply exclusion sheet…** — see [Excluding chambers in bulk](concepts-exclusions.md).
-- **Project Scripts** — pick one and **Run** it, or **Edit…** to open the Script Editor on
-  `project.yaml`. Project Scripts live here, with the Project they act on: they need no
-  loaded member, and they are available the moment a Project is open. See
-  [Scripts](scripts-overview.md).
+- **Plot editor…** / **Render figures** — the Project's publication figures.
+  `plot_specs.yaml` and `figures/` live at the project root, so their buttons live here
+  rather than in the per-member Plots panel. See [Plot Editor](app-plot-editor.md).
+- **AI narrative…** — the project-level entry point for the AI-written narrative of the
+  Combined Analysis, using the provider picked in the AI panel.
+- **Script row** — pick a Project Script and **Run script**, or **Edit scripts…** to open
+  the Script Editor on `project.yaml`. Project Scripts live here, with the Project they
+  act on: they need no loaded member, and they are available the moment a Project is
+  open. See [Scripts](scripts-overview.md).
 
 ## Analyze panel
 
@@ -139,9 +169,9 @@ binned CSVs, tidy events, and the per-member PDF report.
 
 ## Plots panel
 
-Quick figures for the loaded member, and the entry point to the Plot Editor for the
-Project's publication figures. See [Plot catalogue](plots-catalog.md) and
-[Plot Editor](app-plot-editor.md).
+Quick figures for the loaded member. The Plot Editor and the publication figures are
+Project-level and live on the Project panel's Analysis card. See
+[Plot catalogue](plots-catalog.md) and [Plot Editor](app-plot-editor.md).
 
 ## Scripts panel
 
@@ -156,7 +186,9 @@ Project and are runnable with no member loaded. See [Scripts](scripts-overview.m
 ## AI panel
 
 An optional AI-written narrative of the Combined Analysis. Dimmed until an API key is
-present. See [AI summary](concepts-ai-summary.md).
+present — and, like the rest of the Experiment group, until a member of an open Project
+is loaded; with just a Project open, use **AI narrative…** on the Project panel's
+Analysis card instead. See [AI summary](concepts-ai-summary.md).
 
 ## Tools panel
 

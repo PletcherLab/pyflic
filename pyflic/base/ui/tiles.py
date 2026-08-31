@@ -36,30 +36,61 @@ def chrome() -> dict:
 
 
 class StatusTile(QFrame):
-    """One strip tile: an icon + title row and up to two live summary lines."""
+    """One strip tile: an icon + title row and up to two live summary lines.
+
+    Three geometries (mirroring PyTrackingAnalysis's tile ribbon):
+
+    * regular — the default chip;
+    * ``wide=True`` — a container tile (Batch, Project, Experiment), the same
+      height but scaled wider so the three levels read as the ribbon's anchors;
+    * ``compact=True`` — a title-only chip for the Experiment sub-strip: no
+      summary lines, the status lives in the tooltip instead.
+    """
 
     clicked = pyqtSignal(str)
 
     #: Hard cap so a chatty summary can never widen the strip.
     _MAX_LINE_CHARS = 26
 
+    MIN_WIDTH = 118
+    MAX_WIDTH = 196
+    #: Container tiles' width relative to a regular tile: 1.75×, then reduced
+    #: by a quarter so the status readout keeps most of the strip.
+    WIDE_SCALE = 1.75 * 0.75
+    COMPACT_HEIGHT = 38
+    COMPACT_MIN_WIDTH = 96
+    COMPACT_MAX_WIDTH = 150
+
     def __init__(self, key: str, title: str, icon_name: str,
-                 category: Category, parent: QWidget | None = None) -> None:
+                 category: Category, parent: QWidget | None = None, *,
+                 wide: bool = False, compact: bool = False) -> None:
         super().__init__(parent)
         self.key = key
         self._category = category
         self._dimmed = False
         self._active = False
-        #: (left, right) corner radii — the strip's outer ends keep the radius,
-        #: interior edges sit flush.
+        self._clickable = True
+        self._compact = compact
+        #: (left, right) corner radii — distinct chips keep all corners
+        #: rounded; a caller can flatten interior seams.
         self._radii = (5, 5)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         ## A width RANGE, not a fixed size: fixed-width tiles force a minimum
         ## window width that small laptops cannot show.
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        self.setMinimumWidth(112)
-        self.setMaximumWidth(196)
-        self.setFixedHeight(TILE_HEIGHT)
+        #: The summary cap scales with the tile: a wide tile's extra width
+        #: must buy extra text, not just extra padding.
+        self._max_line_chars = self._MAX_LINE_CHARS
+        if compact:
+            self.setMinimumWidth(self.COMPACT_MIN_WIDTH)
+            self.setMaximumWidth(self.COMPACT_MAX_WIDTH)
+            self.setFixedHeight(self.COMPACT_HEIGHT)
+        else:
+            scale = self.WIDE_SCALE if wide else 1.0
+            self._max_line_chars = round(self._MAX_LINE_CHARS * scale)
+            self.setMinimumWidth(round(self.MIN_WIDTH * scale))
+            self.setMaximumWidth(round(self.MAX_WIDTH * scale))
+            self.setFixedHeight(TILE_HEIGHT)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 6)
@@ -78,14 +109,28 @@ class StatusTile(QFrame):
         self._summary_lbl = QLabel("")
         self._summary_lbl.setTextFormat(Qt.TextFormat.PlainText)
         lay.addWidget(self._summary_lbl, 1, Qt.AlignmentFlag.AlignTop)
+        if compact:
+            ## Title-only chip: the tile above / beside it already names the
+            ## subject, so the status is a hover away rather than a line.
+            self._summary_lbl.hide()
         self.restyle()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        """Prefer the top of the width range; the layout may still compress."""
+        hint = super().sizeHint()
+        hint.setWidth(self.maximumWidth())
+        return hint
 
     def set_summary(self, lines: list[str]) -> None:
         full = [str(line) for line in lines]
+        if self._compact:
+            ## No summary lines on a compact chip — tooltip only.
+            self.setToolTip("\n".join(full))
+            return
         clipped = []
         for line in full[:2]:
-            if len(line) > self._MAX_LINE_CHARS:
-                line = line[: self._MAX_LINE_CHARS - 1] + "…"
+            if len(line) > self._max_line_chars:
+                line = line[: self._max_line_chars - 1] + "…"
             clipped.append(line)
         self._summary_lbl.setText("\n".join(clipped))
         ## The untruncated summary is always one hover away.
@@ -109,6 +154,18 @@ class StatusTile(QFrame):
 
     def is_active(self) -> bool:
         return self._active
+
+    def set_clickable(self, clickable: bool) -> None:
+        """Tiles are normally dimmed-but-clickable (their panel holds the
+        fix).  The one exception is a tile that opens no panel of its own —
+        the Experiment group tile: with nothing loaded it is inert as well as
+        dimmed, and its hint names where the fix is."""
+        self._clickable = clickable
+        self.setCursor(Qt.CursorShape.PointingHandCursor if clickable
+                       else Qt.CursorShape.ArrowCursor)
+
+    def is_clickable(self) -> bool:
+        return self._clickable
 
     def set_rounding(self, left: int, right: int) -> None:
         self._radii = (left, right)
@@ -150,7 +207,7 @@ class StatusTile(QFrame):
         self._icon_lbl.setPixmap(self._icon.pixmap(QSize(16, 16), mode))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and self._clickable:
             self.clicked.emit(self.key)
         super().mousePressEvent(event)
 

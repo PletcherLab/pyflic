@@ -144,11 +144,23 @@ def test_standard_pipeline_validates_first():
     assert steps[0] == "validate_design"
 
 
-def test_the_seeded_project_script_is_named_batch_and_matches_report_pipeline():
+def test_the_seeded_project_script_is_named_batch_and_runs_the_whole_pipeline():
+    ## The seed spells out analyze → pool → report → figures: pyflic's
+    ## project_report builds the Combined Analysis only when missing and never
+    ## analyzes a member, so report+figures alone fails a fresh Project.
     default = project_actions.default_project_script()
-    report = project_actions.builtin_project_script("Report Pipeline")
     assert default["name"] == "batch"
-    assert default["steps"] == report["steps"]
+    assert [s["action"] for s in default["steps"]] == [
+        "run_all_analyses", "build_combined_analysis",
+        "project_report", "render_publication_figures"]
+    ## The notes explain the script in the file it is written into.
+    assert "Batch Run" in default["notes"]
+
+
+def test_the_seeded_project_script_validates_as_written(tmp_path: Path):
+    project = _make_project(tmp_path)
+    script = project_actions.default_project_script()
+    assert validate_project_script(project, script) == []
 
 
 def test_every_builtin_pipeline_is_runnable_as_written(tmp_path: Path):

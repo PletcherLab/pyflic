@@ -76,13 +76,13 @@ design:
 ## Writing the design
 
 **Project panel → Project design…** is the editor for `project.yaml` — the Project's name,
-its notes, and the whole design. **Create Project…** and **Initialize this folder…** open
+its notes, and the whole design. **Create project…** and **Initialize existing directory…** open
 the same editor, so a Project states its design when it is created rather than acquiring
 one later by accident.
 
 Three ways in, because a folder can be in three states: it already has a `project.yaml`
-(**Open a Project…**), it does not exist yet (**Create Project…**), or it exists without one
-(**Initialize this folder…**). Each refuses the other two's case rather than guessing.
+(**Open Project**), it does not exist yet (**Create project…**), or it exists without one
+(**Initialize existing directory…**). Each refuses the other two's case rather than guessing.
 
 The button reads **Project design… (none set)** for a Project with no `design:` block. Such
 a Project still loads, but it validates its members against *each other* instead of against
@@ -160,7 +160,7 @@ root those are configuration and declaration, never data. Nothing is ever overwr
 ## Adding a member
 
 The same three cases, one level down — **Create member…** when it does not exist yet,
-**Initialize existing folder…** when the folder is there but its config is not, and
+**Initialize existing directory…** when the folder is there but its config is not, and
 **Member configs…** for doing the second in bulk. Double-clicking a blocked row offers the
 same repair in place.
 
@@ -173,7 +173,7 @@ refuse to load, and you would otherwise have to find and undo the copy by hand. 
 conforms is still not necessarily *ready* — it carries the other member's chamber
 assignments, which are about that plate.
 
-**Initialize existing folder…** files what is loose before it configures anything: the DFM
+**Initialize existing directory…** files what is loose before it configures anything: the DFM
 CSVs into `data/`, everything else into `extra_files/`. A config written first would
 describe a member whose data the loader cannot see.
 
