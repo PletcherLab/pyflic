@@ -237,6 +237,24 @@ def test_member_configs_lists_every_folder_and_scaffolds_the_missing(app, hub):
         dialog.close()
 
 
+def test_creating_a_config_files_the_loose_recording_first(app, hub):
+    """The scaffold reconciles its dfms: against data/ — a recording still
+    at the root would produce a config listing no DFMs with the data
+    sitting right there."""
+    row = _column(hub.batch_table, 0).index("Sept2026/ProjA")
+    hub._batch_row_activated(hub.batch_table.item(row, 0))
+    dialog = MemberConfigsDialog(hub, hub.project)
+    try:
+        dialog._create("rep3_loose")
+        directory = Path(hub.project.project_directory) / "rep3_loose"
+        assert (directory / "data" / "DFM1_0.csv").is_file()
+        cfg = yaml.safe_load(
+            (directory / "flic_config.yaml").read_text(encoding="utf-8"))
+        assert [d["id"] for d in cfg["dfms"]] == [1, 2]
+    finally:
+        dialog.close()
+
+
 # ---------------------------------------------------------------------------
 # The output log
 # ---------------------------------------------------------------------------

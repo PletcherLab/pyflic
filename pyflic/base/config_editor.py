@@ -35,12 +35,14 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStyle,
+    QStyledItemDelegate,
     QStyleOptionTab,
     QStylePainter,
     QTabBar,
@@ -544,6 +546,61 @@ def _build_chamber_table(n_chambers: int) -> QTableWidget:
     return table
 
 
+class _LevelDelegate(QStyledItemDelegate):
+    """Dropdown editor for the chamber table's factor columns.
+
+    Typing levels invited typos and values the design never declared; the
+    dropdown offers exactly what the column's factor defines, plus a blank
+    entry to clear the cell (omitting a chamber is "clear the whole row").
+    The Treatment column of a config with no factors keeps free text — there
+    is nothing defined to pick from.  A level already in the cell that the
+    design does not declare is still shown and offered, so opening the editor
+    cannot silently rewrite a loaded config; validation paints it red instead.
+    """
+
+    def __init__(self, owner: "DFMWidget", parent=None) -> None:
+        super().__init__(parent)
+        self._owner = owner
+
+    def createEditor(self, parent, option, index):  # noqa: N802 (Qt override)
+        levels = self._owner.levels_for_column(index.column())
+        if not levels:
+            return super().createEditor(parent, option, index)
+        combo = QComboBox(parent)
+        combo.addItem("")
+        combo.addItems(levels)
+        current = str(index.data() or "")
+        if current and current not in levels:
+            combo.addItem(current)
+        ## Commit the pick immediately — the default waits for a focus-out,
+        ## which reads as the choice not taking.
+        combo.activated.connect(lambda _i, c=combo: self._commit(c))
+        return combo
+
+    def _commit(self, combo: QComboBox) -> None:
+        self.commitData.emit(combo)
+        self.closeEditor.emit(combo)
+
+    def setEditorData(self, editor, index):  # noqa: N802 (Qt override)
+        if isinstance(editor, QComboBox):
+            editor.setCurrentText(str(index.data() or ""))
+            ## Deliberately no auto-showPopup: popping the list on a timer
+            ## during the click sequence raced the mouse release, which then
+            ## landed on the popup and dismissed it — a sporadic dead
+            ## dropdown, worst under Wayland.  The single-click path shows a
+            ## QMenu instead (see DFMWidget._maybe_edit_cell); this editor
+            ## serves double-click and keyboard edits.
+        else:
+            super().setEditorData(editor, index)
+
+    def setModelData(self, editor, model, index):  # noqa: N802 (Qt override)
+        if isinstance(editor, QComboBox):
+            model.setData(index, editor.currentText(),
+                          Qt.ItemDataRole.EditRole)
+        else:
+            super().setModelData(editor, model, index)
+
+
 class DFMWidget(QWidget):
     """Configuration widget for a single DFM (one tab in the DFM tab widget)."""
 
@@ -587,6 +644,12 @@ class DFMWidget(QWidget):
         self._ch_card.add_body(self._ch_hint)
         self._chamber_table = _build_chamber_table(n_chambers)
         self._chamber_table.itemChanged.connect(self._on_chamber_cell_changed)
+        ## Factor columns edit through a dropdown of the declared levels; a
+        ## single click opens it, so assigning a chamber is a pick, not a re-
+        ## typing of the design.
+        self._chamber_table.setItemDelegate(
+            _LevelDelegate(self, self._chamber_table))
+        self._chamber_table.cellClicked.connect(self._maybe_edit_cell)
         self._ch_card.add_body(self._chamber_table)
         outer.addWidget(self._ch_card)
 
@@ -612,16 +675,69 @@ class DFMWidget(QWidget):
         """Limit which parameters this DFM may override (Project rule)."""
         self._params_form.restrict_overrides(allowed, reason=reason)
 
+    def levels_for_column(self, column: int) -> list[str]:
+        """The declared levels behind chamber-table *column*, or ``[]`` when
+        the column is free text (the Chamber column, a Treatment column with
+        no factors, or a factor that declares no levels)."""
+        names = list(self._factor_levels.keys())
+        if not names or column < 1 or column - 1 >= len(names):
+            return []
+        return list(self._factor_levels.get(names[column - 1]) or [])
+
+    def _level_menu(self, row: int, column: int) -> QMenu | None:
+        """The pick-a-level menu for a factor cell, or ``None`` for free
+        text.  Blank clears; a current value the factor does not declare is
+        offered too, so the menu cannot silently rewrite a loaded config."""
+        levels = self.levels_for_column(column)
+        item = self._chamber_table.item(row, column)
+        if not levels or item is None:
+            return None
+        current = item.text().strip()
+        entries = [""] + levels
+        if current and current not in levels:
+            entries.append(current)
+        menu = QMenu(self._chamber_table)
+        for level in entries:
+            action = menu.addAction(level or "(clear)")
+            action.setData(level)
+            action.setCheckable(True)
+            action.setChecked(level == current)
+        return menu
+
+    def _maybe_edit_cell(self, row: int, column: int) -> None:
+        """Single click picks the level from a menu at the cell.
+
+        A QMenu rather than the delegate's combo popup: opening a combo's
+        list mid-click raced the mouse release, which landed on the popup
+        and dismissed it — a sporadic dead dropdown, worst under Wayland.
+        The menu runs its own event loop after the click completes, so it
+        cannot lose that race; the delegate still serves double-click and
+        keyboard edits.
+        """
+        menu = self._level_menu(row, column)
+        if menu is None:
+            return
+        rect = self._chamber_table.visualRect(
+            self._chamber_table.model().index(row, column))
+        chosen = menu.exec(
+            self._chamber_table.viewport().mapToGlobal(rect.bottomLeft()))
+        if chosen is not None:
+            self._chamber_table.item(row, column).setText(chosen.data())
+
     def _on_chamber_cell_changed(self, item: QTableWidgetItem) -> None:
         col = item.column()
         if col == 0:
             return
         raw = item.text()
-        clean = _sanitize_treatment(raw)
-        if clean != raw:
-            self._chamber_table.blockSignals(True)
-            item.setText(clean)
-            self._chamber_table.blockSignals(False)
+        ## A declared level is written as declared: sanitizing one (say, a
+        ## hyphenated level) would rewrite the very value the dropdown just
+        ## offered, and the mangled text then fails validation.
+        if raw not in self.levels_for_column(col):
+            clean = _sanitize_treatment(raw)
+            if clean != raw:
+                self._chamber_table.blockSignals(True)
+                item.setText(clean)
+                self._chamber_table.blockSignals(False)
         self.revalidate_chambers()
 
     def _row_levels(self, row: int) -> list[str]:
@@ -769,9 +885,10 @@ class DFMWidget(QWidget):
             headers = ["Chamber"] + factor_names
             self._ch_card.set_title("Chamber → Factor Level Assignments")
             self._ch_hint.setText(
-                f"Enter one level per column in the order: "
-                f"{', '.join(factor_names)}.  Every column must be filled — "
-                f"clear the whole row to omit a chamber."
+                f"Click a cell and pick the level from its dropdown, one per "
+                f"column in the order: {', '.join(factor_names)}.  Every "
+                f"column must be filled — pick the blank entry in every "
+                f"column to omit a chamber."
             )
         else:
             headers = ["Chamber", "Treatment"]
@@ -1535,7 +1652,11 @@ class FLICConfigEditor(QMainWindow):
 
         If *initial_path* is given:
           • a file → loaded directly;
-          • a directory → search for ``flic_config.yaml`` / ``flic_config.yml``.
+          • a directory → search for ``flic_config.yaml`` / ``flic_config.yml``;
+            with no config there, DFM CSVs found in the directory (loose, or
+            already filed into ``data/``) preload one DFM tab per id — the
+            "initialize an existing recording" case, where the plate already
+            says which DFMs exist and retyping their ids is pure error surface.
         Otherwise: search the current working directory for the defaults.
         """
         candidates: list[Path] = []
@@ -1561,6 +1682,35 @@ class FLICConfigEditor(QMainWindow):
                         f"Could not auto-load {candidate.name}: {exc}.  Use File → Open to load manually."
                     )
                 break
+        else:
+            self._preload_from_data(initial_path)
+
+    def _preload_from_data(self, initial_path: str | Path | None) -> None:
+        """No config to load — preload the DFMs the data files name.
+
+        Goes through :meth:`_load_config` like a real file, so a directory
+        inside a Project also picks up the Design's ``global:`` and its
+        field locks.  Saving writes the directory's ``flic_config.yaml``.
+        """
+        if initial_path is None:
+            return
+        directory = Path(initial_path).expanduser()
+        if not directory.is_dir():
+            return
+        from . import layout as layout_mod
+        from .project import dfm_ids_in_data
+
+        ids = dfm_ids_in_data(directory) or layout_mod.dfm_ids(directory)
+        if not ids:
+            return
+        self._current_path = directory / "flic_config.yaml"
+        self.setWindowTitle(f"FLIC Config Editor — {self._current_path.name}")
+        self._load_config(
+            {"dfms": [{"id": dfm_id, "chambers": {}} for dfm_id in ids]})
+        id_list = ", ".join(str(i) for i in ids)
+        self.statusBar().showMessage(
+            f"No flic_config.yaml here yet — preloaded DFM(s) {id_list} "
+            "found in the data files.  Assign chambers and save.")
 
     # ------------------------------------------------------------------
     # YAML serialisation / deserialisation
@@ -1841,6 +1991,23 @@ class FLICConfigEditor(QMainWindow):
                 node.setdefault("id", int(k))
                 items.append(node)
             dfm_nodes = items
+
+        if not dfm_nodes and self._current_path is not None:
+            ## A config that lists no DFMs, sitting beside data that does —
+            ## a just-initialized directory.  Preload the ids the files name
+            ## rather than a lone default DFM 1 that would be retyped from
+            ## the filenames.
+            from . import layout as layout_mod
+            from .project import dfm_ids_in_data
+
+            directory = self._current_path.parent
+            ids = dfm_ids_in_data(directory) or layout_mod.dfm_ids(directory)
+            if ids:
+                dfm_nodes = [{"id": dfm_id, "chambers": {}} for dfm_id in ids]
+                self.statusBar().showMessage(
+                    "Config lists no DFMs — preloaded DFM(s) "
+                    f"{', '.join(str(i) for i in ids)} found in the data "
+                    "files.  Assign chambers and save.")
 
         n = max(1, len(dfm_nodes))
         ## Resize the widgets that already exist before adjusting the count:

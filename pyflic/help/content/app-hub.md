@@ -16,8 +16,8 @@ a Batch.
 A **tile ribbon** runs across the top. The top strip is the containment hierarchy read
 left to right — wide **Batch · Project · Experiment** tiles — then **Tools** and a
 **status readout** filling the strip to their right. The Experiment tile opens no panel
-of its own: it expands a second, shorter row of four compact subtiles — **Analyze ·
-Plots · Scripts · AI** — the tools that act on the loaded member. Below the ribbon is a
+of its own: it expands a second, shorter row of five compact subtiles — **QC ·
+Analyze · Plots · Scripts · AI** — the tools that act on the loaded member. Below the ribbon is a
 full-width output and plots area.
 
 Each tile shows only live status — how many members, which one is loaded, how many
@@ -79,8 +79,9 @@ shown only while a Project is open).
 
 The Experiments card's members table is the centre of the Hub: one row per member, with its DFM count,
 chamber count, and whether it has been analysed and reported. Double-click a row to load
-it — once the load finishes, the Experiment group expands and the Analyze panel opens,
-because loading is only ever a step toward doing something with it.
+it — once the load finishes, the Experiment group expands and the QC panel opens,
+because loading is only ever a step toward doing something with it, and checking the
+recording comes before the analysis that depends on it.
 
 **Red rows are blocked members** — folders a run cannot use as they stand, including ones
 the Project cannot even see yet because they have no config. Hover for the reason. These
@@ -164,8 +165,20 @@ Appears when a Project is open, in the order the work happens:
 
 ## Analyze panel
 
-Actions on the **loaded member**: basic analysis, the summary CSVs, the faceted summary,
-binned CSVs, tidy events, and the per-member PDF report.
+Actions on the **loaded member**: basic analysis, the summary CSVs, the faceted
+summary, binned CSVs, tidy events, and the per-member PDF report. Basic analysis
+deliberately skips QC — that is the QC panel's job.
+
+## QC panel
+
+Everything QC for the loaded member, in the order the work happens. **QC reports**
+writes the per-DFM bundle into `qc/`: the integrity report, data breaks, the
+simultaneous-feeding and bleeding matrices (two-well), and the **Raw Signal**,
+**Baselined**, and **Cumulative Licks** signal plots. **Open QC Viewer** opens the
+interactive app on the already-loaded member — tables, plots, and per-chamber
+exclusions saved to `remove_chambers.csv` (see [QC Viewer](app-qc-viewer.md)).
+**View QC plots** opens the saved signal plots as output-area tabs, one per DFM and
+kind, reusing tabs on a second look. **Open qc folder** shows the files themselves.
 
 ## Plots panel
 
@@ -192,7 +205,7 @@ Analysis card instead. See [AI summary](concepts-ai-summary.md).
 
 ## Tools panel
 
-The config editor, the QC viewer, **Validate every YAML here** (parses every
+The config editor, **Validate every YAML here** (parses every
 `project.yaml`, `batch.yaml` and `flic_config.yaml` under the selection and reports what
 fails — the cheap way to find a hand-edited config three folders down before an unattended
 run finds it), the linter and its migration checks, opening the selected folder, cache
@@ -204,6 +217,7 @@ Below the strip: an **Output** tab carrying everything a run prints, an **Errors
 collecting the warnings and failures (it badges itself while unread), and one tab per
 figure. The buttons in the top-right corner clear each of the three.
 
-During a long run the figure tabs pile up faster than anyone reads them. **Suppress new
-plot / output tabs**, in the Batch panel, stops new ones being created — every artifact is
-still written to disk.
+During a Batch Run the figure tabs pile up faster than anyone reads them. **Suppress
+new plot / output tabs during Batch Runs**, in the Batch panel, stops new ones being
+created — every artifact is still written to disk. It governs Batch Runs only: project
+and experiment analyses always show their plots.

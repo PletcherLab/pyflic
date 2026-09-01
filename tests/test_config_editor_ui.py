@@ -22,7 +22,13 @@ import yaml
 pytest.importorskip("PyQt6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QTableWidgetItem  # noqa: E402
+from PyQt6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QComboBox,
+    QLineEdit,
+    QStyleOptionViewItem,
+    QTableWidgetItem,
+)
 
 from pyflic.base.config_editor import FLICConfigEditor  # noqa: E402
 
@@ -276,6 +282,176 @@ def test_a_level_the_factor_does_not_declare_is_reported(app, tmp_path):
         _, dfm_problems = win._problems()
         assert dfm_problems == [
             "DFM 1 chamber 1: 'Nonsense' is not a level of 'genotype'"]
+    finally:
+        win.close()
+
+
+def test_a_configless_directory_preloads_the_dfms_its_data_names(app, tmp_path):
+    """Opening the editor on a recording with no config yet — the initialize
+    case — preloads one DFM tab per id found in data/, instead of a blank
+    editor whose ids have to be retyped from the filenames."""
+    (tmp_path / "data").mkdir()
+    for name in ("DFM3_0.csv", "DFM3_1.csv", "DFM7_0.csv"):
+        (tmp_path / "data" / name).write_text("x")
+    win = FLICConfigEditor(initial_path=tmp_path)
+    try:
+        assert [w._id_spin.value() for w in win._dfm_widgets] == [3, 7]
+        ## Save lands in the directory the DFMs came from.
+        assert win._current_path == tmp_path / "flic_config.yaml"
+    finally:
+        win.close()
+
+
+def test_loose_recordings_at_the_root_preload_too(app, tmp_path):
+    """A recording not yet filed into data/ still names its DFMs."""
+    (tmp_path / "DFM2_0.csv").write_text("x")
+    win = FLICConfigEditor(initial_path=tmp_path)
+    try:
+        assert [w._id_spin.value() for w in win._dfm_widgets] == [2]
+    finally:
+        win.close()
+
+
+def test_a_config_listing_no_dfms_preloads_them_from_the_data(app, tmp_path):
+    """A scaffolded-but-empty config beside real data must not open as a
+    lone default DFM 1 — the data already says which DFMs exist."""
+    (tmp_path / "data").mkdir()
+    for name in ("DFM4_0.csv", "DFM6_0.csv"):
+        (tmp_path / "data" / name).write_text("x")
+    (tmp_path / "flic_config.yaml").write_text("dfms: []\n")
+    win = FLICConfigEditor(initial_path=tmp_path)
+    try:
+        assert [w._id_spin.value() for w in win._dfm_widgets] == [4, 6]
+        ## Saving writes the entries themselves, chambers still unassigned —
+        ## the initial yaml names every DFM the data holds.
+        out = win._collect_yaml()
+        assert [d["id"] for d in out["dfms"]] == [4, 6]
+    finally:
+        win.close()
+
+
+def test_an_empty_directory_still_opens_a_blank_editor(app, tmp_path):
+    win = FLICConfigEditor(initial_path=tmp_path)
+    try:
+        assert len(win._dfm_widgets) == 1
+        assert win._current_path is None
+    finally:
+        win.close()
+
+
+def test_a_factor_column_edits_through_a_dropdown_of_its_levels(app, tmp_path):
+    """Typed levels invited typos and undeclared values; the cell editor is a
+    combo of exactly what the factor declares, plus a blank to clear."""
+    win = _open(app, tmp_path, {
+        "global": {"chamber_layout": "two_well",
+                   "experimental_design_factors": {
+                       "paired": ["Paired", "Unpaired"],
+                       "genotype": ["Chrim", "WCS"]}},
+        "dfms": [{"id": 1, "chambers": {}}],
+    })
+    try:
+        table = win._dfm_widgets[0]._chamber_table
+        delegate = table.itemDelegate()
+        option = QStyleOptionViewItem()
+        for column, levels in ((1, ["Paired", "Unpaired"]),
+                               (2, ["Chrim", "WCS"])):
+            index = table.model().index(0, column)
+            editor = delegate.createEditor(table, option, index)
+            assert isinstance(editor, QComboBox)
+            assert [editor.itemText(i) for i in range(editor.count())] \
+                == [""] + levels
+            editor.setCurrentText(levels[0])
+            delegate.setModelData(editor, table.model(), index)
+        assert win._collect_yaml()["dfms"][0]["chambers"][1] == "Paired, Chrim"
+        assert win._problems()[1] == []
+    finally:
+        win.close()
+
+
+def test_a_single_click_offers_the_levels_as_a_menu(app, tmp_path):
+    """The click path is a QMenu, not the delegate's combo popup: popping a
+    combo's list mid-click raced the mouse release, which dismissed it — a
+    sporadic dead dropdown, worst under Wayland."""
+    win = _open(app, tmp_path, {
+        "global": {"chamber_layout": "two_well",
+                   "experimental_design_factors": {
+                       "genotype": ["Chrim", "WCS"]}},
+        "dfms": [{"id": 1, "chambers": {}}],
+    })
+    try:
+        widget = win._dfm_widgets[0]
+        menu = widget._level_menu(0, 1)
+        assert [a.text() for a in menu.actions()] == \
+            ["(clear)", "Chrim", "WCS"]
+        menu.actions()[1].trigger()   # what exec()'s return path does
+        widget._chamber_table.item(0, 1).setText(menu.actions()[1].data())
+        assert win._collect_yaml()["dfms"][0]["chambers"][1] == "Chrim"
+        ## The current pick is marked, and clearing is always offered.
+        menu2 = widget._level_menu(0, 1)
+        assert [a.isChecked() for a in menu2.actions()] == \
+            [False, True, False]
+        ## An undeclared saved value appears rather than being rewritten.
+        widget._chamber_table.item(1, 1).setText("Mystery")
+        menu3 = widget._level_menu(1, 1)
+        assert [a.text() for a in menu3.actions()] == \
+            ["(clear)", "Chrim", "WCS", "Mystery"]
+        ## The chamber column and factor-less tables get no menu.
+        assert widget._level_menu(0, 0) is None
+    finally:
+        win.close()
+
+
+def test_an_undeclared_level_from_disk_is_offered_not_rewritten(app, tmp_path):
+    """Opening the dropdown on a cell whose saved level the design no longer
+    declares must not silently replace it — it is offered, and validation
+    reports it."""
+    win = _open(app, tmp_path, {
+        "global": {"chamber_layout": "two_well",
+                   "experimental_design_factors": {"genotype": ["Chrim", "WCS"]}},
+        "dfms": [{"id": 1, "chambers": {1: "Mystery"}}],
+    })
+    try:
+        table = win._dfm_widgets[0]._chamber_table
+        editor = table.itemDelegate().createEditor(
+            table, QStyleOptionViewItem(), table.model().index(0, 1))
+        assert "Mystery" in [editor.itemText(i) for i in range(editor.count())]
+        assert win._problems()[1] == [
+            "DFM 1 chamber 1: 'Mystery' is not a level of 'genotype'"]
+    finally:
+        win.close()
+
+
+def test_without_factors_the_treatment_column_stays_free_text(app, tmp_path):
+    """With no factors declared there is nothing to pick from."""
+    win = _open(app, tmp_path, {
+        "global": {"chamber_layout": "two_well"},
+        "dfms": [{"id": 1, "chambers": {}}],
+    })
+    try:
+        table = win._dfm_widgets[0]._chamber_table
+        editor = table.itemDelegate().createEditor(
+            table, QStyleOptionViewItem(), table.model().index(0, 1))
+        assert isinstance(editor, QLineEdit)
+    finally:
+        win.close()
+
+
+def test_a_declared_level_is_not_mangled_by_the_sanitizer(app, tmp_path):
+    """The sanitizer exists for typed text; a level the design declares is
+    written as declared, hyphens and all — otherwise the dropdown offers a
+    value that turns invalid the moment it lands."""
+    win = _open(app, tmp_path, {
+        "global": {"chamber_layout": "two_well",
+                   "experimental_design_factors": {
+                       "line": ["UAS-x1", "w1118"]}},
+        "dfms": [{"id": 1, "chambers": {}}],
+    })
+    try:
+        table = win._dfm_widgets[0]._chamber_table
+        table.setItem(0, 1, QTableWidgetItem("UAS-x1"))
+        assert table.item(0, 1).text() == "UAS-x1"
+        assert win._problems()[1] == []
+        assert win._collect_yaml()["dfms"][0]["chambers"][1] == "UAS-x1"
     finally:
         win.close()
 

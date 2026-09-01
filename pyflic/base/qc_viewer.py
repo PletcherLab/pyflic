@@ -13,7 +13,12 @@ Workflow
 --------
 1. **Load tab** — enter the experiment directory, time range, and parallelism
    options, then click "Load".  Loading runs in a background thread and its
-   progress (stdout from pyflic) is streamed into the log window.
+   progress (stdout from pyflic) is streamed into the log window.  A member
+   of a Project loads through the Project, so the Design's ``global:`` is
+   inherited exactly as the Hub loads it (ADR-0005) — a member config that
+   states no ``global:`` of its own is normal, not an error.  Opened from the
+   Hub with a member already loaded, the viewer starts on that experiment
+   without re-parsing the DFM CSVs.
 2. **Feeding Summary tab** — after loading a table of all chambers is shown.
    The "Excl." checkbox in column 0 marks a chamber for exclusion.
 3. **DFM N tabs** — one tab per DFM.  The left side shows the usual QC
@@ -24,8 +29,10 @@ Exclusion checkboxes are **bidirectionally synchronised**: toggling a chamber
 in the Feeding Summary tab updates the corresponding well checkbox in the DFM
 tab and vice versa.
 
-"Save to YAML" writes the current exclusion state back to
-``experiment_dir/flic_config.yaml`` under ``excluded_chambers:`` for each DFM.
+"Save Exclusions…" writes the current state to ``remove_chambers.csv`` under a
+named exclusion group (ADR-0010) — the group offered by default is the one the
+experiment analyzes with, which inside a Project the Design names.  The config
+yaml is never written by this app.
 """
 
 from __future__ import annotations
@@ -35,8 +42,13 @@ import sys
 from pathlib import Path
 
 # ── matplotlib backend must be set before any pyplot import ────────────────
+## Agg, not QtAgg: every canvas this window embeds is built explicitly
+## (Figure() + FigureCanvasQTAgg), which works under any pyplot backend —
+## while the QC plotting (write_qc_reports → dfm.plot_raw and friends) runs
+## pyplot in worker threads, where a QtAgg figure is a Qt widget created off
+## the GUI thread: the "likely fail" matplotlib warns about.
 import matplotlib
-matplotlib.use("QtAgg")
+matplotlib.use("Agg")
 
 import matplotlib.image as mpimg
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -312,16 +324,35 @@ class _LoadWorker(QtCore.QObject):
         self._parallel     = parallel
 
     def run(self) -> None:
+        from . import project as project_mod
         from .yaml_config import load_experiment_yaml
 
         with _LogRedirect(self.logged.emit):
             try:
-                exp = load_experiment_yaml(
-                    self._experiment_dir,
-                    range_minutes=self._range_minutes,
-                    parallel=self._parallel,
-                    exclusion_group=None,
-                )
+                exp_dir = Path(self._experiment_dir)
+                parent = exp_dir.parent
+                if project_mod.is_project_dir(parent) \
+                        and not project_mod.is_project_dir(exp_dir):
+                    ## A member loads through its Project so the Design's
+                    ## global: is inherited (ADR-0005) — loading the config
+                    ## directly fails on a member that states no global of
+                    ## its own, which is the normal case.
+                    print(f"Member of Project {parent.name} — loading "
+                          "through the Project design.", flush=True)
+                    project = project_mod.Project(str(parent))
+                    exp = project.load_member(
+                        exp_dir.name,
+                        range_minutes=self._range_minutes,
+                        parallel=self._parallel,
+                        exclusion_group=None,
+                    )
+                else:
+                    exp = load_experiment_yaml(
+                        self._experiment_dir,
+                        range_minutes=self._range_minutes,
+                        parallel=self._parallel,
+                        exclusion_group=None,
+                    )
                 print("Writing QC reports...", flush=True)
                 exp.write_qc_reports()
                 # Print integrity report text for each DFM
@@ -333,6 +364,31 @@ class _LoadWorker(QtCore.QObject):
                         print(text, flush=True)
                 self.finished.emit(exp)
             except Exception as exc:
+                self.errored.emit(str(exc))
+
+
+class _QCWorker(QtCore.QObject):
+    """Runs ``write_qc_reports`` on an already-loaded experiment.
+
+    The point of the Hub handoff is skipping the re-load; this is the other
+    half — computing the QC bundle in the viewer so the plots appear without
+    a round-trip back to the Hub.
+    """
+
+    finished = pyqtSignal(object)   # qc directory (Path)
+    errored  = pyqtSignal(str)      # error message
+    logged   = pyqtSignal(str)      # stdout text
+
+    def __init__(self, exp, parent: QtCore.QObject | None = None) -> None:
+        super().__init__(parent)
+        self._exp = exp
+
+    def run(self) -> None:
+        with _LogRedirect(self.logged.emit):
+            try:
+                out = self._exp.write_qc_reports()
+                self.finished.emit(out)
+            except Exception as exc:  # noqa: BLE001
                 self.errored.emit(str(exc))
 
 
@@ -869,6 +925,22 @@ class DfmTab(QtWidgets.QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def reload_qc(self, qc_dir: Path) -> None:
+        """Rebuild the QC sub-tabs from *qc_dir* — after a fresh QC run.
+
+        Only the report side: the Exclude Wells panel keeps its (possibly
+        unsaved) checkbox state, which a full tab rebuild would throw away.
+        """
+        current = self._tabs.currentIndex()
+        while self._tabs.count():
+            widget = self._tabs.widget(0)
+            self._tabs.removeTab(0)
+            if widget is not None:
+                widget.deleteLater()
+        self._build_qc_tabs(self._dfm_id, qc_dir)
+        if 0 <= current < self._tabs.count():
+            self._tabs.setCurrentIndex(current)
+
     def set_well_excluded(self, well_num: int, excluded: bool) -> None:
         """Set the exclusion state of a well checkbox without emitting a signal."""
         cb = self._checkboxes.get(well_num)
@@ -1026,7 +1098,8 @@ class MainWindow(QtWidgets.QMainWindow):
     sync via the ``_syncing`` flag and two cross-wired signal handlers.
     """
 
-    def __init__(self, experiment_dir: Path, qc_dir: Path | None = None) -> None:
+    def __init__(self, experiment_dir: Path, qc_dir: Path | None = None,
+                 experiment=None) -> None:
         super().__init__()
         self.resize(1380, 900)
         self.setWindowTitle(f"FLIC QC Viewer  —  {experiment_dir}")
@@ -1049,6 +1122,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ── Top bar ───────────────────────────────────────────────────
         self._top_bar = TopBar("FLIC QC Viewer")
+        self._qc_thread: QtCore.QThread | None = None
+        self._qc_worker: _QCWorker | None = None
+        ## Global, because write_qc_reports covers every DFM at once — and in
+        ## the top bar so it exists for an experiment handed over by the Hub,
+        ## whose fast path skips the Load tab (and its QC run) entirely.
+        self._btn_run_qc = ActionButton("Run QC", Category.QC, icon_name="qc")
+        self._btn_run_qc.setToolTip(
+            "Compute the QC bundle for the loaded experiment — integrity, "
+            "data breaks, bleeding, and the Raw / Baselined / Cumulative "
+            "Licks plots — and refresh the DFM tabs.  Progress streams to "
+            "the Load tab's log.")
+        self._btn_run_qc.setEnabled(False)
+        self._btn_run_qc.clicked.connect(self._on_run_qc)
+        self._top_bar.add_right(self._btn_run_qc)
         self._btn_theme = QToolButton()
         self._btn_theme.setIcon(icon("theme_dark" if resolved_mode() == "light" else "theme_light"))
         self._btn_theme.setIconSize(QSize(18, 18))
@@ -1068,13 +1155,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._load_tab.experiment_loaded.connect(self._on_experiment_loaded)
         self._tabs.addTab(self._load_tab, icon("load"), "Load")
 
+        ## Opened from the Hub with a member already loaded: start on it
+        ## instead of asking for a second multi-minute parse of the same DFM
+        ## CSVs.  The Load tab stays for reloading with a different window.
+        if experiment is not None:
+            self._on_experiment_loaded(experiment)
+
     # ------------------------------------------------------------------
     # After experiment is loaded
     # ------------------------------------------------------------------
 
     def _on_experiment_loaded(self, exp) -> None:
         self._exp = exp
-        self._experiment_dir = exp.experiment_dir
+        self._experiment_dir = Path(exp.experiment_dir)
         self.setWindowTitle(f"FLIC QC Viewer  —  {self._experiment_dir}")
         self._top_bar.set_title(f"FLIC QC Viewer — {self._experiment_dir.name}")
 
@@ -1093,7 +1186,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for dfm_id, dfm in exp.dfms.items():
             self._dfm_chamber_sizes[dfm_id] = int(dfm.params.chamber_size)
 
-        # Read 'general' exclusion group from remove_chambers.csv (chamber numbers)
+        # Read the experiment's own exclusion group — inside a Project the
+        # Design names it (ADR-0010) — from remove_chambers.csv.
         excluded_by_dfm = self._read_excluded_from_file()
 
         # Feeding summary tab
@@ -1145,10 +1239,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._tabs.currentChanged.connect(self._on_top_tab_changed)
 
+        self._btn_run_qc.setEnabled(True)
         n_dfms = len(self._dfm_tab_widgets)
-        self.statusBar().showMessage(
-            f"Loaded {n_dfms} DFM(s) from {self._experiment_dir}"
-        )
+        message = f"Loaded {n_dfms} DFM(s) from {self._experiment_dir}"
+        if not qc_dir.exists():
+            ## Handed a loaded experiment whose QC was never written: the
+            ## signal-plot tabs will say "not found" — name the fix.
+            message += ("  —  no QC reports on disk yet: click 'Run QC' to "
+                        "compute them and fill the plot tabs.")
+        self.statusBar().showMessage(message)
         self._tabs.setCurrentIndex(1)   # switch to Feeding Summary
 
     # ------------------------------------------------------------------
@@ -1363,12 +1462,17 @@ class MainWindow(QtWidgets.QMainWindow):
     # YAML persistence
     # ------------------------------------------------------------------
 
+    def _active_group(self) -> str:
+        """The exclusion group this experiment analyzes with — inside a
+        Project the Design names it (ADR-0010); ``general`` otherwise."""
+        return str(getattr(self._exp, "exclusion_group", None) or "general")
+
     def _read_excluded_from_file(self) -> dict[int, list[int]]:
-        """Read the ``"general"`` exclusion group from ``remove_chambers.csv``."""
+        """Read the experiment's exclusion group from ``remove_chambers.csv``."""
         from .exclusions import read_exclusions
 
         all_excl = read_exclusions(self._experiment_dir)
-        return all_excl.get("general", {})
+        return all_excl.get(self._active_group(), {})
 
     def _on_save_exclusions(self) -> None:
         """Prompt for a group name then write the current exclusion state to the file."""
@@ -1376,7 +1480,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             "Save removed chambers",
             "Save exclusions as group:",
-            text="general",
+            text=self._active_group(),
         )
         if not ok or not group.strip():
             return
@@ -1400,6 +1504,46 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         except Exception as exc:
             self.statusBar().showMessage(f"Could not write remove_chambers.csv: {exc}")
+
+    def _on_run_qc(self) -> None:
+        """Compute QC for the loaded experiment and refresh the DFM tabs.
+
+        The same background pattern as the Load tab's worker; progress
+        streams to that tab's log.
+        """
+        if self._exp is None:
+            self.statusBar().showMessage("Load an experiment first.")
+            return
+        if self._qc_thread is not None and self._qc_thread.isRunning():
+            return
+        self._btn_run_qc.setEnabled(False)
+        self.statusBar().showMessage(
+            "Computing QC…  (progress in the Load tab's log)")
+        self._qc_thread = QtCore.QThread(self)
+        self._qc_worker = _QCWorker(self._exp)
+        self._qc_worker.moveToThread(self._qc_thread)
+        self._qc_thread.started.connect(self._qc_worker.run)
+        self._qc_worker.logged.connect(self._load_tab._append_log)
+        self._qc_worker.finished.connect(self._on_qc_written)
+        self._qc_worker.errored.connect(self._on_qc_error)
+        self._qc_worker.finished.connect(self._qc_thread.quit)
+        self._qc_worker.errored.connect(self._qc_thread.quit)
+        self._qc_thread.finished.connect(self._qc_worker.deleteLater)
+        self._qc_thread.start()
+
+    def _on_qc_written(self, qc_dir) -> None:
+        self._btn_run_qc.setEnabled(True)
+        qc_dir = Path(qc_dir)
+        ## Only the report side of each DFM tab rebuilds; the Exclude Wells
+        ## checkboxes (possibly unsaved) stay exactly as they are.
+        for tab in self._dfm_tab_widgets.values():
+            tab.reload_qc(qc_dir)
+        self.statusBar().showMessage(
+            f"QC written to {qc_dir} — plot and report tabs refreshed.")
+
+    def _on_qc_error(self, message: str) -> None:
+        self._btn_run_qc.setEnabled(True)
+        self.statusBar().showMessage(f"QC failed: {message}")
 
     def _toggle_theme(self) -> None:
         from .ui import theme as _theme

@@ -58,11 +58,11 @@ def _load_fake(hub) -> None:
 
 def test_the_ribbon_has_container_tiles_and_subtiles(hub):
     assert set(hub.tiles) == {"batch", "project", "experiment", "tools",
-                              "analyze", "plots", "scripts", "ai"}
+                              "analyze", "qc", "plots", "scripts", "ai"}
     ## The Experiment group tile opens no panel of its own.
     assert set(hub.panels) == {"batch", "project", "tools",
-                               "analyze", "plots", "scripts", "ai"}
-    assert EXPERIMENT_SUBTILES == ("analyze", "plots", "scripts", "ai")
+                               "analyze", "qc", "plots", "scripts", "ai"}
+    assert EXPERIMENT_SUBTILES == ("qc", "analyze", "plots", "scripts", "ai")
     ## Container tiles are wide; Tools stays a regular chip.
     assert hub.tiles["batch"].maximumWidth() > hub.tiles["tools"].maximumWidth()
 
@@ -130,6 +130,32 @@ def test_unloading_folds_the_group_and_closes_its_panel(hub):
     assert hub._open_key is None
     assert hub.tiles["experiment"].is_dimmed()
     assert not hub.tiles["experiment"].is_clickable()
+
+
+def test_a_finished_load_reveals_the_qc_panel(hub):
+    """Loading is a step toward doing something — and QC comes first."""
+    _load_fake(hub)
+    hub._reveal_qc()
+    assert hub._open_key == "qc"
+    assert hub._experiment_expanded
+
+
+def test_the_reveal_never_yanks_away_a_panel_the_user_opened(hub):
+    _load_fake(hub)
+    hub._open_panel("project")
+    hub._reveal_qc()
+    assert hub._open_key == "project"
+
+
+def test_suppress_tabs_governs_only_batch_tasks(hub):
+    """Plots are the point of an analysis someone ran by hand; the switch
+    exists for Batch Runs, whose tabs run into the hundreds."""
+    hub.chk_suppress_tabs.setChecked(True)
+    assert not hub._tabs_suppressed()
+    hub._suppress_tabs_task = True          # what a Batch Run's _start sets
+    assert hub._tabs_suppressed()
+    hub.chk_suppress_tabs.setChecked(False)
+    assert not hub._tabs_suppressed()
 
 
 def test_subtiles_are_compact_and_route_summaries_to_the_tooltip(hub):

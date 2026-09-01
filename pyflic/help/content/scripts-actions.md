@@ -20,7 +20,8 @@ several devices. `group` defaults to the **script's name** — see
 
 | Action | Parameters | What it does |
 |---|---|---|
-| `basic_analysis` | — | The standard pipeline: QC, summary, feeding summary, summary plot |
+| `basic_analysis` | — | The standard pipeline: summary, feeding summary, summary plot (QC is `run_qc`'s job) |
+| `run_qc` | — | Per-DFM QC reports into `qc/`: integrity, data breaks, bleeding, raw / baselined / cumulative-licks plots |
 | `feeding_csv` | — | Per-chamber feeding summary to CSV |
 | `binned_csv` | `binsize` | Feeding metrics binned over time, to CSV |
 | `weighted_duration` | — | Weighted-duration summary (hedonic experiments) |

@@ -149,6 +149,9 @@ def run_experiment_script(
         elif action == "basic_analysis":
             exp.execute_basic_analysis(range_minutes=rm, skip_qc=True)
 
+        elif action == "run_qc":
+            ctx.log(f"QC reports → {exp.write_qc_reports()}")
+
         elif action == "feeding_csv":
             ctx.log(f"Wrote: {exp.write_feeding_summary(range_minutes=rm)}")
 

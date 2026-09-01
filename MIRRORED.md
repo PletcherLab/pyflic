@@ -69,6 +69,15 @@ validation, the batch AI narrative, and the sheet-preview/decline switch.
 
 ## Not mirrored — deliberate divergences
 
+* **A fifth subtile: QC.** Upstream's Experiment sub-strip is Analyze · Plots ·
+  Scripts · AI; pyflic adds **QC** ahead of Analyze (ADR-0012 here).
+  FLIC QC is heavyweight and central — per-DFM integrity/bleeding reports and
+  the raw / baselined / cumulative-licks signal plots, plus an interactive
+  viewer that decides exclusions — where upstream folds QC into its Load + QC
+  step and a viewer launched from elsewhere.  The subtile gives the reports,
+  the viewer, the saved plots, and the folder one home beside the analysis
+  they qualify.
+
 * **A Project's children are Members, not replicates** (ADR-0009). Upstream's
   Project holds the same experiment repeated; pyflic's holds different
   experiments addressing one question. Every mirrored surface renames the word,

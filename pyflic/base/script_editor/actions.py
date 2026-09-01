@@ -179,6 +179,15 @@ ACTIONS: list[Action] = [
         params=[_START, _END],
     ),
     Action(
+        action="run_qc",
+        label="QC reports",
+        blurb="Write per-DFM QC reports and signal plots into qc/.",
+        icon="qc", category=Category.QC, produces="none",
+        notes="Integrity report, data breaks, simultaneous feeding and "
+              "bleeding matrices (two-well), and the per-DFM Raw Signal, "
+              "Baselined, and Cumulative Licks plots the QC Viewer shows.",
+    ),
+    Action(
         action="feeding_csv",
         label="Write feeding CSV",
         blurb="Dump the per-chamber feeding summary to a CSV file.",

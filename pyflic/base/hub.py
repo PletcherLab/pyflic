@@ -20,8 +20,8 @@ Two rules shape it:
   Project panel's members table.  There is no Load tile: the load options
   live in the Project panel beside the table that triggers the load.
   Double-clicking a Batch row opens the Project panel and double-clicking a
-  member opens the Analyze panel: selecting is only ever a step toward doing
-  something.
+  member opens the QC panel: selecting is only ever a step toward doing
+  something, and QC comes first.
 * **Every folder that could run is visible.**  Batch discovery is recursive and
   prunes at each Project, and a Blocked Member — an unfiled recording, a folder
   with no config — is listed in red where the button that fixes it lives, rather
@@ -104,7 +104,10 @@ TILE_SPECS: list[tuple[str, str, str, Category, int]] = [
 #: The Experiment sub-strip: compact, title-only subtiles for the tools that
 #: act on the loaded member.  Their panels are deliberately narrow — a column
 #: of buttons, and a button only needs its label.
+## QC before Analyze: checking the recording and deciding exclusions is what
+## happens before the analysis that depends on them.
 SUBTILE_SPECS: list[tuple[str, str, str, Category, int]] = [
+    ("qc",      "QC",      "qc",      Category.QC,      310),
     ("analyze", "Analyze", "analyze", Category.ANALYZE, 310),
     ("plots",   "Plots",   "plots",   Category.PLOTS,   300),
     ("scripts", "Scripts", "scripts", Category.SCRIPTS, 390),
@@ -193,6 +196,9 @@ class AnalysisHubWindow(QMainWindow):
         self._batch_panel_root: str | None = None
         self._noted_sheet: str | None = None
         self._noted_truncation: str | None = None
+        #: Whether the running task is one the suppress-tabs switch governs
+        #: (a Batch Run).  Set by _start, read by _tabs_suppressed.
+        self._suppress_tabs_task = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -290,6 +296,7 @@ class AnalysisHubWindow(QMainWindow):
         "batch": "scripts-batch#the-review-window",
         "project": "concepts-project#blocked-members",
         "analyze": "app-hub#analyze-panel",
+        "qc": "app-qc-viewer",
         "plots": "plots-catalog",
         "scripts": "scripts-overview",
         "ai": "concepts-ai-summary",
@@ -318,6 +325,7 @@ class AnalysisHubWindow(QMainWindow):
         self._build_batch_panel()
         self._build_project_panel()
         self._build_analyze_panel()
+        self._build_qc_panel()
         self._build_plots_panel()
         self._build_scripts_panel()
         self._build_ai_panel()
@@ -451,12 +459,13 @@ class AnalysisHubWindow(QMainWindow):
         ## Output tab the user is actually reading.  Checked, new tabs stop
         ## being created; Output and Errors keep streaming and every artifact
         ## is still written to disk.
-        self.chk_suppress_tabs = QCheckBox("Suppress new plot / output tabs")
+        self.chk_suppress_tabs = QCheckBox(
+            "Suppress new plot / output tabs during Batch Runs")
         self.chk_suppress_tabs.setToolTip(
-            "Stop opening a tab for every figure.  The Output and Errors tabs "
-            "keep updating, and every artifact is still written to disk — "
-            "only the tabs are skipped.  Applies to all runs while it is "
-            "checked, not just Batch Runs.")
+            "During a Batch Run, stop opening a tab for every figure.  The "
+            "Output and Errors tabs keep updating, and every artifact is "
+            "still written to disk — only the tabs are skipped.  Project and "
+            "experiment analyses always show their plots.")
         self.chk_suppress_tabs.setChecked(True)
         card.add_body(self.chk_suppress_tabs)
 
@@ -760,6 +769,49 @@ class AnalysisHubWindow(QMainWindow):
         card.add_body(row)
         self.panels["analyze"].add_card(card)
 
+    def _build_qc_panel(self) -> None:
+        """Everything QC for the loaded member, in the order the work
+        happens: write the reports, inspect them, decide exclusions."""
+        card = Card("QC", Category.QC, icon_name="qc",
+                    subtitle="Per-DFM quality control for the loaded member: "
+                             "integrity, bleeding, and the raw / baselined / "
+                             "cumulative-licks signal plots.")
+        self.qc_hint = QLabel("")
+        self.qc_hint.setWordWrap(True)
+        card.add_body(self.qc_hint)
+
+        run_btn = ActionButton("QC reports", Category.QC, "qc", primary=True)
+        run_btn.setToolTip(
+            "Write the QC bundle into qc/: integrity report, data breaks, "
+            "simultaneous-feeding and bleeding matrices (two-well), and the "
+            "Raw Signal, Baselined, and Cumulative Licks plots.  Basic "
+            "analysis deliberately skips this slow half.")
+        run_btn.clicked.connect(
+            lambda: self._run_experiment_action({"action": "run_qc"}))
+        card.add_body(run_btn)
+
+        viewer_btn = ActionButton("Open QC Viewer", Category.QC, "qc")
+        viewer_btn.setToolTip(
+            "The interactive QC app on the loaded member — integrity and "
+            "bleeding tables, the signal plots, and per-chamber exclusions "
+            "saved to remove_chambers.csv.")
+        viewer_btn.clicked.connect(self._open_qc_viewer)
+        card.add_body(viewer_btn)
+
+        plots_btn = ActionButton("View QC plots", Category.QC, "plot")
+        plots_btn.setToolTip(
+            "Open the saved Raw Signal, Baselined, and Cumulative Licks "
+            "plots — one tab per DFM and kind — in the output area.")
+        plots_btn.clicked.connect(self._view_qc_plots)
+        card.add_body(plots_btn)
+
+        folder_btn = ActionButton("Open qc folder", Category.TOOLS, "open")
+        folder_btn.setToolTip(
+            "Open the member's qc/ folder in the system file browser.")
+        folder_btn.clicked.connect(self._open_qc_folder)
+        card.add_body(folder_btn)
+        self.panels["qc"].add_card(card)
+
     def _build_plots_panel(self) -> None:
         """Quick figures for the loaded member — and only that.
 
@@ -858,9 +910,10 @@ class AnalysisHubWindow(QMainWindow):
 
     def _build_tools_panel(self) -> None:
         card = Card("Tools", Category.TOOLS, icon_name="tools")
+        ## The QC viewer moved to the Experiment group's QC subtile — its
+        ## home beside the button that writes what it shows.
         for label, icon_name, handler in (
             ("Config editor", "config", self._open_config_editor),
-            ("QC viewer", "qc", self._open_qc_viewer),
             ("Validate every YAML here", "lint", self._validate_yaml),
             ("Lint / migration check", "lint", self._run_lint),
             ("Open this folder", "open", self._open_folder),
@@ -1337,9 +1390,10 @@ class AnalysisHubWindow(QMainWindow):
 
     def _project_row_activated(self, item) -> None:
         """Double-clicking a member loads it — and, once loaded, reveals the
-        Analyze panel: loading is only ever a step toward doing something
-        with it.  The reveal waits for the load because the Experiment group
-        the panel hangs from does not exist until a member is loaded."""
+        QC panel: loading is only ever a step toward doing something with
+        it, and checking the recording comes first.  The reveal waits for
+        the load because the Experiment group the panel hangs from does not
+        exist until a member is loaded."""
         if self.project is None:
             return
         cell = self.project_table.item(item.row(), 0)
@@ -1428,7 +1482,7 @@ class AnalysisHubWindow(QMainWindow):
             self.experiment = exp
             self.experiment_name = name
             self.refresh()
-            self._reveal_analyze()
+            self._reveal_qc()
 
         return self._start(task, f"Loading member '{name}'", done,
                            note=self._LOADING_NOTE)
@@ -1448,31 +1502,38 @@ class AnalysisHubWindow(QMainWindow):
             self.experiment = exp
             self.experiment_name = os.path.basename(path)
             self.refresh()
-            self._reveal_analyze()
+            self._reveal_qc()
 
         return self._start(task, f"Loading {path}", done,
                            note=self._LOADING_NOTE)
 
-    def _reveal_analyze(self) -> None:
-        """Open the Analyze panel after a load — loading is only ever a step
-        toward doing something — unless the user opened another panel while
-        the load ran; a reveal must not yank that away."""
+    def _reveal_qc(self) -> None:
+        """Open the QC panel after a load — checking the recording and
+        deciding exclusions come before the analysis that depends on them —
+        unless the user opened another panel while the load ran; a reveal
+        must not yank that away."""
         if self._open_key is None:
-            self._open_panel("analyze")
+            self._open_panel("qc")
 
     # ------------------------------------------------------------------
     # Running
     # ------------------------------------------------------------------
 
     def _start(self, task, label: str, on_done=None, *,
-               note: str | None = None) -> bool:
+               note: str | None = None, suppress_tabs: bool = False) -> bool:
         """Run *task* in the worker.  Returns whether it actually started —
         callers with a side effect tied to the run (closing the panel a
-        double-click came from) must not perform it on a refusal."""
+        double-click came from) must not perform it on a refusal.
+
+        *suppress_tabs* marks the task as one the Batch panel's suppress-tabs
+        switch governs (a Batch Run); every other task shows its figures
+        regardless of the switch.
+        """
         if self._worker is not None and self._worker.isRunning():
             QMessageBox.information(self, "Busy",
                                     "A task is already running.")
             return False
+        self._suppress_tabs_task = suppress_tabs
         self.log.append_line(f"\n=== {label} ===")
         if note:
             self.log.append_line(note)
@@ -1547,11 +1608,12 @@ class AnalysisHubWindow(QMainWindow):
     def _tabs_suppressed(self) -> bool:
         """Whether new figure/artifact tabs are being skipped for this run.
 
-        The switch lives in the Batch panel because a Batch Run is what makes
-        the tabs unbearable, but it governs every run: a 40-member "Analyze
-        all" buries the Output tab just as thoroughly.
+        Scoped to Batch Runs only: the switch exists because a Batch Run's
+        tabs run into the hundreds, but plots are the point of a project or
+        experiment analysis someone ran by hand, so those always show.
         """
-        return bool(getattr(self, "chk_suppress_tabs", None)
+        return bool(self._suppress_tabs_task
+                    and getattr(self, "chk_suppress_tabs", None)
                     and self.chk_suppress_tabs.isChecked())
 
     def _show_figures(self, result) -> None:
@@ -1565,7 +1627,8 @@ class AnalysisHubWindow(QMainWindow):
                 ## switch creates, and the answer belongs in the log.
                 self.log.append_line(
                     f"{shown} figure(s) not shown — 'Suppress new plot / "
-                    "output tabs' is checked in the Batch panel.")
+                    "output tabs during Batch Runs' is checked in the Batch "
+                    "panel.")
             return
         for entry in result:
             if isinstance(entry, tuple) and len(entry) == 2:
@@ -2075,7 +2138,8 @@ class AnalysisHubWindow(QMainWindow):
             self._invalidate_batch_scan()
             self.refresh()
 
-        self._start(task, f"Batch Run in {os.path.basename(root)}", done)
+        self._start(task, f"Batch Run in {os.path.basename(root)}", done,
+                    suppress_tabs=True)
 
     def _open_batch_preflight(self, root, focus=None):
         """Show the preflight for *root*; returns ``(keys, apply_exclusions)``
@@ -2264,8 +2328,67 @@ class AnalysisHubWindow(QMainWindow):
             return
         from .qc_viewer import MainWindow as QCViewerWindow
 
-        self._qc = QCViewerWindow(Path(self.experiment.experiment_dir))
+        ## Hand over the loaded experiment: re-parsing every DFM CSV in the
+        ## viewer's own Load tab is minutes of work the Hub already did.
+        self._qc = QCViewerWindow(Path(self.experiment.experiment_dir),
+                                  experiment=self.experiment)
         self._qc.show()
+
+    def _member_qc_dir(self) -> Path | None:
+        """The loaded member's ``qc/`` directory, loaded member permitting."""
+        if self.experiment is None:
+            return None
+        qc_dir = getattr(self.experiment, "qc_dir", None)
+        return Path(qc_dir) if qc_dir is not None \
+            else Path(self.experiment.experiment_dir) / "qc"
+
+    #: The saved QC signal plots, as (subdirectory, filename suffix, label).
+    _QC_PLOT_KINDS = (("raw_signal", "raw", "raw"),
+                      ("baselined", "baselined", "baselined"),
+                      ("cumulative_licks", "cumulative_licks", "licks"))
+
+    def _view_qc_plots(self) -> None:
+        """Open the saved QC signal PNGs as output-area tabs.
+
+        Reuses a tab per (DFM, kind) so viewing twice does not grow the tab
+        bar; the images are the ones ``write_qc_reports`` saved, so a change
+        of parameters needs a re-run to show.
+        """
+        if not self._require_experiment():
+            return
+        from .ui import ZoomableImageView
+
+        qc_dir = self._member_qc_dir()
+        shown = 0
+        for dfm_id in sorted(self.experiment.dfms):
+            for subdir, suffix, label in self._QC_PLOT_KINDS:
+                png = qc_dir / subdir / f"DFM{dfm_id}_{suffix}.png"
+                if not png.is_file():
+                    continue
+                self.dock.add_widget(f"DFM{dfm_id} {label}",
+                                     ZoomableImageView(png),
+                                     icon("qc", Category.QC),
+                                     replace_existing=True)
+                shown += 1
+        if shown:
+            self.log.append_line(
+                f"[qc] Opened {shown} QC plot(s) from {qc_dir}.")
+        else:
+            QMessageBox.information(
+                self, "No QC plots",
+                "No QC plots on disk yet — run 'QC reports' first.")
+
+    def _open_qc_folder(self) -> None:
+        if not self._require_experiment():
+            return
+        qc_dir = self._member_qc_dir()
+        if not qc_dir.is_dir():
+            QMessageBox.information(
+                self, "No QC folder",
+                "This member has no qc/ folder yet — run 'QC reports' "
+                "first.")
+            return
+        self._open_externally(qc_dir)
 
     def _open_script_editor(self) -> None:
         """The Script Editor on the **loaded member's** flic_config.yaml.
@@ -2750,10 +2873,11 @@ class AnalysisHubWindow(QMainWindow):
     def _refresh_experiment_tiles(self) -> None:
         loaded = self.experiment is not None
         self._refresh_experiment_group_tile()
-        for key in ("analyze", "plots"):
+        for key in ("analyze", "qc", "plots"):
             self.tiles[key].set_dimmed(not loaded)
         if not loaded:
             for tile_key, hint in (("analyze", self.analyze_hint),
+                                   ("qc", self.qc_hint),
                                    ("plots", self.plots_hint)):
                 hint.setText("No member is loaded. Double-click a member "
                              "row in the Project panel to load one.")
@@ -2776,6 +2900,15 @@ class AnalysisHubWindow(QMainWindow):
         self.plots_hint.setText(self.analyze_hint.text())
         self.tiles["analyze"].set_summary([str(self.experiment_name),
                                            f"{type_name} · {layout}"])
+        qc_dir = self._member_qc_dir()
+        qc_on_disk = qc_dir is not None and qc_dir.is_dir()
+        self.qc_hint.setText(
+            self.analyze_hint.text()
+            + ("" if qc_on_disk else
+               "  —  no QC reports on disk yet; 'QC reports' writes them."))
+        self.tiles["qc"].set_summary(
+            [str(self.experiment_name),
+             "reports on disk" if qc_on_disk else "no reports yet"])
         facets = len(exp.facet_windows())
         self.tiles["plots"].set_summary(
             [str(self.experiment_name),
@@ -2901,6 +3034,7 @@ class AnalysisHubWindow(QMainWindow):
             "batch": False,          # its panel holds "Choose batch folder…"
             "project": False,        # its panel holds "Open Project"
             "analyze": not has_experiment,
+            "qc": not has_experiment,
             "plots": not has_experiment,
             ## Scripts is the member level now: with no member loaded there
             ## is no script to pick and no config to edit.
@@ -3059,6 +3193,21 @@ class MemberConfigsDialog(QDialog):
         self._reload()
 
     def _create(self, name: str) -> None:
+        ## File a loose recording first, the same order Initialize existing
+        ## directory… uses: the scaffold reconciles its dfms: against data/,
+        ## and a recording still at the root is invisible to it — the config
+        ## would list no DFMs with the data sitting right there.
+        directory = self._project.member_dir(name)
+        state = layout_mod.classify(directory)
+        if state.status == layout_mod.UNFILED:
+            plan = layout_mod.file_recording(directory,
+                                             log=self._hub.log.append_line)
+            if plan.refused:
+                QMessageBox.warning(
+                    self, "Could not scaffold",
+                    f"Could not file '{name}': {plan.refused}")
+                return
+            self._hub.log.append_line(f"[configs] {name}: {plan.describe()}")
         try:
             path, notes = self._project.scaffold_member(name)
         except Exception as err:  # noqa: BLE001

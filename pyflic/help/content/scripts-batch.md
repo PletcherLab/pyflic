@@ -133,9 +133,10 @@ thousand lines, the four that matter are otherwise unfindable.
 
 A Batch Run touches every member of every Project, so the figure tabs it would open run
 into the hundreds. **Suppress new plot / output tabs** (in the Batch panel, on by default)
-stops new tabs being created. Every artifact is still written to disk, and the Output and
-Errors tabs keep streaming — only the tabs are skipped. The switch applies to every run
-while it is checked, not just Batch Runs.
+stops new tabs being created during a Batch Run. Every artifact is still written to
+disk, and the Output and Errors tabs keep streaming — only the tabs are skipped. The
+switch governs Batch Runs only: a project or experiment analysis you run by hand always
+shows its plots.
 
 ## Migrating from the old batch modes
 

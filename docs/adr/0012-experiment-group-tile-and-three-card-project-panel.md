@@ -7,8 +7,8 @@ status: accepted
 The Hub's flat seven-tile strip becomes a two-row ribbon mirroring
 PyTrackingAnalysis (their ADR-0012): a top strip of wide container tiles —
 **Batch · Project · Experiment** — plus a regular **Tools** chip and the
-status readout, and a collapsible sub-strip of four compact, title-only
-subtiles — **Analyze · Plots · Scripts · AI** — that the Experiment tile
+status readout, and a collapsible sub-strip of compact, title-only
+subtiles — **QC · Analyze · Plots · Scripts · AI** — that the Experiment tile
 expands.  The Project panel is split from one long card into three stacked
 cards: **Create/Load**, **Experiments**, **Analysis**.
 
@@ -37,9 +37,11 @@ LOAD-blue, Project stays neutral, Experiment is QC-red, otherwise unused on
 the ribbon.  Tools keeps a regular chip for now; upstream removed theirs, and
 this one is expected to follow.
 
-**The Experiment tile opens no panel: it expands the sub-strip.**  The four
+**The Experiment tile opens no panel: it expands the sub-strip.**  The
 subtiles are compact, title-only chips (38px), their status a hover away in
-the tooltip.  Their panels are narrow button columns.  One thing is open at a
+the tooltip.  QC is pyflic's own addition to upstream's four — the reports,
+the viewer, the saved signal plots, and the folder, beside the analysis they
+qualify.  Their panels are narrow button columns.  One thing is open at a
 time: expanding the group closes a container panel and vice versa; click-away
 closes the panel *and* folds the group; Esc closes only the panel.  With
 nothing loaded the Experiment tile is the single exception to
@@ -68,10 +70,12 @@ a Project is open: the Experiments card stays visible-but-gated instead, so
 an empty Project still shows where members will appear.  Two empty-state
 strategies, both deliberate.
 
-**Loading reveals Analyze *after* the load.**  Double-clicking a member used
-to open the Analyze panel immediately; the group that panel hangs from now
-does not exist until a member is loaded, so the reveal moved into the load's
-completion callback.
+**Loading reveals QC *after* the load.**  Double-clicking a member used to
+open the Analyze panel immediately; the group the panel hangs from now does
+not exist until a member is loaded, so the reveal moved into the load's
+completion callback — and it opens QC rather than Analyze, because checking
+the recording and deciding exclusions precede the analysis that depends on
+them.
 
 ## Consequences
 
