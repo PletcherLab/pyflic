@@ -337,6 +337,7 @@ class HedonicFeedingExperiment(TwoWellExperiment):
         self.filter_criteria_summary = (
             self.filter_criteria_summary + "\n" + "\n".join(hedonic_lines)
         )
+        self.write_removed_chambers()
 
         return combined
 

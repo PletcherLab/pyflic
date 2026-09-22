@@ -86,7 +86,7 @@ def _pooled_figure(project, plot_id: str, facet, binned, specs):
     """
     info = pubfigures.PLOT_TYPES[plot_id]
     family = info["family"]
-    source = binned if family == pubfigures.FAMILY_TIMECOURSE else facet
+    source = pubfigures.frame_for(plot_id, facet, binned, project)
     if source is None or source.empty:
         return None
     label_order = None
@@ -97,8 +97,16 @@ def _pooled_figure(project, plot_id: str, facet, binned, specs):
           else pubfigures.faceted_data(source, info["metric"], label_order))
     if df.empty:
         return None
-    spec = specs.plots.get(plot_id) or pubfigures.default_spec(
-        plot_id, well_a=_well_a_name(project))
+    spec = specs.plots.get(plot_id)
+    if spec is None:
+        spec = pubfigures.default_spec(plot_id, well_a=_well_a_name(project))
+        ## A type may say which Facets its report figures show by default
+        ## (Progressive Ratio: Test only) — a default, never a gate.
+        wanted = project.experiment_type.report_facets()
+        if wanted and family == pubfigures.FAMILY_FACETED and "Phase" in df.columns:
+            present = [w for w in wanted if w in set(df["Phase"].astype(str))]
+            if present:
+                spec.facets = list(present)
     ## Pooled figures mark their members by default: seeing the batch
     ## structure inside a pooled cloud is most of why one pools at all.
     if "Experiment" in df.columns and plot_id not in specs.plots:
@@ -146,10 +154,8 @@ def write_project_report(project, path: str | Path | None = None, *,
         _table_page(pdf, "Members", member_table(project))
 
         for plot_id in report_set:
-            if plot_id not in pubfigures.PLOT_TYPES:
-                continue
-            needed = pubfigures.PLOT_TYPES[plot_id].get("layout")
-            if needed is not None and needed != project.chamber_layout:
+            if not pubfigures.plot_allowed(plot_id, project.chamber_layout,
+                                           project.experiment_type.name):
                 continue
             try:
                 figure = _pooled_figure(project, plot_id, facet, binned, specs)
@@ -160,7 +166,8 @@ def write_project_report(project, path: str | Path | None = None, *,
                 continue
             _figure_page(pdf, pubfigures.PLOT_TYPES[plot_id]["display"], figure)
 
-        _text_page(pdf, "Statistics", project.stats_text(summary, facet))
+        _text_page(pdf, "Statistics",
+                   project.stats_text(summary, facet, project.combined_diff_frame()))
 
         exclusions = project.aggregated_exclusions()
         if len(exclusions):

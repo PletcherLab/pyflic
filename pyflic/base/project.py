@@ -774,6 +774,20 @@ class Project:
         facet = pd.concat(facets, ignore_index=True) if facets else None
         return summary, facet, missing
 
+    def combined_diff_frame(self):
+        """The stacked Members' ``paired_yoked_diff.csv`` (Progressive Ratio
+        only), with an ``Experiment`` first column, or ``None`` when no Member
+        has one."""
+        frames = []
+        for name in self.member_names:
+            path = os.path.join(self.member_dir(name), "analysis",
+                                "paired_yoked_diff.csv")
+            if os.path.isfile(path):
+                df = pd.read_csv(path)
+                df.insert(0, "Experiment", name)
+                frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else None
+
     def aggregated_exclusions(self) -> pd.DataFrame:
         """Every Member's exclusions in one table (ADR-0005).
 
@@ -826,12 +840,18 @@ class Project:
                                 f"{self.name}_Summary_Facet.csv")
             facet.to_csv(path, index=False, na_rep="NA")
             written.append(path)
+        diff = self.combined_diff_frame()
+        if diff is not None:
+            path = os.path.join(self.analysis_path,
+                                f"{self.name}_PairedYokedDiff.csv")
+            diff.to_csv(path, index=False, na_rep="NA")
+            written.append(path)
         path = os.path.join(self.analysis_path, f"{self.name}_Excluded.csv")
         self.aggregated_exclusions().to_csv(path, index=False, na_rep="NA")
         written.append(path)
         path = os.path.join(self.analysis_path, f"{self.name}_Stats.txt")
         with open(path, "w", encoding="utf-8") as handle:
-            handle.write(self.stats_text(summary, facet))
+            handle.write(self.stats_text(summary, facet, diff))
         written.append(path)
         ## An AI narrative is a derivative of one Combined Analysis; a stale
         ## one must not sit beside fresh numbers.
@@ -885,6 +905,49 @@ class Project:
                         facet: pd.DataFrame | None) -> list[dict]:
         """One row per metric x facet x treatment pair: the pooled per-chamber
         p-value beside the nested mixed-model p-value."""
+        frames = self._facet_frames(summary, facet)
+        return self._compare_frames(frames, self.metrics())
+
+    def _facet_frames(self, summary: pd.DataFrame,
+                      facet: pd.DataFrame | None) -> list[tuple[str, pd.DataFrame]]:
+        """``[(phase label, rows), ...]`` — one per Facet, else the whole
+        recording.  A type whose windows come from the data (ADR-0013) is split
+        on the ``Facet`` label, because its ``FacetRange`` differs per Chamber
+        Group and would fragment one phase into many."""
+        frames: list[tuple[str, pd.DataFrame]] = []
+        if facet is None or facet.empty:
+            return [("Whole recording", summary)]
+        if getattr(self.experiment_type, "data_derived_facets", False) \
+                and "Facet" in facet.columns:
+            order = list(self.experiment_type.phase_labels) or []
+            labels = list(dict.fromkeys(facet["Facet"].astype(str)))
+            labels.sort(key=lambda s: order.index(s) if s in order else len(order))
+            for label in labels:
+                frames.append((label, facet[facet["Facet"].astype(str) == label]))
+            return frames
+        if "FacetRange" in facet.columns:
+            windows, label_of = self.window_labels(facet)
+            for w in windows:
+                mask = facet["FacetRange"].map(windowing.parse_range) == w
+                frames.append((label_of[w], facet[mask]))
+            return frames
+        return [("Whole recording", summary)]
+
+    def diff_comparison_rows(self, diff: pd.DataFrame | None) -> list[dict]:
+        """Treatment comparisons on the pooled Paired-Yoked Difference table,
+        one observation per Chamber Group, for the type's report Facets."""
+        if diff is None or diff.empty:
+            return []
+        facets = self.experiment_type.report_facets() or \
+            list(dict.fromkeys(diff["Facet"].astype(str)))
+        frames = [(label, diff[diff["Facet"].astype(str) == label])
+                  for label in facets]
+        metrics = [c for c in ("dLicksA", "dLicksB", "dEventsA", "dEventsB",
+                               "dPI", "dMedDurationA") if c in diff.columns]
+        return self._compare_frames(frames, metrics)
+
+    def _compare_frames(self, frames: list[tuple[str, pd.DataFrame]],
+                        metrics: list[str]) -> list[dict]:
         import itertools
 
         import numpy as np
@@ -892,19 +955,11 @@ class Project:
 
         from .analytics import _resolve_metric_col
 
-        frames: list[tuple[str, pd.DataFrame]] = []
-        if facet is not None and not facet.empty and "FacetRange" in facet.columns:
-            windows, label_of = self.window_labels(facet)
-            for w in windows:
-                mask = facet["FacetRange"].map(windowing.parse_range) == w
-                frames.append((label_of[w], facet[mask]))
-        else:
-            frames.append(("Whole recording", summary))
-
-        n_experiments = (summary["Experiment"].nunique()
-                         if "Experiment" in summary.columns else 1)
+        n_experiments = max(
+            [int(f["Experiment"].nunique()) for _, f in frames
+             if "Experiment" in f.columns] or [1])
         rows: list[dict] = []
-        for metric in self.metrics():
+        for metric in metrics:
             for label, frame in frames:
                 value = pd.to_numeric(_resolve_metric_col(frame, metric),
                                       errors="coerce")
@@ -1001,8 +1056,12 @@ class Project:
             return None
 
     def stats_text(self, summary: pd.DataFrame,
-                   facet: pd.DataFrame | None) -> str:
+                   facet: pd.DataFrame | None,
+                   diff: pd.DataFrame | None = None) -> str:
         rows = self.comparison_rows(summary, facet)
+        if diff is None and getattr(self.experiment_type, "data_derived_facets", False):
+            diff = self.combined_diff_frame()
+        diff_rows = self.diff_comparison_rows(diff)
         bar = "=" * 72
         n_exp = (summary["Experiment"].nunique()
                  if "Experiment" in summary.columns else 1)
@@ -1020,22 +1079,41 @@ class Project:
                    "within Experiment — accounts for between-member and "
                    "between-device variation.")
         out.append("")
+
+        def _table(table_rows: list[dict]) -> list[str]:
+            header = (f"{'Metric':<14}{'Facet':<16}{'A':<12}{'B':<12}"
+                      f"{'nA':>4}{'nB':>5}{'diff':>10}{'p_pooled':>11}"
+                      f"{'p_mixed':>10}")
+            lines = [header, "-" * len(header)]
+            for row in table_rows:
+                p_mixed = ("      n/a" if row["p_mixed"] is None
+                           else f"{row['p_mixed']:>10.4g}")
+                star = " *" if row["significant"] else ""
+                lines.append(
+                    f"{row['metric']:<14}{row['phase']:<16}{row['a']:<12}"
+                    f"{row['b']:<12}{row['n_a']:>4}{row['n_b']:>5}"
+                    f"{row['diff']:>10.4g}{row['p_pooled']:>11.4g}{p_mixed}{star}")
+            return lines
+
+        if diff is not None:
+            ## Progressive Ratio: the within-group difference is the primary
+            ## result (one observation per Chamber Group); per-chamber tables
+            ## follow as the secondary section.
+            out.append("Paired − yoked difference (primary; one observation "
+                       "per chamber group)")
+            out.append(f"Chamber groups pooled : {len(diff)}")
+            out.append("")
+            if diff_rows:
+                out.extend(_table(diff_rows))
+            else:
+                out.append("(no comparable treatment groups found)")
+            out.append("")
+            out.append("Per-chamber metrics (secondary)")
+            out.append("")
         if not rows:
             out.append("(no comparable treatment groups found)")
             return "\n".join(out) + "\n"
-        header = (f"{'Metric':<14}{'Facet':<16}{'A':<12}{'B':<12}"
-                  f"{'nA':>4}{'nB':>5}{'diff':>10}{'p_pooled':>11}"
-                  f"{'p_mixed':>10}")
-        out.append(header)
-        out.append("-" * len(header))
-        for row in rows:
-            p_mixed = ("      n/a" if row["p_mixed"] is None
-                       else f"{row['p_mixed']:>10.4g}")
-            star = " *" if row["significant"] else ""
-            out.append(
-                f"{row['metric']:<14}{row['phase']:<16}{row['a']:<12}"
-                f"{row['b']:<12}{row['n_a']:>4}{row['n_b']:>5}"
-                f"{row['diff']:>10.4g}{row['p_pooled']:>11.4g}{p_mixed}{star}")
+        out.extend(_table(rows))
         out.append("")
         out.append("* p_pooled < 0.05")
         return "\n".join(out) + "\n"

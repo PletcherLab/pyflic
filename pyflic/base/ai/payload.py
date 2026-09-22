@@ -66,7 +66,8 @@ def build_project_payload(project) -> SummaryPayload:
     lines: list[str] = [f"# Project report — {project.name}", "",
                         cover_text(project, summary, missing), "",
                         "=== Statistics ===",
-                        project.stats_text(summary, facet)]
+                        project.stats_text(summary, facet,
+                                           project.combined_diff_frame())]
 
     images: list[tuple[str, bytes]] = []
     dropped = 0
@@ -76,10 +77,10 @@ def build_project_payload(project) -> SummaryPayload:
         if plot_id not in pubfigures.PLOT_TYPES:
             continue
         info = pubfigures.PLOT_TYPES[plot_id]
-        needed = info.get("layout")
-        if needed is not None and needed != project.chamber_layout:
+        if not pubfigures.plot_allowed(plot_id, project.chamber_layout,
+                                       project.experiment_type.name):
             continue
-        source = binned if info["family"] == pubfigures.FAMILY_TIMECOURSE else facet
+        source = pubfigures.frame_for(plot_id, facet, binned, project)
         if source is None or source.empty:
             continue
         df = (pubfigures.timecourse_data(source, info["metric"])
@@ -102,7 +103,8 @@ def build_project_payload(project) -> SummaryPayload:
         lines.append(f"\n[{dropped} figure(s) omitted from this payload.]")
 
     budget = MAX_CSV_CHARS
-    for suffix in ("_Summary.csv", "_Summary_Facet.csv", "_Excluded.csv"):
+    for suffix in ("_Summary.csv", "_Summary_Facet.csv", "_PairedYokedDiff.csv",
+                   "_Excluded.csv"):
         path = os.path.join(project.analysis_path, f"{project.name}{suffix}")
         if not os.path.isfile(path) or budget <= 0:
             continue

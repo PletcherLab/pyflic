@@ -102,22 +102,65 @@ PLOT_TYPES: dict[str, dict] = {
         "y_limits": None, "ref_line": None,
         "display": "Median duration over time",
     },
+    ## The Progressive Ratio headline: paired minus yoked cumulative sucrose-
+    ## well licks against minutes since each Chamber Group's training end
+    ## (ADR-0013).  Drawn from the Members' ``pr_cumulative_diff.csv`` rather
+    ## than the binned summary, and offered only to that type.
+    "timecourse_pr_diff": {
+        "family": FAMILY_TIMECOURSE, "metric": "DiffCumLicks",
+        "y_label": "Paired − yoked cumulative licks (well A)",
+        "x_label": "Time since training end (min)",
+        "y_limits": None, "ref_line": 0.0,
+        "display": "Paired − yoked cumulative licks since training",
+        "layout": "two_well", "experiment_type": "ProgressiveRatio",
+        "source": "pr_diff",
+    },
 }
+
+#: Member file behind each non-default time-course source, relative to
+#: ``analysis/``; the default time-course source is ``binned_feeding_summary.csv``.
+SOURCE_FILES: dict[str, str] = {"pr_diff": "pr_cumulative_diff.csv"}
 
 
 def family_of(plot_id: str) -> str:
     return PLOT_TYPES.get(plot_id, {}).get("family", FAMILY_FACETED)
 
 
-def plots_for_layout(chamber_layout: str) -> list[str]:
+def plots_for_layout(chamber_layout: str,
+                     experiment_type: str | None = None) -> list[str]:
     """Plot ids valid for *chamber_layout* — a PI figure is meaningless on a
-    single-well recording, so the Editor never offers one."""
+    single-well recording, so the Editor never offers one.  A plot that names
+    an ``experiment_type`` is offered only when *experiment_type* matches;
+    with *experiment_type* ``None`` such plots are left out."""
     out = []
     for plot_id, info in PLOT_TYPES.items():
-        needed = info.get("layout")
-        if needed is None or needed == chamber_layout:
-            out.append(plot_id)
+        if not plot_allowed(plot_id, chamber_layout, experiment_type):
+            continue
+        out.append(plot_id)
     return out
+
+
+def plot_allowed(plot_id: str, chamber_layout: str | None,
+                 experiment_type: str | None) -> bool:
+    """Whether *plot_id* applies to this layout and type."""
+    info = PLOT_TYPES.get(plot_id)
+    if info is None:
+        return False
+    needed = info.get("layout")
+    if needed is not None and chamber_layout is not None and needed != chamber_layout:
+        return False
+    needed_type = info.get("experiment_type")
+    if needed_type is not None and str(needed_type).lower() != str(experiment_type or "").lower():
+        return False
+    return True
+
+
+def source_of(plot_id: str) -> str:
+    """``"facet"``, ``"binned"`` or a named extra source (``"pr_diff"``)."""
+    info = PLOT_TYPES.get(plot_id, {})
+    if info.get("source"):
+        return str(info["source"])
+    return "binned" if info.get("family") == FAMILY_TIMECOURSE else "facet"
 
 
 # --------------------------------------------------------------------------
@@ -245,7 +288,8 @@ def default_spec(plot_id: str, well_a: str = "well A") -> PlotSpec:
         y_limits=list(y_limits) if y_limits is not None else None,
         ref_line=info["ref_line"],
         free_y=bool(info.get("free_y", False)),
-        x_label="" if info["family"] == FAMILY_FACETED else "Time (min)",
+        x_label=("" if info["family"] == FAMILY_FACETED
+                 else str(info.get("x_label") or "Time (min)")),
     )
 
 
@@ -649,6 +693,33 @@ def project_frames(project):
     return facet, binned
 
 
+def project_source_frame(project, source: str):
+    """A stacked per-Member frame for a named extra source (see
+    :data:`SOURCE_FILES`), with an ``Experiment`` column, or ``None``."""
+    filename = SOURCE_FILES.get(source)
+    if filename is None:
+        return None
+    frames = []
+    for name in project.member_names:
+        path = os.path.join(project.member_dir(name), "analysis", filename)
+        if os.path.isfile(path):
+            df = pd.read_csv(path)
+            df.insert(0, "Experiment", name)
+            frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else None
+
+
+def frame_for(plot_id: str, facet, binned, project=None):
+    """The source frame a plot draws from, given the two standard frames and,
+    for an extra source, the Project to stack it from."""
+    source = source_of(plot_id)
+    if source == "facet":
+        return facet
+    if source == "binned":
+        return binned
+    return project_source_frame(project, source) if project is not None else None
+
+
 def render_all(project, fmt: str = "svg", out_dir: str | None = None,
                only: list[str] | None = None, log=print) -> list[str]:
     """Render every Plot Spec in the Project's ``plot_specs.yaml``.
@@ -663,11 +734,14 @@ def render_all(project, fmt: str = "svg", out_dir: str | None = None,
     target = out_dir or os.path.join(project.project_directory, FIGURES_DIRNAME)
     os.makedirs(target, exist_ok=True)
 
-    _, label_of = (project.window_labels(facet)
-                   if facet is not None and "FacetRange" in facet.columns
-                   else (None, None))
+    ## The Facet column already carries each row's display label, so its
+    ## first-seen order is the phase order — for fixed cutoffs and for a type
+    ## whose windows come from the data alike (ADR-0013).
     label_order = None
-    if label_of:
+    if facet is not None and "Facet" in facet.columns:
+        label_order = list(dict.fromkeys(facet["Facet"].astype(str)))
+    elif facet is not None and "FacetRange" in facet.columns:
+        _, label_of = project.window_labels(facet)
         label_order = list(dict.fromkeys(label_of.values()))
 
     written: list[str] = []
@@ -677,10 +751,13 @@ def render_all(project, fmt: str = "svg", out_dir: str | None = None,
         info = PLOT_TYPES[plot_id]
         metric = info["metric"]
         family = info["family"]
-        source = binned if family == FAMILY_TIMECOURSE else facet
+        if not plot_allowed(plot_id, project.chamber_layout,
+                            project.experiment_type.name):
+            log(f"    skipped {plot_id}: not applicable to this experiment type")
+            continue
+        source = frame_for(plot_id, facet, binned, project)
         if source is None or source.empty:
-            log(f"    skipped {plot_id}: no "
-                f"{'binned' if family == FAMILY_TIMECOURSE else 'summary'} data")
+            log(f"    skipped {plot_id}: no {source_of(plot_id)} data")
             continue
         df = (timecourse_data(source, metric) if family == FAMILY_TIMECOURSE
               else faceted_data(source, metric, label_order))

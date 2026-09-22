@@ -174,3 +174,18 @@ def test_pdf_report_writes_file(experiment, tmp_path: Path):
     p = write_experiment_report(experiment, out, metrics=("Licks",), include_comparison=False)
     assert p.is_file()
     assert p.stat().st_size > 1000
+
+
+def test_an_open_ended_range_runs_to_the_end_of_the_recording(experiment):
+    """``(start, 0)`` is how the tail Facet reaches the loaders (``windowing.
+    as_range_minutes``).  It used to be read as a literal end of minute 0 and
+    left the last facet of every faceted experiment empty."""
+    tail = experiment.feeding_summary(range_minutes=(2, 0), transform_licks=False)
+    explicit = experiment.feeding_summary(range_minutes=(2, float("inf")),
+                                          transform_licks=False)
+    assert tail["LicksA"].sum() > 0
+    assert tail["LicksA"].tolist() == explicit["LicksA"].tolist()
+    head = experiment.feeding_summary(range_minutes=(0, 2), transform_licks=False)
+    whole = experiment.feeding_summary(transform_licks=False)
+    assert head["LicksA"].sum() + tail["LicksA"].sum() == pytest.approx(
+        whole["LicksA"].sum())

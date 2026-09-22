@@ -76,6 +76,18 @@ class Experiment:
             ]
         self._feeding_summary_cache.clear()
 
+    def write_removed_chambers(self) -> Path | None:
+        """Write ``analysis/removed_chambers.csv`` — the auto-removal table the
+        Project's aggregated exclusions read (Source = ``auto``).  Nothing is
+        written when no experiment directory is set or nothing has been
+        filtered yet."""
+        if self.analysis_dir is None or self.filtered_chambers is None:
+            return None
+        out = self.analysis_dir / "removed_chambers.csv"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        self.filtered_chambers.to_csv(out, index=False)
+        return out
+
     def auto_remove_chambers(
         self,
         *,
@@ -210,6 +222,7 @@ class Experiment:
         else:
             lines.append("  • No lick-count cutoff configured — only NaN check applied.")
         self.filter_criteria_summary = "\n".join(lines)
+        self.write_removed_chambers()
 
         return result
 
@@ -2036,6 +2049,11 @@ class Experiment:
                 )
             else:
                 m_min, m_max = float(range_minutes[0]), float(range_minutes[1])
+                if m_max <= 0.0 or m_max == float("inf"):
+                    ## An open end runs to the last sample of the recording.
+                    m_max = max(
+                        float(dfm.raw_df["Minutes"].max()) for dfm in self.dfms.values()
+                    )
             if m_min >= m_max:
                 raise ValueError(
                     f"range_minutes start ({m_min}) must be less than end ({m_max})."

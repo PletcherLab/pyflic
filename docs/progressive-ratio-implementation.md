@@ -1,7 +1,18 @@
 # Progressive Ratio — what is currently implemented
 
-A survey of the Progressive Ratio experiment type as it stands, written as a
-starting point for developing it further. Current as of commit `8000615`.
+> **Status (2026-09-22):** the "Decided direction" at the end of this file has
+> been implemented — type object, loader validation, per-group training end,
+> augmented summaries, the Paired-Yoked Difference table, both figures, the
+> pooled statistics and `timecourse_pr_diff` spec, script actions, linter,
+> Config/Design editor support and help topics. Tests:
+> `tests/test_progressive_ratio.py` (fixtures in `tests/pr_fixtures.py`).
+> Two pre-existing bugs found on the way are fixed and noted in the CHANGELOG:
+> the empty tail Facet (`(start, 0)` read literally) and the never-written
+> `removed_chambers.csv`. The breaking-point details remain provisional. The
+> survey below describes the code **before** this work.
+
+A survey of the Progressive Ratio experiment type as it stood at commit
+`8000615`, kept as the "before" to the decisions at the end.
 
 ## The type object
 

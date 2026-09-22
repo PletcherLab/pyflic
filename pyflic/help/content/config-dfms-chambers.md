@@ -30,6 +30,23 @@ This is how counterbalancing works — see
 **`chambers`** maps chamber number to treatment name, or to comma-separated factor levels
 when [factors](config-factors.md) are defined.
 
+## Progressive Ratio: `paired_chambers`
+
+A Progressive Ratio DFM also names the **paired** chamber of each chamber group —
+chambers 1+2, 3+4 and 5+6 — and the other chamber of the group is yoked:
+
+```yaml
+- id: 1
+  params: {pi_direction: left}   # side of well A, the sucrose well
+  paired_chambers: [1, 4, 5]     # one from each group
+  chambers: {1: Ctrl, 2: Ctrl, 3: Exp, 4: Exp, 5: Exp, 6: Exp}
+```
+
+Exactly one chamber per group, and both chambers of a group carry the same treatment;
+the loader and `pyflic lint` refuse anything else. Well A is always the sucrose well, so
+there is no separate side key: `pi_direction` places it, as in any two-well experiment.
+See [Experiment types](concepts-experiment-types.md).
+
 ## How chambers map to wells
 
 Chamber numbering depends on `chamber_size`, and getting this wrong silently reinterprets

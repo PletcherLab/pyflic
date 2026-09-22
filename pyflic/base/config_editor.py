@@ -653,6 +653,32 @@ class DFMWidget(QWidget):
         self._ch_card.add_body(self._chamber_table)
         outer.addWidget(self._ch_card)
 
+        # -- Progressive Ratio: paired chamber per chamber group -----------
+        ## Shown only for that type.  The other chamber of each group is
+        ## yoked and never written; well A is the sucrose well and the
+        ## pi_direction override above says which side it is on.
+        from .experiment_types.progressive_ratio import CHAMBER_GROUPS
+        self._pr_enabled = False
+        self._pr_card = Card(
+            "Paired chamber per chamber group", Category.LOAD,
+            subtitle="Progressive Ratio: the other chamber of each group is "
+                     "yoked. Well A is the sucrose well; PI Direction is its side.")
+        pr_row = QHBoxLayout()
+        pr_row.setContentsMargins(0, 0, 0, 0)
+        self._paired_combos: list[QComboBox] = []
+        for g, (a, b) in CHAMBER_GROUPS.items():
+            pr_row.addWidget(QLabel(f"Group {g} ({a}+{b}):"))
+            combo = QComboBox()
+            combo.addItem(f"Chamber {a}", a)
+            combo.addItem(f"Chamber {b}", b)
+            combo.setFixedWidth(110)
+            pr_row.addWidget(combo)
+            self._paired_combos.append(combo)
+        pr_row.addStretch()
+        self._pr_card.add_body(pr_row)
+        self._pr_card.setVisible(False)
+        outer.addWidget(self._pr_card)
+
         # -- Parameter overrides -------------------------------------------
         over_card = Card(
             "Parameter Overrides",
@@ -669,6 +695,21 @@ class DFMWidget(QWidget):
         outer.addWidget(over_card)
 
     # ------------------------------------------------------------------
+
+    def set_progressive_ratio(self, enabled: bool) -> None:
+        """Show the paired-chamber pickers (Progressive Ratio) or hide them."""
+        self._pr_enabled = bool(enabled)
+        self._pr_card.setVisible(self._pr_enabled)
+
+    def paired_chambers(self) -> list[int]:
+        return [int(c.currentData()) for c in self._paired_combos]
+
+    def set_paired_chambers(self, chambers) -> None:
+        for combo in self._paired_combos:
+            for i in range(combo.count()):
+                if int(combo.itemData(i)) in {int(c) for c in (chambers or [])}:
+                    combo.setCurrentIndex(i)
+                    break
 
     def set_override_restriction(self, allowed: set[str] | None, *,
                                  reason: str = "") -> None:
@@ -794,11 +835,21 @@ class DFMWidget(QWidget):
 
     def chamber_problems(self) -> list[str]:
         """Human-readable problems with this DFM's chamber assignments."""
-        names = list(self._factor_levels.keys())
-        if not names:
-            return []
         dfm_id = self._id_spin.value()
         out: list[str] = []
+        if self._pr_enabled and self._chamber_table.rowCount() >= 6:
+            ## Both chambers of a chamber group share one treatment.
+            from .experiment_types.progressive_ratio import CHAMBER_GROUPS
+            for g, (a, b) in CHAMBER_GROUPS.items():
+                ta = ", ".join(p for p in self._row_levels(a - 1) if p)
+                tb = ", ".join(p for p in self._row_levels(b - 1) if p)
+                if ta and tb and ta != tb:
+                    out.append(f"DFM {dfm_id} chambers {a} and {b} form one "
+                               f"chamber group and must share a treatment "
+                               f"('{ta}' vs '{tb}')")
+        names = list(self._factor_levels.keys())
+        if not names:
+            return out
         for i in range(self._chamber_table.rowCount()):
             parts = self._row_levels(i)
             if any(parts) and not all(parts):
@@ -941,6 +992,8 @@ class DFMWidget(QWidget):
                     val = ", ".join(parts)
             if val:
                 chambers[i + 1] = val
+        if self._pr_enabled:
+            result["paired_chambers"] = self.paired_chambers()
         if chambers:
             result["chambers"] = chambers
 
@@ -948,6 +1001,8 @@ class DFMWidget(QWidget):
 
     def load_dict(self, data: dict[str, Any], chamber_size: int) -> None:
         self._id_spin.setValue(int(data.get("id", self._id_spin.value())))
+        if data.get("paired_chambers") is not None:
+            self.set_paired_chambers(data.get("paired_chambers"))
 
         params_raw = data.get("params", data.get("parameters", {})) or {}
         self._params_form.load_values(dict(params_raw), chamber_size)
@@ -1392,7 +1447,15 @@ class FLICConfigEditor(QMainWindow):
         self._sync_layout_control()
         self._refresh_threshold_hints()
         self._update_well_names_visibility()
+        self._sync_pr_widgets()
         self._refresh_badges()
+
+    def _sync_pr_widgets(self) -> None:
+        """Show the paired-chamber pickers on every DFM tab for Progressive
+        Ratio and hide them otherwise."""
+        enabled = self._current_type().name == "ProgressiveRatio"
+        for w in getattr(self, "_dfm_widgets", []):
+            w.set_progressive_ratio(enabled)
 
     def _on_chamber_layout_changed(self, idx: int) -> None:
         ## Roll the combo back first, then go through the one guarded path —
@@ -1545,6 +1608,9 @@ class FLICConfigEditor(QMainWindow):
         factors = self._factors_widget.get_factors() if hasattr(self, "_factors_widget") else {}
         w = DFMWidget(dfm_id=dfm_id, chamber_size=chamber_size)
         w.update_factors(factors)
+        w.set_progressive_ratio(self._current_type().name == "ProgressiveRatio")
+        for combo in w._paired_combos:
+            combo.currentIndexChanged.connect(self._refresh_badges)
         w._id_spin.valueChanged.connect(lambda val, _w=w: self._on_dfm_id_changed(_w, val))
         w._chamber_table.itemChanged.connect(self._refresh_badges)
         self._dfm_widgets.append(w)
@@ -1812,6 +1878,9 @@ class FLICConfigEditor(QMainWindow):
             effective["global"] = self._design_as_global()
         self._populate_from_yaml(effective)
         self._apply_design()
+        ## The DFM tabs may have been rebuilt before the type combo settled;
+        ## the pickers follow the type as it stands after the whole load.
+        self._sync_pr_widgets()
 
     def _design_as_global(self) -> dict[str, Any]:
         """The Design shaped like a ``global:`` block the editor can load.

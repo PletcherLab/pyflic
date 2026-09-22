@@ -396,6 +396,17 @@ def load_experiment_yaml(
             chamber_assignments = _parse_chamber_assignments(chambers_raw)
             chamber_factor_levels = {}
 
+        ## Per-DFM constraints the type imposes (Progressive Ratio's paired
+        ## chambers and same-treatment chamber groups).  Checked against the
+        ## config as written, before exclusions thin the assignments.
+        dfm_problems = exp_type.validate_dfm(dfm_id, dict(node), chamber_assignments)
+        if dfm_problems and strict_type:
+            raise ValueError(
+                f"{path.name} does not satisfy experiment_type "
+                f"'{exp_type.name}':\n  - " + "\n  - ".join(dfm_problems))
+        for problem in dfm_problems:
+            print(f"  WARNING: {problem}", flush=True)
+
         # Warn about stale excluded_chambers in YAML (no longer applied).
         if node.get("excluded_chambers"):
             print(

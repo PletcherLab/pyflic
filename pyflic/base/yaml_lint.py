@@ -37,7 +37,7 @@ _KNOWN_PARAM_KEYS = {
 }
 _KNOWN_DFM_KEYS = {
     "id", "ID", "params", "parameters", "chambers", "Chambers",
-    "excluded_chambers", "well_names",
+    "excluded_chambers", "well_names", "paired_chambers",
 }
 
 
@@ -216,6 +216,18 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
                   path=f"dfms.{dfm_id}.params.chamber_size")
 
         chambers = dfm.get("chambers") or dfm.get("Chambers")
+        ## Per-DFM constraints the Experiment Type imposes (Progressive
+        ## Ratio's paired_chambers and same-treatment chamber groups).
+        try:
+            from . import experiment_types as _et
+            _type = _et.get_experiment_type(g.get("experiment_type"))
+        except Exception:  # noqa: BLE001 — the type problem is reported elsewhere
+            _type = None
+        if _type is not None:
+            _assign = ({int(k): str(v) for k, v in chambers.items()}
+                       if isinstance(chambers, dict) else {})
+            for problem in _type.validate_dfm(dfm_id, dfm, _assign):
+                _emit(issues, "error", problem, path=f"dfms.{dfm_id}")
         if chambers is None:
             _emit(issues, "warning", f"DFM {dfm_id}: no 'chambers' assignments",
                   path=f"dfms.{dfm_id}.chambers")

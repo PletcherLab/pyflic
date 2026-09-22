@@ -113,25 +113,52 @@ durations, faceted by treatment.
 
 ### Progressive Ratio
 
-A schedule in which the effort required for each reward increases over the session. The
-measure of interest is the **breakpoint** — the point at which the fly stops working for
-the reward, taken as an index of motivation.
+A two-well operant assay built on **chamber groups**. Each DFM's six chambers form three
+groups — chambers 1+2, 3+4 and 5+6 — that share one light circuit and one treatment. In
+each group one chamber is **paired**: its feeding at the sucrose well (always **well A**)
+turns the light on. The other is **yoked**: lit at the same moments as its partner,
+regardless of its own behaviour. The config names the paired chamber per DFM and the
+yoked one is derived:
 
-pyflic identifies this from lights-on periods after training ends. For each well, it
-produces one row per lights-on period at the moment the lights switch on, with
-`CumLicks`, `DeltaMinutes` and `DeltaLicks` — the change in licking across successive
-periods. The breakpoint is where `DeltaLicks` falls away.
+```yaml
+dfms:
+- id: 1
+  params: {pi_direction: left}     # which side well A (sucrose) is on
+  paired_chambers: [1, 4, 5]       # exactly one chamber from each group
+  chambers: {1: Ctrl, 2: Ctrl, 3: Exp, 4: Exp, 5: Exp, 6: Exp}
+```
 
-Two requirements apply:
+Both chambers of a group must carry the same treatment; the loader refuses a config where
+they differ, or where `paired_chambers` is missing, names two chambers of one group, or
+none.
 
-- **Every DFM must use `chamber_size: 2`**; loading validates this and fails otherwise.
-- **Light data is required.** The analysis is defined in terms of lights-on periods, so a
-  recording without an `OptoCol1` column cannot be analysed this way. See
-  [Light state and phase analysis](concepts-light-phase.md).
+**Training.** The recording opens with a closed-loop training phase whose end the firmware
+marks in the data itself: while a well is in training its raw value is offset by 65536
+(any sample above 40000), and the offset disappears when training completes. Training end
+is read per group from the paired chamber's sucrose well, and it differs between groups
+because it depends on the fly. The other three wells of a group are expected to clear at
+the same minute; when they do not, the summary lists the disagreement as a QC note and the
+analysis proceeds on the paired well. A group whose paired fly never finishes training has
+`TrainingComplete = false` on both chambers and, with the default constant
+`require_training_complete: true`, both leave the analysis through the ordinary
+auto-removal path.
 
-The end of training is read from the DFM's training data when present, and otherwise
-defaults to minute 0. You can pass it explicitly, and passing `0.0` skips the training
-filter entirely.
+**Facets** for this type are `Training` and `Test`, split at each group's own training end
+rather than at a fixed minute, so the config never states `facet_cutoffs`. See
+[Facets](concepts-facets.md).
+
+**Outputs** beyond the standard two-well summary: `Group`, `Role`, `TrainingMinutes`
+(paired only), `TrainingComplete` and `LightOn_sec` columns; `paired_yoked_diff.csv`, one
+row per chamber group per Facet with paired-minus-yoked differences (`dLicksA`, `dPI`, …);
+`pr_cumulative_diff.csv` and its figure, the cumulative difference curve; and per-DFM
+training-aligned traces as QC figures. See [Plots](plots-catalog.md).
+
+**Statistics** in a Project treat the difference table as primary — one observation per
+chamber group, treatment fixed, DFM nested within Experiment — with the per-chamber tables
+as the secondary section.
+
+Light data (`OptoCol1`) and version-3 files are required: the training flag and the light
+state both live there.
 
 ## Changing type later
 

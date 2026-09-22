@@ -681,3 +681,51 @@ def test_new_returns_to_a_blank_custom_experiment(editor):
     assert editor._well_a_edit.text() == ""
     assert len(editor._dfm_widgets) == 1
     assert editor._tabs.currentIndex() == 0
+
+
+# ---------------------------------------------------------------------------
+# Progressive Ratio: paired chambers per chamber group
+# ---------------------------------------------------------------------------
+
+def test_progressive_ratio_shows_paired_pickers_and_writes_them(editor):
+    _select_type(editor, "ProgressiveRatio")
+    w = editor._dfm_widgets[0]
+    assert not w._pr_card.isHidden()
+    w.set_paired_chambers([2, 3, 6])
+    assert w.get_dict()["paired_chambers"] == [2, 3, 6]
+
+    _select_type(editor, "Hedonic")
+    assert w._pr_card.isHidden()
+    assert "paired_chambers" not in w.get_dict()
+
+
+def test_progressive_ratio_reports_a_split_chamber_group(editor):
+    from PyQt6.QtWidgets import QTableWidgetItem
+
+    _select_type(editor, "ProgressiveRatio")
+    w = editor._dfm_widgets[0]
+    w._chamber_table.setItem(0, 1, QTableWidgetItem("Ctrl"))
+    w._chamber_table.setItem(1, 1, QTableWidgetItem("Exp"))
+    problems = w.chamber_problems()
+    assert any("chambers 1 and 2" in p for p in problems)
+    w._chamber_table.setItem(1, 1, QTableWidgetItem("Ctrl"))
+    assert not any("chambers 1 and 2" in p for p in w.chamber_problems())
+
+
+def test_progressive_ratio_paired_chambers_round_trip(app, tmp_path):
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent))
+    from pr_fixtures import pr_config
+
+    cfg = pr_config([{"id": 4, "pi_direction": "right", "paired_chambers": [2, 3, 6],
+                      "chambers": {1: "A", 2: "A", 3: "B", 4: "B", 5: "A", 6: "A"}}])
+    win = _open(app, tmp_path, cfg)
+    try:
+        w = win._dfm_widgets[0]
+        assert not w._pr_card.isHidden()
+        assert w.paired_chambers() == [2, 3, 6]
+        out = win._collect_yaml()
+        assert out["dfms"][0]["paired_chambers"] == [2, 3, 6]
+        assert out["dfms"][0]["params"]["pi_direction"] == "right"
+    finally:
+        win.close()

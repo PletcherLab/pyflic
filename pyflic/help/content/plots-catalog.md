@@ -96,9 +96,21 @@ Duration is the measure of interest in these designs; see
 
 ## Progressive-ratio plots
 
-**Breaking-point plots**, per DFM and faceted by well — `DeltaLicks` against time, one point
-per lights-on period after training. The breakpoint is where the curve falls away. Requires
-light data.
+**Cumulative difference curve** (`plot_pr_cumulative_diff`, and `timecourse_pr_diff` in a
+Project) — the headline figure: paired-minus-yoked cumulative sucrose-well licks against
+minutes since the chamber group's training end, one mean ± SEM curve per treatment with the
+individual group traces faint behind. A group contributes until its own recording ends, so
+the ribbon widens late rather than every curve stopping at the shortest group.
+
+**Training-aligned traces** (`plot_pr_cumulative_licks`) — per DFM, one panel per chamber
+group: paired and yoked cumulative sucrose-well licks since training end, with the bins in
+which the group's light was on drawn as points. A QC figure, not a result.
+
+**Breaking-point plots** (`plot_breaking_point`) — per DFM, one panel per chamber:
+`DeltaLicks` per light-on period against minutes since training end. Provisional; the
+per-period table is the classic breaking-point readout and is kept in that spirit.
+
+All three require light data (`OptoCol1`).
 
 ## Interactive or static
 

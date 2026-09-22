@@ -35,10 +35,14 @@ The last facet always runs to the end of the recording, so nothing is lost at th
 
 ## Named phases
 
-An Experiment Type can name its phases. Progressive Ratio's default cutoff of 30 minutes
-gives `Training` and `Test`.
+An Experiment Type can name its phases. Progressive Ratio's Facets are `Training` and
+`Test` — and for that type alone the boundary is not a minute in the config but each
+chamber group's own training end, read from the data. Its config never states
+`facet_cutoffs`; the `Facet` column still carries one label per row, so every plot and
+statistic that reads Facets works unchanged. See
+[Experiment types](concepts-experiment-types.md).
 
-Those names apply **only** while the cutoffs are the type's default. Move a cutoff and you
+For every other type, those names apply **only** while the cutoffs are the type's default. Move a cutoff and you
 get plain minute-range labels instead — "Training" would be a lie once you have moved the
 boundary that defined it. Set `facet_labels` to name them yourself:
 

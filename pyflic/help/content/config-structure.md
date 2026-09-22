@@ -34,7 +34,9 @@ warnings with line numbers where it can.
 
 ## `global.experiment_type`
 
-Which analysis to run — `single_well`, `two_well`, `hedonic`, or `progressive_ratio`. See
+The Experiment Type — `Hedonic` or `ProgressiveRatio`; omit it for a Custom Experiment,
+which states `chamber_layout` instead. A Progressive Ratio config also needs
+`paired_chambers` on every DFM (see [DFMs and chambers](config-dfms-chambers.md)). See
 [Experiment types](concepts-experiment-types.md).
 
 ## `global.transform_licks`

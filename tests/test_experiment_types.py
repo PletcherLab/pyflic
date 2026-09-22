@@ -72,14 +72,33 @@ def test_a_two_well_type_requires_both_wells_named():
     assert any("requires well_names for B" in p for p in problems)
 
 
+class _PhasedType(et.ExperimentType):
+    """A type with a default cutoff and named phases — the shape Progressive
+    Ratio had before its facets became data-derived (ADR-0013)."""
+
+    name = "Phased"
+    chamber_layout = "two_well"
+    facet_cutoffs = (30.0,)
+    phase_labels = ("Acclimation", "Test")
+
+
 def test_phase_labels_apply_only_at_the_types_default_cutoffs():
-    pr = et.get_experiment_type("ProgressiveRatio")
-    default = windowing.facet_windows(pr.resolve_facet_cutoffs({}))
-    assert pr.phase_labels_for(default, {}) == ["Training", "Test"]
+    phased = _PhasedType()
+    default = windowing.facet_windows(phased.resolve_facet_cutoffs({}))
+    assert phased.phase_labels_for(default, {}) == ["Acclimation", "Test"]
     # Move the cutoff and the named phases stop being true.
     moved = windowing.facet_windows([15])
-    assert pr.phase_labels_for(moved, {"facet_cutoffs": [15]}) == \
+    assert phased.phase_labels_for(moved, {"facet_cutoffs": [15]}) == \
         ["0-15 min", "15+ min"]
+
+
+def test_progressive_ratio_facets_come_from_the_data():
+    """ADR-0013: no cutoff list exists, the yaml is not consulted, and the
+    two phase names are fixed."""
+    pr = et.get_experiment_type("ProgressiveRatio")
+    assert pr.resolve_facet_cutoffs({}) is None
+    assert pr.resolve_facet_cutoffs({"facet_cutoffs": [30]}) is None
+    assert pr.phase_labels == ("Training", "Test")
 
 
 def test_explicit_facet_labels_win():

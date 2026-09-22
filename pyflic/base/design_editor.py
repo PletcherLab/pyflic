@@ -301,7 +301,16 @@ class ProjectDesignDialog(QDialog):
             "A Custom Experiment states its own layout.")
 
         self.cutoffs_edit.setEnabled(not item.facets_fixed)
-        if item.facets_fixed and item.facet_cutoffs:
+        if getattr(item, "data_derived_facets", False):
+            ## The windows come from the data, per Chamber Group (ADR-0013);
+            ## there is no cutoff to author and none is written.
+            self.cutoffs_edit.setText("")
+            self.cutoffs_edit.setPlaceholderText(
+                "derived from the data (training end per chamber group)")
+            self.cutoffs_edit.setToolTip(
+                f"'{item.display_name}' derives its facets from each chamber "
+                f"group's training end; facet_cutoffs is not written.")
+        elif item.facets_fixed and item.facet_cutoffs:
             self.cutoffs_edit.setText(
                 ", ".join(str(c) for c in item.facet_cutoffs))
             self.cutoffs_edit.setToolTip(

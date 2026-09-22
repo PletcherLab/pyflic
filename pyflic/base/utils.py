@@ -19,3 +19,18 @@ def natural_sorted(paths: Iterable[Path]) -> list[Path]:
 def range_is_specified(rng: Sequence[float]) -> bool:
     return len(rng) == 2 and (float(rng[0]) + float(rng[1]) != 0.0)
 
+
+def range_bounds(rng: Sequence[float]) -> tuple[float, float]:
+    """``(start, end)`` for a specified range, with the open end resolved.
+
+    ``0`` (and any non-positive end) is pyflic's "through the end of the
+    recording" sentinel — ``windowing.as_range_minutes`` hands the tail Facet
+    to the loaders as ``(start, 0)`` — so it becomes ``inf`` here instead of
+    being read as a literal minute, which used to leave the last facet of
+    every faceted experiment empty.
+    """
+    a, b = float(rng[0]), float(rng[1])
+    if b <= 0.0:
+        b = float("inf")
+    return a, b
+

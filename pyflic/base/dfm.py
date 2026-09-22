@@ -14,7 +14,7 @@ from .algorithms.thresholds import build_thresholds_table
 from .chamber import OneWellChamber, TwoWellChamber, compute_feeding_for_well, compute_tasting_for_well
 from .parameters import Parameters
 import re
-from .utils import natural_sorted, range_is_specified
+from .utils import natural_sorted, range_bounds, range_is_specified
 
 
 # ── DFM CSV loading (formerly io.py) ────────────────────────────────────────
@@ -76,7 +76,7 @@ def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Seque
     df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
     df = _ensure_minutes_seconds(df)
     if range_is_specified(range_minutes):
-        a, b = float(range_minutes[0]), float(range_minutes[1])
+        a, b = range_bounds(range_minutes)
         df = df[(df["Minutes"] > a) & (df["Minutes"] < b)]
     return _LoadedDFM(df=df.reset_index(drop=True), version=version, source_files=files)
 
@@ -214,7 +214,14 @@ class DFM:
             df.loc[intraining, col] = pd.to_numeric(df.loc[intraining, col], errors="coerce").fillna(0) - 65536
         self.raw_df = df
 
-        # Port of `GetDoneTrainingInfo()`
+        # Port of `GetDoneTrainingInfo()`, extended with a per-well verdict.
+        #
+        # ``Minutes`` is the last minute the well's own column carried the
+        # flag (NaN when it never did).  ``Cleared`` says whether the flag went
+        # away before the recording ended — the firmware clears it on a well
+        # whose training completed, so a well flagged through the last sample
+        # never finished (or, for a well that is not the paired sucrose well,
+        # simply never reports).  Only a cleared well has a training end.
         rows = []
         for i in range(1, 13):
             col = f"W{i}"
@@ -222,7 +229,8 @@ class DFM:
                 continue
             mask = in_training_df[col].to_numpy(dtype=bool)
             if not np.any(mask):
-                rows.append({"well": col, "Minutes": np.nan, "Sample": np.nan})
+                rows.append({"well": col, "Minutes": np.nan, "Sample": np.nan,
+                             "EverFlagged": False, "Cleared": False})
             else:
                 rows.append(
                     {
@@ -231,9 +239,34 @@ class DFM:
                         "Sample": float(in_training_df.loc[mask, "Sample"].max())
                         if "Sample" in in_training_df.columns
                         else float(np.flatnonzero(mask).max() + 1),
+                        "EverFlagged": True,
+                        "Cleared": not bool(mask[-1]),
                     }
                 )
         self.in_training_data = pd.DataFrame(rows)
+
+    def training_end_minutes(self, well: int) -> float | None:
+        """Minute at which *well*'s training flag cleared, or ``None`` when the
+        well was never flagged or never cleared (see
+        :meth:`_calculate_progressive_ratio_training`)."""
+        itd = self.in_training_data
+        if itd is None or itd.empty or "Cleared" not in itd.columns:
+            return None
+        row = itd[itd["well"] == f"W{int(well)}"]
+        if row.empty or not bool(row["Cleared"].iloc[0]):
+            return None
+        val = float(row["Minutes"].iloc[0])
+        return val if np.isfinite(val) else None
+
+    def training_flag_state(self, well: int) -> str:
+        """``"cleared"``, ``"never_cleared"`` or ``"never_flagged"`` for *well*."""
+        itd = self.in_training_data
+        if itd is None or itd.empty or "Cleared" not in itd.columns:
+            return "never_flagged"
+        row = itd[itd["well"] == f"W{int(well)}"]
+        if row.empty or not bool(row["EverFlagged"].iloc[0]):
+            return "never_flagged"
+        return "cleared" if bool(row["Cleared"].iloc[0]) else "never_cleared"
 
     def _calculate_baseline(self) -> None:
         # Port of `CalculateBaseline()` with the same window logic.
@@ -415,13 +448,13 @@ class DFM:
     def raw(self, *, range_minutes: Sequence[float] = (0, 0)) -> pd.DataFrame:
         if not range_is_specified(range_minutes):
             return self.raw_df
-        a, b = float(range_minutes[0]), float(range_minutes[1])
+        a, b = range_bounds(range_minutes)
         return self.raw_df[(self.raw_df["Minutes"] > a) & (self.raw_df["Minutes"] <= b)]
 
     def baselined(self, *, range_minutes: Sequence[float] = (0, 0)) -> pd.DataFrame:
         if not range_is_specified(range_minutes):
             return self.baseline_df
-        a, b = float(range_minutes[0]), float(range_minutes[1])
+        a, b = range_bounds(range_minutes)
         df = self.baseline_df
         return df[(df["Minutes"] > a) & (df["Minutes"] <= b)]
 
@@ -634,9 +667,11 @@ class DFM:
     def _interval_summary(interval_df, range_minutes: Sequence[float]) -> tuple[float, float]:
         if not isinstance(interval_df, pd.DataFrame) or interval_df.empty:
             return 0.0, 0.0
-        tmp = interval_df if not range_is_specified(range_minutes) else interval_df[
-            (interval_df["Minutes"] > float(range_minutes[0])) & (interval_df["Minutes"] <= float(range_minutes[1]))
-        ]
+        if range_is_specified(range_minutes):
+            a, b = range_bounds(range_minutes)
+            tmp = interval_df[(interval_df["Minutes"] > a) & (interval_df["Minutes"] <= b)]
+        else:
+            tmp = interval_df
         if tmp.empty:
             return 0.0, 0.0
         return float(tmp["IntervalSec"].mean()), float(tmp["IntervalSec"].median())
@@ -645,9 +680,11 @@ class DFM:
     def _duration_summary(dur_df, range_minutes: Sequence[float]) -> tuple[float, float]:
         if not isinstance(dur_df, pd.DataFrame) or dur_df.empty:
             return np.nan, np.nan
-        tmp = dur_df if not range_is_specified(range_minutes) else dur_df[
-            (dur_df["Minutes"] > float(range_minutes[0])) & (dur_df["Minutes"] <= float(range_minutes[1]))
-        ]
+        if range_is_specified(range_minutes):
+            a, b = range_bounds(range_minutes)
+            tmp = dur_df[(dur_df["Minutes"] > a) & (dur_df["Minutes"] <= b)]
+        else:
+            tmp = dur_df
         if tmp.empty:
             return np.nan, np.nan
         return float(tmp["Duration"].mean()), float(tmp["Duration"].median())
@@ -682,7 +719,7 @@ class DFM:
                 ev = self.event_df[cname].to_numpy(dtype=int)
                 mask = None
                 if range_is_specified(range_minutes):
-                    a, b = float(range_minutes[0]), float(range_minutes[1])
+                    a, b = range_bounds(range_minutes)
                     mins = self.baseline_df["Minutes"].to_numpy(dtype=float)
                     mask = (mins > a) & (mins <= b)
                 mean_int, med_int, min_int, max_int = self._intensity_summary(base, ev, range_mask=mask)
@@ -728,7 +765,7 @@ class DFM:
                 ev_b = self.event_df[cb].to_numpy(dtype=int)
                 mask = None
                 if range_is_specified(range_minutes):
-                    a, b = float(range_minutes[0]), float(range_minutes[1])
+                    a, b = range_bounds(range_minutes)
                     mins = self.baseline_df["Minutes"].to_numpy(dtype=float)
                     mask = (mins > a) & (mins <= b)
                 mean_int_a, med_int_a, min_int_a, max_int_a = self._intensity_summary(base_a, ev_a, range_mask=mask)
@@ -766,7 +803,9 @@ class DFM:
         transform_licks: bool = True,
     ) -> pd.DataFrame:
         if range_is_specified(range_minutes):
-            m_min, m_max = float(range_minutes[0]), float(range_minutes[1])
+            m_min, m_max = range_bounds(range_minutes)
+            if m_max == float("inf"):
+                m_max = float(self.raw_df["Minutes"].max())
         else:
             m_min, m_max = 0.0, float(self.raw_df["Minutes"].max())
         if m_min > m_max:
@@ -824,7 +863,9 @@ class DFM:
         if step_min <= 0:
             raise ValueError("step_min must be positive.")
         if range_is_specified(range_minutes):
-            m_min, m_max = float(range_minutes[0]), float(range_minutes[1])
+            m_min, m_max = range_bounds(range_minutes)
+            if m_max == float("inf"):
+                m_max = float(self.raw_df["Minutes"].max())
         else:
             m_min, m_max = 0.0, float(self.raw_df["Minutes"].max())
         if m_min >= m_max:
@@ -927,7 +968,9 @@ class DFM:
         if step_min <= 0:
             raise ValueError("step_min must be positive.")
         if range_is_specified(range_minutes):
-            m_min, m_max = float(range_minutes[0]), float(range_minutes[1])
+            m_min, m_max = range_bounds(range_minutes)
+            if m_max == float("inf"):
+                m_max = float(self.raw_df["Minutes"].max())
         else:
             m_min, m_max = 0.0, float(self.raw_df["Minutes"].max())
         if m_min >= m_max:
@@ -1010,7 +1053,7 @@ class DFM:
     def _apply_range(self, df: pd.DataFrame, range_minutes: Sequence[float]) -> pd.DataFrame:
         if not range_is_specified(range_minutes):
             return df
-        a, b = float(range_minutes[0]), float(range_minutes[1])
+        a, b = range_bounds(range_minutes)
         return df[(df["Minutes"] > a) & (df["Minutes"] <= b)]
 
     def plot_raw(self, *, range_minutes: Sequence[float] = (0, 0)):

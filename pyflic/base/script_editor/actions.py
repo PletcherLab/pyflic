@@ -438,17 +438,54 @@ ACTIONS: list[Action] = [
         params=[_START, _END],
     ),
     Action(
-        action="plot_breaking_point",
-        label="Breaking-point plots",
-        blurb="Per-DFM breaking-point plots for a progressive-ratio config.",
+        action="paired_yoked_diff",
+        label="Paired − yoked difference table",
+        blurb="Per chamber group, per Facet: paired minus yoked (progressive ratio).",
+        icon="csv", category=Category.ANALYZE, produces="csv",
+        requires="progressive_ratio",
+        params=[],
+        notes="Writes analysis/paired_yoked_diff.csv — one row per chamber "
+              "group per Facet (Training, Test), the primary table for "
+              "Progressive Ratio statistics.",
+    ),
+    Action(
+        action="plot_pr_cumulative_diff",
+        label="Cumulative difference curve",
+        blurb="Paired − yoked cumulative licks since training end, by treatment.",
         icon="plot", category=Category.PLOTS, produces="figure",
         requires="progressive_ratio",
         params=[
-            Param(key="config", label="BP config index", type="int",
-                  note="Breaking-point config number (1–4).",
-                  default=1),
-            _START, _END,
+            Param(key="binsize", label="Bin size", type="float", unit="min",
+                  note="Resolution of the cumulative curve.", default=1.0),
         ],
+        notes="Mean ± SEM per treatment across chamber groups, the individual "
+              "group traces faint behind. Also writes "
+              "analysis/pr_cumulative_diff.csv, which the Project pools for the "
+              "timecourse_pr_diff figure.",
+    ),
+    Action(
+        action="plot_pr_cumulative_licks",
+        label="Training-aligned traces (QC)",
+        blurb="Per DFM: paired and yoked cumulative licks since training end.",
+        icon="plot", category=Category.PLOTS, produces="figure",
+        requires="progressive_ratio",
+        params=[
+            Param(key="binsize", label="Bin size", type="float", unit="min",
+                  note="Resolution of the cumulative curve.", default=1.0),
+        ],
+        notes="One panel per chamber group; light-on bins are drawn as points. "
+              "A QC figure, not a result.",
+    ),
+    Action(
+        action="plot_breaking_point",
+        label="Breaking-point plots",
+        blurb="Per-DFM ΔLicks per light-on period since training end.",
+        icon="plot", category=Category.PLOTS, produces="figure",
+        requires="progressive_ratio",
+        params=[],
+        notes="One panel per chamber. The training end and roles come from the "
+              "config's paired_chambers and the data's training flag; there is "
+              "no configuration index any more.",
     ),
 ]
 

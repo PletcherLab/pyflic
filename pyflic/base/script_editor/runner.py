@@ -19,6 +19,8 @@ from typing import Any, Callable
 #: Experiment Type (ADR-0007).  ``requires_layout`` on the Action carries the
 #: same information for the editor; this is the runtime half.
 _LAYOUT_GATED = {"plot_well_comparison", "transition_matrix"}
+_PR_GATED = {"plot_breaking_point", "paired_yoked_diff",
+             "plot_pr_cumulative_diff", "plot_pr_cumulative_licks"}
 
 
 class ScriptContext:
@@ -106,10 +108,8 @@ def run_experiment_script(
                 and not isinstance(exp, HedonicFeedingExperiment):
             ctx.log(f"[Skip] {action} requires a Hedonic experiment.")
             continue
-        if action == "plot_breaking_point" \
-                and not isinstance(exp, ProgressiveRatioExperiment):
-            ctx.log("[Skip] plot_breaking_point requires a Progressive Ratio "
-                    "experiment.")
+        if action in _PR_GATED and not isinstance(exp, ProgressiveRatioExperiment):
+            ctx.log(f"[Skip] {action} requires a Progressive Ratio experiment.")
             continue
 
         analysis_dir = exp.analysis_dir
@@ -237,16 +237,30 @@ def run_experiment_script(
             figures.append(("Hedonic Feeding Plot", fig))
 
         elif action == "plot_breaking_point":
-            cfg_idx = int(step.get("config", 1))
             analysis_dir.mkdir(parents=True, exist_ok=True)
-            for dfm_id, dfm in sorted(exp.dfms.items()):
-                fig = exp.plot_breaking_point_dfm_gg(dfm, cfg_idx)
-                _save_figure(
-                    fig,
-                    analysis_dir / f"breaking_point_dfm{dfm_id}_config{cfg_idx}.png",
-                    ctx.log)
-                figures.append(
-                    (f"Breaking Point — DFM {dfm_id} (config {cfg_idx})", fig))
+            for dfm_id in sorted(exp.dfms):
+                fig = exp.plot_breaking_point_dfm(dfm_id)
+                _save_figure(fig, analysis_dir / f"breaking_point_dfm{dfm_id}.png",
+                             ctx.log)
+                figures.append((f"Breaking Point — DFM {dfm_id}", fig))
+
+        elif action == "paired_yoked_diff":
+            ctx.log(f"Wrote: {exp.write_paired_yoked_diff()}")
+
+        elif action == "plot_pr_cumulative_diff":
+            bs = float(step.get("binsize", 1.0))
+            ctx.log(f"Wrote: {exp.write_cumulative_diff(binsize_min=bs)}")
+            fig = exp.plot_cumulative_diff(binsize_min=bs)
+            _save_figure(fig, analysis_dir / "pr_cumulative_diff.png", ctx.log)
+            figures.append(("Paired − yoked cumulative licks", fig))
+
+        elif action == "plot_pr_cumulative_licks":
+            bs = float(step.get("binsize", 1.0))
+            for dfm_id in sorted(exp.dfms):
+                fig = exp.plot_cumulative_licks_dfm(dfm_id, binsize_min=bs)
+                _save_figure(fig, analysis_dir / f"pr_cumulative_licks_dfm{dfm_id}.png",
+                             ctx.log)
+                figures.append((f"Training-aligned traces — DFM {dfm_id}", fig))
 
         elif action == "tidy_export":
             kind = str(step.get("kind", "feeding")).strip().lower()

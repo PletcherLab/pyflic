@@ -25,6 +25,7 @@ several devices. `group` defaults to the **script's name** — see
 | `feeding_csv` | — | Per-chamber feeding summary to CSV |
 | `binned_csv` | `binsize` | Feeding metrics binned over time, to CSV |
 | `weighted_duration` | — | Weighted-duration summary (hedonic experiments) |
+| `paired_yoked_diff` | — | Paired − yoked table, one row per chamber group per Facet (progressive ratio) |
 | `tidy_export` | `kind` | One row per bout, for downstream statistics |
 | `bootstrap` | `metric`, `mode`, `n_boot`, `ci`, `seed` | Bootstrap confidence intervals |
 | `compare` | `metric`, `mode`, `model`, `factors` | ANOVA or linear mixed model across treatments |
@@ -72,7 +73,9 @@ parameter for a publication — an effect that appears only at one link gap is n
 | `plot_moving_median_treatment` | `window`, `step`, `mode` | Treatment mean ± SEM of time-dependent median bout duration |
 | `plot_well_comparison` | `metric` | Well A against Well B for one metric |
 | `plot_hedonic` | — | Hedonic feeding plot |
-| `plot_breaking_point` | `config` | Per-DFM breaking-point plots (progressive ratio) |
+| `plot_pr_cumulative_diff` | `binsize` | Paired − yoked cumulative licks since training end, by treatment (progressive ratio) |
+| `plot_pr_cumulative_licks` | `binsize` | Per-DFM training-aligned paired/yoked traces, light-on as points (progressive ratio, QC) |
+| `plot_breaking_point` | — | Per-DFM ΔLicks per light-on period since training end (progressive ratio) |
 
 ## `metric` and `mode`
 

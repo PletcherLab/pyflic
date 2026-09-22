@@ -42,6 +42,12 @@ class ExperimentType:
     facet_cutoffs: tuple[float, ...] | None = None
     #: When True the type owns ``facet_cutoffs`` outright.
     facets_fixed: bool = False
+    #: When True the type's Facets are not minute cutoffs at all but windows
+    #: the *data* defines (Progressive Ratio splits at each Chamber Group's own
+    #: training end, ADR-0013).  ``facet_cutoffs`` is then owned and absent,
+    #: and consumers group rows by the ``Facet`` label rather than by
+    #: ``FacetRange``.
+    data_derived_facets: bool = False
     #: Names for the phases of the *default* facet structure; ``len`` should
     #: equal ``len(facet_cutoffs) + 1``.  Applied only when the actual cutoffs
     #: match the default (see :meth:`phase_labels_for`).
@@ -97,6 +103,10 @@ class ExperimentType:
         faceted (a Custom Experiment that never set any)."""
         if self.facets_fixed and self.facet_cutoffs is not None:
             return tuple(self.facet_cutoffs)
+        if self.data_derived_facets:
+            ## The windows come from the data, per Chamber Group; there is no
+            ## cutoff list to hand back and the yaml is not consulted.
+            return None
         raw = (global_cfg or {}).get("facet_cutoffs")
         if raw is not None:
             return tuple(windowing.normalize_cutoffs(raw))
@@ -143,9 +153,26 @@ class ExperimentType:
         owned: list[str] = []
         if self.chamber_layout is not None:
             owned.append("chamber_layout")
-        if self.facets_fixed:
+        if self.facets_fixed or self.data_derived_facets:
             owned.append("facet_cutoffs")
         return tuple(owned)
+
+    def validate_dfm(self, dfm_id: int, node: dict | None,
+                     chamber_assignments: dict | None) -> list[str]:
+        """Problems with one ``dfms:`` entry under this type.
+
+        *chamber_assignments* is the parsed ``{chamber: treatment}`` mapping as
+        the config states it (before any exclusion is applied).  The base type
+        has no per-DFM constraints; a type with a chamber-level structure
+        (Progressive Ratio's paired/yoked roles) checks it here.  Never raises.
+        """
+        return []
+
+    def report_facets(self) -> list[str] | None:
+        """Facet labels the type's report figures show by default, or ``None``
+        for every Facet.  A default, not a gate — the Plot Editor can still
+        name any Facet."""
+        return None
 
     def validate(self, global_cfg: dict | None) -> list[str]:
         """Problems with *global_cfg* under this type, as human-readable lines.
@@ -226,7 +253,8 @@ class ExperimentType:
         if transform_licks is not None:
             g["transform_licks"] = bool(transform_licks)
         cutoffs = facet_cutoffs if facet_cutoffs is not None else self.facet_cutoffs
-        if cutoffs is not None and not self.facets_fixed:
+        if cutoffs is not None and not self.facets_fixed \
+                and not self.data_derived_facets:
             g["facet_cutoffs"] = [_clean_number(v) for v in cutoffs]
         clean_params = dict(params or {})
         clean_params.pop("chamber_size", None)
