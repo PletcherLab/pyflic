@@ -504,8 +504,10 @@ _Avoid_: manual, documentation, the docs, USAGE.
 > **Domain expert:** "No. Only the Paired fly *does* training; the group's
 > training ended when the Paired chamber's Sucrose Well cleared. The yoked
 > wells should have cleared at the same minute, and if they didn't that is a
-> QC note about the firmware, not a fact about the fly. Its TrainingMinutes is
-> NA because training was never its behaviour."
+> QC note about the firmware, not a fact about the fly. But the yoked fly
+> lived through that same minute, so it carries the same TrainingMinutes —
+> the value is the *group's* training end, not a claim about who trained.
+> Only a group that never finished has none.""
 
 ## Flagged ambiguities
 

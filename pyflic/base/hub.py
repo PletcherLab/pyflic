@@ -85,7 +85,7 @@ from .ui import (
 )
 from .ui import settings as ui_settings
 from .ui.tiles import TILE_HEIGHT, ClickAwayFilter, StatusReadout, StatusTile, TilePanel
-from .ui.widgets import ActionButton, Card
+from .ui.widgets import ActionButton, Card, CardGroup
 
 #: Top strip: (key, title, icon, category, panel width).  Order is strip
 #: order — the containment hierarchy reads left to right (a Batch holds
@@ -109,7 +109,7 @@ TILE_SPECS: list[tuple[str, str, str, Category, int]] = [
 SUBTILE_SPECS: list[tuple[str, str, str, Category, int]] = [
     ("qc",      "QC",      "qc",      Category.QC,      310),
     ("analyze", "Analyze", "analyze", Category.ANALYZE, 310),
-    ("plots",   "Plots",   "plots",   Category.PLOTS,   300),
+    ("plots",   "Plots",   "plots",   Category.PLOTS,   370),
     ("scripts", "Scripts", "scripts", Category.SCRIPTS, 390),
     ("ai",      "AI",      "ai",      Category.AI,      300),
 ]
@@ -740,17 +740,13 @@ class AnalysisHubWindow(QMainWindow):
     def _build_analyze_panel(self) -> None:
         card = Card("Analyze", Category.ANALYZE, icon_name="analyze",
                     subtitle="Actions on the loaded member.")
-        self.analyze_hint = QLabel("")
-        self.analyze_hint.setWordWrap(True)
-        card.add_body(self.analyze_hint)
-
         grid = QVBoxLayout()
         for label, icon_name, action in (
             ("Basic analysis", "basic", {"action": "basic_analysis"}),
             ("Feeding summary CSV", "csv", {"action": "feeding_csv"}),
             ("Faceted summary CSV", "csv", {"action": "facet_csv"}),
             ("Binned CSV", "binned", {"action": "binned_csv"}),
-            ("Tidy events CSV", "tidy", {"action": "tidy_export"}),
+            ("Event statistics", "tidy", {"action": "tidy_export"}),
             ("PDF report", "pdf", {"action": "pdf_report"}),
         ):
             button = ActionButton(label, Category.ANALYZE, icon_name)
@@ -776,6 +772,9 @@ class AnalysisHubWindow(QMainWindow):
                     subtitle="Per-DFM quality control for the loaded member: "
                              "integrity, bleeding, and the raw / baselined / "
                              "cumulative-licks signal plots.")
+        ## Not "which member is loaded" — the Experiment tile this panel
+        ## hangs from already says that, and so does the status strip.  Only
+        ## what is true of THIS card: whether there is anything to look at.
         self.qc_hint = QLabel("")
         self.qc_hint.setWordWrap(True)
         card.add_body(self.qc_hint)
@@ -817,44 +816,76 @@ class AnalysisHubWindow(QMainWindow):
 
         Publication figures are Project-level, so the Plot editor and the
         headless render live on the Project panel's Analysis card instead
-        (mirroring PyTrackingAnalysis)."""
+        (mirroring PyTrackingAnalysis).
+
+        The card is three groups, because its buttons are three kinds of
+        thing and a flat list said they were one.  The Metric dropdown steers
+        exactly two of them, so it lives *inside* their group rather than
+        above the lot; the figures that fix their own metrics sit apart; and
+        anything an Experiment Type adds is grouped under that type's name and
+        shown only while such a member is loaded.
+        """
         card = Card("Plots", Category.PLOTS, icon_name="plots",
                     subtitle="Quick figures for the loaded member.")
-        self.plots_hint = QLabel("")
-        self.plots_hint.setWordWrap(True)
-        card.add_body(self.plots_hint)
-
+        ## The one note on the card: which buttons the dropdown reaches is
+        ## the whole point of the grouping, and a box cannot say "only".
+        metric_group = CardGroup(
+            "Chosen metric", note="Applies to these two figures only.")
         row = QHBoxLayout()
         row.addWidget(QLabel("Metric:"))
         self.plot_metric = QComboBox()
         self.plot_metric.setMinimumWidth(180)
         row.addWidget(self.plot_metric, 1)
-        card.add_body(row)
-
+        metric_group.add(row)
         for label, icon_name, action in (
-            ("Feeding summary", "feeding", "plot_feeding_summary"),
             ("Binned time course", "binned", "plot_binned"),
             ("Dot plot", "dot", "plot_dot"),
+        ):
+            metric_group.add(self._plot_button(label, icon_name, action))
+        card.add_body(metric_group)
+
+        fixed_group = CardGroup("Standard figures")
+        for label, icon_name, action in (
+            ("Feeding summary", "feeding", "plot_feeding_summary"),
             ("Well A vs B", "well", "plot_well_comparison"),
         ):
-            button = ActionButton(label, Category.PLOTS, icon_name)
-            button.clicked.connect(
-                lambda _c=False, a=action: self._run_plot_action(a))
-            card.add_body(button)
-        ## Progressive Ratio figures, shown only while such a member is loaded.
-        self._pr_plot_buttons: list = []
-        for label, icon_name, action in (
-            ("Cumulative difference curve", "plot", "plot_pr_cumulative_diff"),
-            ("Training-aligned traces (QC)", "plot", "plot_pr_cumulative_licks"),
-            ("Breaking-point plots", "plot", "plot_breaking_point"),
+            button = self._plot_button(label, icon_name, action)
+            fixed_group.add(button)
+            if action == "plot_well_comparison":
+                ## Two-well only — a single-well member has no B to compare.
+                self._two_well_plot_buttons = [button]
+        card.add_body(fixed_group)
+
+        ## Experiment-Type-specific figures.  One group per type, titled with
+        ## the type, hidden unless a member of that type is loaded — so the
+        ## card never offers a button whose only possible answer is "this
+        ## action requires a different Experiment Type".
+        self._type_plot_groups: dict[str, CardGroup] = {}
+        for requires, title, buttons in (
+            ("progressive_ratio", "Progressive Ratio only",
+             (("Cumulative difference curve", "plot",
+               "plot_pr_cumulative_diff"),
+              ("Training-aligned traces (QC)", "plot",
+               "plot_pr_cumulative_licks"),
+              ("Breaking-point plots", "plot", "plot_breaking_point"))),
+            ("hedonic", "Hedonic only",
+             (("Hedonic feeding plot", "feeding", "plot_hedonic"),)),
         ):
-            button = ActionButton(label, Category.PLOTS, icon_name)
-            button.clicked.connect(
-                lambda _c=False, a=action: self._run_plot_action(a))
-            button.setVisible(False)
-            card.add_body(button)
-            self._pr_plot_buttons.append(button)
+            group = CardGroup(title)
+            for label, icon_name, action in buttons:
+                group.add(self._plot_button(label, icon_name, action))
+            group.setVisible(False)
+            card.add_body(group)
+            self._type_plot_groups[requires] = group
         self.panels["plots"].add_card(card)
+
+    def _plot_button(self, label: str, icon_name: str,
+                     action: str) -> ActionButton:
+        """One Plots-card button, wired to its plot action."""
+        button = ActionButton(label, Category.PLOTS, icon_name)
+        button.clicked.connect(
+            lambda _c=False, a=action: self._run_plot_action(a))
+        return button
 
     def _build_scripts_panel(self) -> None:
         """The **member** script level, and only that.
@@ -1068,6 +1099,10 @@ class AnalysisHubWindow(QMainWindow):
         self.readout.restyle()
         for panel in self.panels.values():
             panel.restyle()
+            ## Cards paint their own surfaces (and their groups'), so the
+            ## theme toggle has to reach them or half the panel stays light.
+            for card in panel.cards():
+                card.restyle()
 
     # ------------------------------------------------------------------
     # Selection
@@ -1495,7 +1530,7 @@ class AnalysisHubWindow(QMainWindow):
             self.experiment = exp
             self.experiment_name = name
             self.refresh()
-            self._reveal_qc()
+            self._reveal_experiment_group()
 
         return self._start(task, f"Loading member '{name}'", done,
                            note=self._LOADING_NOTE)
@@ -1515,18 +1550,25 @@ class AnalysisHubWindow(QMainWindow):
             self.experiment = exp
             self.experiment_name = os.path.basename(path)
             self.refresh()
-            self._reveal_qc()
+            self._reveal_experiment_group()
 
         return self._start(task, f"Loading {path}", done,
                            note=self._LOADING_NOTE)
 
-    def _reveal_qc(self) -> None:
-        """Open the QC panel after a load — checking the recording and
-        deciding exclusions come before the analysis that depends on them —
-        unless the user opened another panel while the load ran; a reveal
-        must not yank that away."""
+    def _reveal_experiment_group(self) -> None:
+        """Expand the experiment sub-strip after a load — QC · Analyze ·
+        Plots · Scripts · AI — without opening any of them.
+
+        A load used to open the QC panel outright.  That answered a question
+        nobody had asked yet: it put one panel in front of the member before
+        anyone said which one they wanted, and the panel it opened covered
+        the rest of the strip.  The sub-strip *is* the menu of what can now
+        be done; showing it is the feedback, choosing from it is the user's
+        move.  Unless the user opened a panel while the load ran — a reveal
+        must not yank that away.
+        """
         if self._open_key is None:
-            self._open_panel("qc")
+            self._expand_experiment()
 
     # ------------------------------------------------------------------
     # Running
@@ -2889,13 +2931,12 @@ class AnalysisHubWindow(QMainWindow):
         for key in ("analyze", "qc", "plots"):
             self.tiles[key].set_dimmed(not loaded)
         if not loaded:
-            for tile_key, hint in (("analyze", self.analyze_hint),
-                                   ("qc", self.qc_hint),
-                                   ("plots", self.plots_hint)):
-                hint.setText("No member is loaded. Double-click a member "
-                             "row in the Project panel to load one.")
+            self.qc_hint.setText("")
+            for tile_key in ("analyze", "qc", "plots"):
                 self.tiles[tile_key].set_summary(["no member loaded", ""])
             self.plot_metric.clear()
+            for group in getattr(self, "_type_plot_groups", {}).values():
+                group.setVisible(False)
             self.experiment_script.clear()
             self.scripts_hint.setText(
                 "No member is loaded — Experiment Scripts run on one.  "
@@ -2908,17 +2949,13 @@ class AnalysisHubWindow(QMainWindow):
         exp = self.experiment
         layout = getattr(exp, "chamber_layout", None) or "two_well"
         type_name = getattr(getattr(exp, "experiment_type", None), "name", "Custom")
-        self.analyze_hint.setText(
-            f"Loaded: {self.experiment_name} — {type_name} / {layout}")
-        self.plots_hint.setText(self.analyze_hint.text())
         self.tiles["analyze"].set_summary([str(self.experiment_name),
                                            f"{type_name} · {layout}"])
         qc_dir = self._member_qc_dir()
         qc_on_disk = qc_dir is not None and qc_dir.is_dir()
         self.qc_hint.setText(
-            self.analyze_hint.text()
-            + ("" if qc_on_disk else
-               "  —  no QC reports on disk yet; 'QC reports' writes them."))
+            "" if qc_on_disk else
+            "No QC reports on disk yet; 'QC reports' writes them.")
         self.tiles["qc"].set_summary(
             [str(self.experiment_name),
              "reports on disk" if qc_on_disk else "no reports yet"])
@@ -2929,8 +2966,16 @@ class AnalysisHubWindow(QMainWindow):
         self.tiles["plots"].set_summary(
             [str(self.experiment_name),
              f"{facets} facet(s)" if facets else "no facets"])
-        for button in getattr(self, "_pr_plot_buttons", []):
-            button.setVisible(type_name == "ProgressiveRatio")
+        ## Type-specific plot groups, keyed by the same ``requires`` string
+        ## the Script Editor's action catalogue gates on — one spelling of
+        ## "this belongs to that Experiment Type", not two.
+        from .script_editor.actions import requires_key_for
+
+        active = requires_key_for(type_name)
+        for key, group in getattr(self, "_type_plot_groups", {}).items():
+            group.setVisible(key == active)
+        for button in getattr(self, "_two_well_plot_buttons", []):
+            button.setVisible(layout != "single_well")
 
         from .metrics import binned_metrics
 

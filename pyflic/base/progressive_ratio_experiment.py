@@ -22,7 +22,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -311,12 +311,14 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             gt = self.group_training(dfm_id, r.group)
             groups.append(r.group)
             roles.append(r.role)
-            ## Training is the paired fly's behaviour; the yoked fly's cell is
-            ## NA because training was never something it did.
-            if r.role == ROLE_PAIRED and gt.complete:
-                tmins.append(float(gt.training_end))
-            else:
-                tmins.append(np.nan)
+            ## Training end is a property of the Chamber Group, not of the
+            ## paired fly alone: it is the moment the group's light stopped
+            ## being purely closed-loop, and the yoked fly lived through the
+            ## same moment.  So both rows carry it — the yoked cell used to be
+            ## NA, which read as missing data in every table and plot that
+            ## groups by it.  A group that never finished has no such moment,
+            ## and both its rows stay NA.
+            tmins.append(float(gt.training_end) if gt.complete else np.nan)
             tdone.append(bool(gt.complete))
             rng = (float(row.get("StartMin", 0.0)), float(row.get("EndMin", 0.0)))
             light.append(self._light_on_seconds(self.dfms[dfm_id], chamber, rng))
@@ -483,6 +485,191 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         self.paired_yoked_diff(transform_licks=transform_licks).to_csv(
             out, index=False, na_rep="NA")
         return out
+
+    # ------------------------------------------------------------------
+    # The standard per-treatment plots, made role-aware
+    # ------------------------------------------------------------------
+    #
+    # A Treatment in this type names *both* flies of a Chamber Group, so the
+    # inherited plots — which group by Treatment alone — draw one cloud of
+    # points per treatment holding paired and yoked flies together.  That
+    # cloud has no referent: the yoked fly's PI is not a second measurement
+    # of the paired fly's preference, it is the control the paired fly is
+    # measured *against*.  Pooling them averages an effect with its own
+    # control and lands halfway to nothing.
+    #
+    # Two fixes, one per plot shape.  The time courses and the multi-metric
+    # feeding summary split their groups by Role, so a treatment becomes two
+    # series — the honest version of the same picture.  The dot plot, where
+    # one point is one observation, goes further and plots the within-group
+    # difference itself: paired minus yoked, one point per Chamber Group,
+    # which is the unit CONTEXT.md fixes for this type ("a difference is
+    # always taken *within* a Chamber Group, never between group means").
+
+    def _append_role_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add ``Group`` and ``Role`` to any frame carrying ``DFM`` and
+        ``Chamber``.
+
+        The cheap half of :meth:`_augment_rows`: roles are a config fact, so
+        this costs a dict lookup per row, while the training end and the
+        light-on seconds mean reading the signal.  Binned and moving-window
+        tables have a row per chamber *per bin* and need only the role.
+        """
+        if df is None or df.empty or "Role" in df.columns:
+            return df
+        if "DFM" not in df.columns or "Chamber" not in df.columns:
+            return df
+        df = df.copy()
+        keys = list(zip(df["DFM"].astype(int), df["Chamber"].astype(int)))
+        roles = {k: self.role_of(*k) for k in set(keys)}
+        pos = list(df.columns).index("Chamber") + 1
+        df.insert(pos, "Group", [roles[k].group for k in keys])
+        df.insert(pos + 1, "Role", [roles[k].role for k in keys])
+        return df
+
+    def _assemble_treatment_table(
+        self, summary_by_dfm: dict[int, pd.DataFrame]
+    ) -> pd.DataFrame:
+        """The inherited treatment table, plus each row's Chamber Group and
+        Role — so every plot built on it can keep the two flies apart."""
+        return self._append_role_columns(
+            Experiment._assemble_treatment_table(self, summary_by_dfm))
+
+    def _resolve_group_col(self, df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+        """The inherited grouping, with the Role appended to every label.
+
+        ``w1118`` becomes ``w1118 · paired`` and ``w1118 · yoked``: one
+        series per fly role, never one series holding both.  A frame with no
+        ``Role`` column (anything not per-chamber) is grouped as before.
+        """
+        df, group_col = Experiment._resolve_group_col(self, df)
+        if "Role" not in df.columns:
+            return df, group_col
+        df = df.copy()
+        df["_RoleGroup"] = (df[group_col].astype(str) + " · "
+                            + df["Role"].astype(str))
+        return df, "_RoleGroup"
+
+    def paired_yoked_delta(
+        self,
+        *,
+        metric: str = "PI",
+        two_well_mode: Literal["total", "mean_ab", "A", "B"] = "total",
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool | None = None,
+    ) -> pd.DataFrame:
+        """One row per Chamber Group: ``Delta`` = paired *metric* − yoked.
+
+        The general form of :meth:`paired_yoked_diff`, which carries only the
+        fixed :data:`DIFF_METRICS` as stored columns.  Here any metric the
+        summary can express — including the A/B combinations behind
+        *two_well_mode* — is resolved per chamber first and differenced
+        after, so the metric catalogue the UI offers works unchanged.
+
+        With no *range_minutes*, rows come from the per-group Training / Test
+        Facets and a ``Facet`` column says which.  Given an explicit window,
+        that window is used for every group and ``Facet`` reads ``"Custom"`` —
+        the Facets are per Chamber Group, so one shared window is a different
+        question, not a filter on the same one.
+
+        Groups missing either chamber (excluded, or never assigned) contribute
+        no row, exactly as in :meth:`paired_yoked_diff`.
+        """
+        factors = list(self.design_factors or [])
+        cols = ["Treatment", *factors, "DFM", "Group", "Facet",
+                "PairedChamber", "YokedChamber", "Paired", "Yoked", "Delta"]
+        if range_is_specified(range_minutes):
+            per_chamber = self.feeding_summary(
+                range_minutes=range_minutes, transform_licks=transform_licks)
+            if per_chamber is not None and not per_chamber.empty:
+                per_chamber = per_chamber.copy()
+                per_chamber["Facet"] = "Custom"
+        else:
+            per_chamber = self.feeding_summary_facet(
+                transform_licks=transform_licks)
+        if per_chamber is None or per_chamber.empty:
+            return pd.DataFrame(columns=cols)
+
+        per_chamber = per_chamber.copy()
+        per_chamber["_Value"] = self._metric_series_from_binned_rows(
+            per_chamber, metric=metric, two_well_mode=two_well_mode)
+
+        rows: list[dict] = []
+        for (dfm_id, group, label), sub in per_chamber.groupby(
+                ["DFM", "Group", "Facet"], sort=False):
+            paired = sub[sub["Role"] == ROLE_PAIRED]
+            yoked = sub[sub["Role"] == ROLE_YOKED]
+            if len(paired) != 1 or len(yoked) != 1:
+                continue
+            p, y = paired.iloc[0], yoked.iloc[0]
+            pv, yv = p["_Value"], y["_Value"]
+            row = {"Treatment": p["Treatment"]}
+            for f in factors:
+                row[f] = p.get(f, "")
+            row.update({
+                "DFM": int(dfm_id), "Group": int(group), "Facet": label,
+                "PairedChamber": int(p["Chamber"]),
+                "YokedChamber": int(y["Chamber"]),
+                "Paired": float(pv) if pd.notna(pv) else np.nan,
+                "Yoked": float(yv) if pd.notna(yv) else np.nan,
+                "Delta": (float(pv) - float(yv)
+                          if pd.notna(pv) and pd.notna(yv) else np.nan),
+            })
+            rows.append(row)
+        out = pd.DataFrame(rows, columns=cols)
+        return out.dropna(subset=["Delta"]).reset_index(drop=True)
+
+    def plot_dot_metric_by_treatment(
+        self,
+        *,
+        metric: str = "Licks",
+        two_well_mode: Literal["total", "mean_ab", "A", "B"] = "total",
+        range_minutes: Sequence[float] = (0, 0),
+        transform_licks: bool | None = None,
+    ) -> Any:
+        """Jitter + mean ± SE of the **within-group difference** in *metric*.
+
+        One point is one Chamber Group's paired-minus-yoked value, not one
+        fly: the comparison this design licenses.  Zero is drawn, because
+        zero — not the axis floor — is the null this plot is read against.
+
+        The x axis is the first design factor (or the Treatment when there
+        are none) and the panels are the Facets, with any further factors
+        folded into the panel label.
+        """
+        from plotnine import annotate, ggplot, theme_bw
+
+        df = self.paired_yoked_delta(
+            metric=metric, two_well_mode=two_well_mode,
+            range_minutes=range_minutes, transform_licks=transform_licks)
+        if df.empty:
+            return (ggplot()
+                    + annotate("text", x=0, y=0,
+                               label="No complete chamber group to difference")
+                    + theme_bw())
+
+        factor_cols = [f for f in (self.design_factors or []) if f in df.columns]
+        x_col = factor_cols[0] if factor_cols else "Treatment"
+        ## Facet first, so the panels read Training | Test at a glance; any
+        ## factor past the x axis joins the panel label rather than the x.
+        panel_cols = ["Facet", *factor_cols[1:]]
+        df = df.copy()
+        panel = df[panel_cols].astype(str).agg(" / ".join, axis=1)
+        ## Ordered by first appearance, which is the order the type defines
+        ## its Facets in \u2014 Training then Test, not the alphabet's Test first.
+        df["_Panel"] = pd.Categorical(
+            panel, categories=list(dict.fromkeys(panel)), ordered=True)
+
+        label = f"\u0394{metric} (paired \u2212 yoked)"
+        return self.plot_jitter_summary(
+            df,
+            x_col=x_col,
+            y_col="Delta",
+            facet_col="_Panel",
+            title="One point per chamber group",
+            y_label=label,
+            hline_at=0.0,
+        )
 
     # ------------------------------------------------------------------
     # Auto-removal: two-well thresholds + require_training_complete

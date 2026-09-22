@@ -79,9 +79,10 @@ shown only while a Project is open).
 
 The Experiments card's members table is the centre of the Hub: one row per member, with its DFM count,
 chamber count, and whether it has been analysed and reported. Double-click a row to load
-it — once the load finishes, the Experiment group expands and the QC panel opens,
-because loading is only ever a step toward doing something with it, and checking the
-recording comes before the analysis that depends on it.
+it — once the load finishes, the Experiment group expands to its sub-strip (QC · Analyze ·
+Plots · Scripts · AI), because loading is only ever a step toward doing something with it.
+No panel is opened: the sub-strip is the menu of what you can now do, and which of those
+you want is your call.
 
 **Red rows are blocked members** — folders a run cannot use as they stand, including ones
 the Project cannot even see yet because they have no config. Hover for the reason. These
@@ -166,8 +167,10 @@ Appears when a Project is open, in the order the work happens:
 ## Analyze panel
 
 Actions on the **loaded member**: basic analysis, the summary CSVs, the faceted
-summary, binned CSVs, tidy events, and the per-member PDF report. Basic analysis
-deliberately skips QC — that is the QC panel's job.
+summary, binned CSVs, **Event statistics** (one row per individual feeding or tasting
+event — its start minute, duration, licks and intensity — written by the `tidy_export`
+action to `analysis*/tidy_<kind>_events.csv`), and the per-member PDF report. Basic
+analysis deliberately skips QC — that is the QC panel's job.
 
 ## QC panel
 
@@ -182,9 +185,27 @@ kind, reusing tabs on a second look. **Open qc folder** shows the files themselv
 
 ## Plots panel
 
-Quick figures for the loaded member. The Plot Editor and the publication figures are
-Project-level and live on the Project panel's Analysis card. See
-[Plot catalogue](plots-catalog.md) and [Plot Editor](app-plot-editor.md).
+Quick figures for the loaded member, in three groups — because the buttons are three
+kinds of thing and a flat list said they were one.
+
+**Chosen metric** holds the **Metric** dropdown and the only two figures it steers:
+**Binned time course** and **Dot plot**. Change the metric and nothing outside this group
+changes.
+
+**Standard figures** — **Feeding summary** and **Well A vs B** — draw their own metrics;
+the Metric box does not reach them. **Well A vs B** is offered only on a two-well layout.
+
+**Type-specific groups** are titled with the Experiment Type they belong to
+(*Progressive Ratio only*, *Hedonic only*) and appear only while a member of that type
+is loaded, so the card never offers a button whose only possible answer is "this requires
+a different Experiment Type".
+
+The panel does not repeat which member is loaded: the Experiment tile it hangs from
+already says so, as does the status strip.
+
+The Plot Editor and the publication figures are Project-level and live on the Project
+panel's Analysis card. See [Plot catalogue](plots-catalog.md) and
+[Plot Editor](app-plot-editor.md).
 
 ## Scripts panel
 

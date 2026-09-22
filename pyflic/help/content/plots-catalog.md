@@ -96,6 +96,36 @@ Duration is the measure of interest in these designs; see
 
 ## Progressive-ratio plots
 
+### Paired and yoked are never pooled
+
+A Treatment in this type names *both* flies of a Chamber Group, so grouping by Treatment
+alone would draw one cloud of points holding an effect together with its own control. The
+yoked fly's PI is not a second measurement of the paired fly's preference — it is what the
+paired fly is measured *against*, and averaging the two lands halfway to nothing.
+
+So for a Progressive Ratio member the standard plots behave differently:
+
+- The **dot plot** shows the **within-group difference**: one point is one Chamber Group's
+  paired-minus-yoked value of the chosen metric, panelled by Facet (Training, then Test),
+  with zero drawn as the null the points are read against. This is the unit the type is
+  built on — a difference is always taken within a Chamber Group, never between group
+  means. Any metric in the dropdown works, including the A/B combinations; the fixed set
+  in `paired_yoked_diff.csv` is the same numbers for the metrics it stores.
+- The **feeding summary**, the **binned time course** and the **sliding-window** plots
+  split every group by role, so a treatment becomes two series — `w1118 · paired` and
+  `w1118 · yoked` — rather than one.
+
+Leave Start/End empty and the difference is taken over each group's own Training and Test
+Facets. Give an explicit window and that one window is used for every group instead, with
+the Facet column reading `Custom`: the Facets are per Chamber Group, so a single shared
+window is a different question rather than a filter on the same one.
+
+The Project-level publication figures (`faceted_pi` and friends in the
+[Plot Editor](app-plot-editor.md)) still pool the two roles; use the pooled
+`proj_PairedYokedDiff.csv` for a paired-vs-yoked statement across members.
+
+### The type's own figures
+
 **Cumulative difference curve** (`plot_pr_cumulative_diff`, and `timecourse_pr_diff` in a
 Project) — the headline figure: paired-minus-yoked cumulative sucrose-well licks against
 minutes since the chamber group's training end, one mean ± SEM curve per treatment with the

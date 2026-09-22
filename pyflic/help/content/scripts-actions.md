@@ -26,7 +26,7 @@ several devices. `group` defaults to the **script's name** — see
 | `binned_csv` | `binsize` | Feeding metrics binned over time, to CSV |
 | `weighted_duration` | — | Weighted-duration summary (hedonic experiments) |
 | `paired_yoked_diff` | — | Paired − yoked table, one row per chamber group per Facet (progressive ratio) |
-| `tidy_export` | `kind` | One row per bout, for downstream statistics |
+| `tidy_export` | `kind` | **Event statistics**: one row per individual event, for downstream statistics |
 | `bootstrap` | `metric`, `mode`, `n_boot`, `ci`, `seed` | Bootstrap confidence intervals |
 | `compare` | `metric`, `mode`, `model`, `factors` | ANOVA or linear mixed model across treatments |
 | `light_phase_summary` | — | Feeding summary split by light and dark phase |
@@ -34,7 +34,7 @@ several devices. `group` defaults to the **script's name** — see
 | `transition_matrix` | — | Transition probabilities between bout types |
 | `pdf_report` | `metrics`, `binsize` | Binned plots and tables bundled into one PDF |
 
-**`tidy_export`** takes `kind: feeding` (default) or `tasting`.
+**`tidy_export`** — the **Event statistics** button — takes `kind: feeding` (default) or `tasting`, and writes one row per event with its `StartMin`, `Duration`, `Licks`, `AvgIntensity` and `MaxIntensity`, labelled by chamber, well and treatment. The action key keeps its original spelling, so scripts already on disk are unaffected.
 
 **`bootstrap`** defaults to `metric: PI`, `n_boot: 2000`, `ci: 0.95`, `seed: 0`. The fixed
 seed means repeated runs give identical intervals — change it only if you want to confirm

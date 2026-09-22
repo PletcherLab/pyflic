@@ -11,12 +11,21 @@ from .theme import (
     resolved_mode,
     surface_colors,
 )
-from .widgets import ActionButton, Card, OutputLog, PlotDock, SidebarNav, TopBar
+from .widgets import (
+    ActionButton,
+    Card,
+    CardGroup,
+    OutputLog,
+    PlotDock,
+    SidebarNav,
+    TopBar,
+)
 from .zoom import ZoomableImageView, ZoomableTextView
 
 __all__ = [
     "ActionButton",
     "Card",
+    "CardGroup",
     "Category",
     "OutputLog",
     "PlotDock",

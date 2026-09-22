@@ -224,9 +224,14 @@ ACTIONS: list[Action] = [
         params=[_START, _END],
     ),
     Action(
+        ## The action key stays ``tidy_export``: it is written into every
+        ## script on disk, and the label is what people read, not what they
+        ## type.  "Tidy" named the shape of the file; this names what is in
+        ## it — one row per feeding or tasting event, with its own time,
+        ## duration, licks and intensity.
         action="tidy_export",
-        label="Tidy events CSV",
-        blurb="One-row-per-bout tidy dataframe for downstream stats.",
+        label="Event statistics",
+        blurb="One row per individual event: time, duration, licks, intensity.",
         icon="tidy", category=Category.ANALYZE, produces="csv",
         params=[
             Param(key="kind", label="Event kind", type="choice",
@@ -373,6 +378,11 @@ ACTIONS: list[Action] = [
                   default=None, derived_from="metric"),
             _START, _END,
         ],
+        notes="One point per chamber, mean ± SEM over each treatment. On a "
+              "Progressive Ratio member it is instead one point per Chamber "
+              "Group — the paired-minus-yoked difference in the metric, "
+              "panelled by Facet — because pooling a paired fly with its own "
+              "yoked control averages an effect with its control.",
     ),
     Action(
         action="plot_moving_window",

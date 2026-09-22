@@ -702,6 +702,7 @@ class Experiment:
         point_size: float = 3.0,
         size_col: str | None = None,
         base_font_size: float = 20.0,
+        hline_at: float | None = None,
     ):
         """
         Publication-quality jitter + mean ± SEM plot faceted by a grouping column.
@@ -725,6 +726,10 @@ class Experiment:
             Explicit ordering of x-axis categories.
         annotation : str | None
             Optional text label drawn on every facet panel.
+        hline_at : float | None
+            Draw a dashed reference line at this y value on every panel.  Pass
+            0.0 when the y axis is a difference, so the null the points are
+            read against is on the plot rather than in the reader's head.
         annotation_x / annotation_y
             Data coordinates for the annotation.
         """
@@ -737,6 +742,7 @@ class Experiment:
             element_rect,
             element_text,
             facet_wrap,
+            geom_hline,
             geom_jitter,
             ggplot,
             guides,
@@ -812,6 +818,11 @@ class Experiment:
             )
             + labs(title=title, x=x_label or x_col, y=y_label or y_col)
         )
+
+        ## Under the points, so a dense cloud is never hidden behind it.
+        if hline_at is not None:
+            p = p + geom_hline(yintercept=float(hline_at), linetype="dashed",
+                               color="#7f7f7f", size=0.6)
 
         # Hide the facet strip entirely when it carries no information.
         if facet_col == "_Facet":

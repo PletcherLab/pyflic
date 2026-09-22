@@ -193,7 +193,7 @@ can be read as "before" and this as "after".
 
 | File | Grain | Notes |
 |---|---|---|
-| `feeding_summary.csv` | chamber, whole recording | standard two-well columns + `Group`, `Role`, `TrainingMinutes` (paired only), `TrainingComplete`, `LightOn_sec` |
+| `feeding_summary.csv` | chamber, whole recording | standard two-well columns + `Group`, `Role`, `TrainingMinutes` (the group's training end, on both its rows), `TrainingComplete`, `LightOn_sec` |
 | `feeding_summary_facet.csv` | chamber × Facet (Training, Test) | per-group windows; `StartMin`/`EndMin` vary by row |
 | `paired_yoked_diff.csv` | Chamber Group × Facet | Paired − Yoked for LicksA/B, EventsA/B, PI, MedDurationA/B; plus `PairedChamber`, `YokedChamber`, `TrainingMinutes`, `LightOn_sec`; no row if either chamber is missing |
 | `pr_cumulative_diff.png` | experiment | Cumulative Difference Curve: mean ± SEM per Treatment over groups, truncated to the range every group covers, faint group traces to each group's end, x = min since training end, 1-min bins, raw licks |

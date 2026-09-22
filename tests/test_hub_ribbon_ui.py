@@ -23,6 +23,7 @@ from pyflic.base.hub import (  # noqa: E402
     EXPERIMENT_SUBTILES,
     AnalysisHubWindow,
 )
+from pyflic.base.ui.widgets import ActionButton  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -132,19 +133,22 @@ def test_unloading_folds_the_group_and_closes_its_panel(hub):
     assert not hub.tiles["experiment"].is_clickable()
 
 
-def test_a_finished_load_reveals_the_qc_panel(hub):
-    """Loading is a step toward doing something — and QC comes first."""
+def test_a_finished_load_reveals_the_sub_strip_and_opens_nothing(hub):
+    """Loading is a step toward doing something, so the strip of what can now
+    be done appears — but which of those to open is the user's move."""
     _load_fake(hub)
-    hub._reveal_qc()
-    assert hub._open_key == "qc"
+    hub._reveal_experiment_group()
     assert hub._experiment_expanded
+    assert hub._sub_strip_host.isVisible()
+    assert hub._open_key is None
 
 
 def test_the_reveal_never_yanks_away_a_panel_the_user_opened(hub):
     _load_fake(hub)
     hub._open_panel("project")
-    hub._reveal_qc()
+    hub._reveal_experiment_group()
     assert hub._open_key == "project"
+    assert not hub._experiment_expanded
 
 
 def test_suppress_tabs_governs_only_batch_tasks(hub):
@@ -164,3 +168,88 @@ def test_subtiles_are_compact_and_route_summaries_to_the_tooltip(hub):
     tile.set_summary(["ready", "faceted"])
     assert tile.summary_text() == ""          # no summary lines on the chip
     assert "ready" in tile.toolTip()
+
+
+# ---------------------------------------------------------------------------
+# The Plots card's groups
+# ---------------------------------------------------------------------------
+#
+# A flat column of buttons said every figure on the card was the same kind of
+# thing.  Three of them are not: two follow the Metric dropdown, one exists
+# only on a two-well layout, and some exist only for one Experiment Type.
+
+
+class _NamedType:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _load_fake_of_type(hub, type_name: str | None,
+                       layout: str = "two_well") -> None:
+    exp = _FakeExperiment()
+    exp.experiment_type = None if type_name is None else _NamedType(type_name)
+    exp.chamber_layout = layout
+    hub.experiment = exp
+    hub.experiment_name = "Rep1"
+    hub.refresh()
+
+
+def _group_titled(hub, fragment: str):
+    from pyflic.base.ui.widgets import CardGroup
+
+    for group in hub.panels["plots"].findChildren(CardGroup):
+        if fragment.lower() in group.title().lower():
+            return group
+    raise AssertionError(f"no CardGroup titled like {fragment!r}")
+
+
+def test_the_metric_dropdown_sits_with_the_buttons_it_steers(hub):
+    """The Metric box changes two of the card's figures and not the rest, so
+    it lives inside their group rather than above the lot."""
+    group = _group_titled(hub, "Chosen metric")
+    assert hub.plot_metric in group.findChildren(type(hub.plot_metric))
+    labels = {b.text() for b in group.findChildren(ActionButton)}
+    assert labels == {"Binned time course", "Dot plot"}
+    fixed = {b.text() for b in
+             _group_titled(hub, "Standard figures").findChildren(ActionButton)}
+    assert fixed == {"Feeding summary", "Well A vs B"}
+
+
+def test_type_specific_figures_are_grouped_and_hidden_for_other_types(hub):
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    pr = _group_titled(hub, "Progressive Ratio")
+    hedonic = _group_titled(hub, "Hedonic")
+    assert not pr.isHidden() and hedonic.isHidden()
+
+    _load_fake_of_type(hub, "Hedonic")
+    assert not hedonic.isHidden() and pr.isHidden()
+
+    _load_fake_of_type(hub, None)               # a Custom experiment
+    assert pr.isHidden() and hedonic.isHidden()
+
+
+def test_unloading_hides_every_type_specific_group(hub):
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    hub.experiment = None
+    hub.experiment_name = None
+    hub.refresh()
+    assert _group_titled(hub, "Progressive Ratio").isHidden()
+
+
+def test_well_comparison_is_offered_only_on_a_two_well_layout(hub):
+    _load_fake_of_type(hub, None, layout="two_well")
+    button, = hub._two_well_plot_buttons
+    assert not button.isHidden()
+    _load_fake_of_type(hub, None, layout="single_well")
+    assert button.isHidden()
+
+
+def test_the_subtile_panels_do_not_repeat_the_loaded_member(hub):
+    """The Experiment tile these panels hang from already names the member,
+    and so does the status strip; the QC line keeps only what is true of that
+    card — whether there is anything on disk to look at."""
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    assert not hasattr(hub, "analyze_hint")
+    assert not hasattr(hub, "plots_hint")
+    assert "Rep1" not in hub.qc_hint.text()
+    assert "QC reports" in hub.qc_hint.text()

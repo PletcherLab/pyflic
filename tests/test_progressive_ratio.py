@@ -176,13 +176,18 @@ def test_feeding_summary_carries_the_pr_columns(exp):
     paired = fs[fs.Role == "paired"]
     yoked = fs[fs.Role == "yoked"]
     assert len(paired) == 6 and len(yoked) == 6
-    assert yoked["TrainingMinutes"].isna().all()
-    complete_paired = paired[paired.TrainingComplete]
-    assert complete_paired["TrainingMinutes"].notna().all()
+    ## Training end belongs to the Chamber Group, so BOTH flies carry it —
+    ## the yoked cell was NA and read as missing data everywhere downstream.
+    complete = fs[fs.TrainingComplete]
+    assert complete["TrainingMinutes"].notna().all()
+    assert set(complete.Role) == {"paired", "yoked"}
+    ## A group that never finished has no such moment; neither row invents one.
+    assert fs[~fs.TrainingComplete]["TrainingMinutes"].isna().all()
     assert (fs["LightOn_sec"] > 0).all()
-    ## Both chambers of a group share the light, so they share LightOn_sec.
+    ## Both chambers of a group share the light and the training end.
     for (_, _), sub in fs.groupby(["DFM", "Group"]):
         assert sub["LightOn_sec"].nunique() == 1
+        assert sub["TrainingMinutes"].nunique(dropna=False) == 1
     ## Idempotent on the cache: a second call returns the same augmented frame.
     assert list(exp.feeding_summary().columns) == list(fs.columns)
 
@@ -199,6 +204,12 @@ def test_facets_are_split_per_group_at_training_end(exp):
     assert g12[g12.Facet == "Test"]["StartMin"].iloc[0] == pytest.approx(9.0, abs=0.02)
     incomplete = ff[(ff.DFM == 2) & (ff.Group == 3)]
     assert set(incomplete["Facet"]) == {"Training"}
+    ## Every faceted row of a complete group carries its training end, in
+    ## both Facets and for both roles.
+    done = ff[ff.TrainingComplete]
+    assert done["TrainingMinutes"].notna().all()
+    for (_, _), sub in done.groupby(["DFM", "Group"]):
+        assert sub["TrainingMinutes"].nunique() == 1
     ## The tail window is not empty (regression: open-ended range read as 0).
     assert (ff[ff.Facet == "Test"]["LicksA"] > 0).all()
 
@@ -275,6 +286,63 @@ def test_figures_build(exp):
     exp.plot_cumulative_diff().draw()
     exp.plot_cumulative_licks_dfm(1).draw()
     exp.plot_breaking_point_dfm(1).draw()
+
+
+# ---------------------------------------------------------------------------
+# The standard per-treatment plots never pool paired with yoked
+# ---------------------------------------------------------------------------
+
+def test_treatment_grouping_carries_the_role(exp):
+    """A Treatment names both flies of a Chamber Group, so grouping by
+    Treatment alone draws one cloud holding an effect and its own control."""
+    summary = exp.feeding_summary()
+    grouped, col = exp._resolve_group_col(summary)
+    assert col == "_RoleGroup"
+    assert set(grouped[col]) == {"w1118 · paired", "w1118 · yoked",
+                                 "mut · paired", "mut · yoked"}
+
+
+def test_the_binned_treatment_table_carries_the_role(exp):
+    """The time courses group through the same column, so the split has to
+    reach the binned table too — not just the per-chamber summary."""
+    binned = exp._binned_licks_table_by_treatment(binsize_min=10.0)
+    assert {"Group", "Role"}.issubset(binned.columns)
+    assert set(binned["Role"]) == {"paired", "yoked"}
+    _, col = exp._resolve_group_col(binned)
+    assert col == "_RoleGroup"
+
+
+def test_delta_is_one_row_per_group_per_facet_and_matches_the_diff_table(exp):
+    delta = exp.paired_yoked_delta(metric="PI")
+    diff = exp.paired_yoked_diff()
+    keys = ["DFM", "Group", "Facet"]
+    assert len(delta) == len(diff)
+    merged = delta.merge(diff[[*keys, "dPI"]], on=keys)
+    assert len(merged) == len(delta)
+    assert (merged["Delta"] - merged["dPI"]).abs().max() < 1e-12
+    ## Composite metrics have no stored d-column; they are differenced here.
+    licks = exp.paired_yoked_delta(metric="Licks", two_well_mode="total")
+    assert (licks["Delta"] - (licks["Paired"] - licks["Yoked"])).abs().max() == 0
+
+
+def test_an_explicit_window_replaces_the_facets(exp):
+    """The Facets are per Chamber Group, so one shared window is a different
+    question rather than a filter on the same one."""
+    windowed = exp.paired_yoked_delta(metric="PI", range_minutes=(0, 20))
+    assert set(windowed["Facet"]) == {"Custom"}
+    assert windowed.groupby(["DFM", "Group"]).size().max() == 1
+
+
+def test_the_dot_plot_is_the_within_group_difference(exp):
+    """One point is one Chamber Group's paired-minus-yoked value — the unit
+    CONTEXT.md fixes for this type — not one fly."""
+    plot = exp.plot_dot_metric_by_treatment(metric="PI")
+    assert plot.mapping["y"] == "Delta"
+    drawn = plot.data
+    expected = exp.paired_yoked_delta(metric="PI")
+    assert len(drawn) == len(expected)
+    assert list(drawn["_Panel"].cat.categories) == ["Training", "Test"]
+    plot.draw()
 
 
 def test_breaking_point_table_is_per_light_period_after_training(exp):

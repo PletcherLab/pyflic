@@ -3,6 +3,7 @@
 * :class:`SidebarNav`  — vertical navigation rail with category-tinted items
 * :class:`TopBar`      — app title + arbitrary right-aligned controls
 * :class:`Card`        — rounded panel with title, optional subtitle, and a body layout
+* :class:`CardGroup`   — titled box grouping the controls inside a Card that belong together
 * :class:`ActionButton`— QPushButton with category-coloured left border + icon
 * :class:`PlotDock`    — tabbed interactive plot dock (matplotlib + nav toolbar)
 * :class:`OutputLog`   — monospaced log panel that grows scrollback
@@ -17,6 +18,7 @@ from PyQt6.QtGui import QColor, QIcon, QPalette, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -271,6 +273,10 @@ class Card(QFrame):
             ## is the loudest thing left on a dimmed card.
             mode = QIcon.Mode.Disabled if self._dimmed else QIcon.Mode.Normal
             self._icon_lbl.setPixmap(self._icon.pixmap(QSize(20, 20), mode))
+        ## The groups inside paint from the same surfaces and are repainted
+        ## with the card, so a theme toggle reaches them too.
+        for group in self.findChildren(CardGroup):
+            group.restyle()
 
     def add_title_widget(self, widget: QWidget) -> None:
         """Add *widget* to the title row, immediately after the title text.
@@ -300,6 +306,92 @@ class Card(QFrame):
         lbl = QLabel(text, self)
         lbl.setObjectName("PyflicSectionDivider")
         self._body.addWidget(lbl)
+
+
+# ---------------------------------------------------------------------------
+# Card group
+# ---------------------------------------------------------------------------
+
+class CardGroup(QGroupBox):
+    """A titled box for the controls inside a :class:`Card` that belong together.
+
+    A Card lists its actions one under the other, which reads as "these are all
+    the same kind of thing".  When some of them are not — a control that steers
+    only two of the buttons, a set of buttons that exists only for one
+    Experiment Type — the flat list actively misleads, so those go in a group
+    whose title says what they share.
+
+    Presentation only: the group owns no state, just the layout its members
+    sit in.  Use :meth:`add` for each member and :meth:`add_note` for the
+    one-line explanation of what the group is.
+    """
+
+    def __init__(self, title: str, parent: QWidget | None = None, *,
+                 note: str | None = None) -> None:
+        super().__init__(title, parent)
+        self.setObjectName("PyflicCardGroup")
+        self._body = QVBoxLayout(self)
+        ## The top margin is the title's clearance and nothing more: the
+        ## title is drawn in the frame's own margin box, so any padding here
+        ## opens a band of empty group under its own name.
+        self._body.setContentsMargins(8, 7, 8, 8)
+        self._body.setSpacing(6)
+        self._notes: list[QLabel] = []
+        if note:
+            self.add_note(note)
+        self.restyle()
+
+    def add_note(self, text: str) -> None:
+        label = QLabel(text, self)
+        label.setObjectName("PyflicCardGroupNote")
+        label.setWordWrap(True)
+        self._body.addWidget(label)
+        self._notes.append(label)
+        self.restyle()
+
+    def restyle(self) -> None:
+        """Repaint for the CURRENT theme, from ``surface_colors``.
+
+        Not ``palette(mid)`` from the app stylesheet: qdarktheme leaves the
+        palette roles at values that come out all but invisible on the dark
+        theme, which turned the title into a ghost and the notes into blank
+        vertical space — the group looked like a gap rather than a group.
+        The Card beneath does the same for the same reason.
+        """
+        from .theme import surface_colors
+
+        c = surface_colors()
+        self.setStyleSheet(
+            f"QGroupBox#PyflicCardGroup {{"
+            f"  border: 1px solid {c['border']};"
+            f"  border-radius: 8px;"
+            f"  margin-top: 9px;"
+            f"  padding: 0;"
+            f"  font-size: 9pt;"
+            f"  font-weight: 600;"
+            f"  color: {c['text']};"
+            f"}}"
+            f"QGroupBox#PyflicCardGroup::title {{"
+            f"  subcontrol-origin: margin;"
+            f"  subcontrol-position: top left;"
+            f"  left: 10px;"
+            f"  padding: 0 4px;"
+            f"  color: {c['text']};"
+            f"}}"
+        )
+        for label in self._notes:
+            label.setStyleSheet(
+                f"QLabel#PyflicCardGroupNote {{ color: {c['muted']}; "
+                f"font-size: 9pt; font-weight: 400; }}")
+        ## The stylesheet carries the box model, so the height this group
+        ## asks for changes with it.
+        self.updateGeometry()
+
+    def add(self, widget_or_layout: QWidget | Any) -> None:
+        if isinstance(widget_or_layout, QWidget):
+            self._body.addWidget(widget_or_layout)
+        else:
+            self._body.addLayout(widget_or_layout)
 
 
 # ---------------------------------------------------------------------------

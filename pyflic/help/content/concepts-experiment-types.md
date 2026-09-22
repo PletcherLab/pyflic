@@ -148,7 +148,9 @@ rather than at a fixed minute, so the config never states `facet_cutoffs`. See
 [Facets](concepts-facets.md).
 
 **Outputs** beyond the standard two-well summary: `Group`, `Role`, `TrainingMinutes`
-(paired only), `TrainingComplete` and `LightOn_sec` columns; `paired_yoked_diff.csv`, one
+(the chamber group's training end, carried on both its chambers' rows and in every Facet —
+only a group that never finished training has none), `TrainingComplete` and `LightOn_sec`
+columns; `paired_yoked_diff.csv`, one
 row per chamber group per Facet with paired-minus-yoked differences (`dLicksA`, `dPI`, …);
 `pr_cumulative_diff.csv` and its figure, the cumulative difference curve; and per-DFM
 training-aligned traces as QC figures. See [Plots](plots-catalog.md).
