@@ -318,7 +318,16 @@ class ProjectDesignDialog(QDialog):
         elif not self.cutoffs_edit.text().strip() and item.facet_cutoffs:
             self.cutoffs_edit.setText(
                 ", ".join(str(c) for c in item.facet_cutoffs))
-        if not self.labels_edit.text().strip() and item.phase_labels:
+        derived = bool(getattr(item, "data_derived_facets", False))
+        ## The phase names of a data-derived type are its own (Training,
+        ## Test) and not a config key: shown, never editable, never written.
+        self.labels_edit.setEnabled(not derived)
+        if derived:
+            self.labels_edit.setText(", ".join(item.phase_labels))
+            self.labels_edit.setToolTip(
+                f"'{item.display_name}' names its phases itself; "
+                f"facet_labels is not written.")
+        elif not self.labels_edit.text().strip() and item.phase_labels:
             self.labels_edit.setText(", ".join(item.phase_labels))
         for key, value in (item.default_constants or {}).items():
             edit = self.constant_edits.get(key)
@@ -533,6 +542,9 @@ class ProjectDesignDialog(QDialog):
             g["chamber_layout"] = self._chamber_layout()
         labels = [v.strip() for v in self.labels_edit.text().split(",")
                   if v.strip()]
+        if getattr(item, "data_derived_facets", False):
+            ## No cutoffs exist to count against; the names are the type's.
+            labels = []
         if labels:
             n_cutoffs = len(g.get("facet_cutoffs")
                             or item.facet_cutoffs or [])

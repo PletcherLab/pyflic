@@ -260,3 +260,31 @@ def test_project_design_button_says_when_there_is_no_design(app, tmp_path):
         assert hub.design_btn.isEnabled()
     finally:
         hub.close()
+
+
+def test_a_progressive_ratio_design_saves_with_its_fixed_phase_names(app, tmp_path,
+                                                                    monkeypatch):
+    """The type names Training and Test itself and has no cutoffs to count
+    them against; the dialog must neither refuse the save nor write
+    facet_cutoffs / facet_labels (ADR-0013)."""
+    root = tmp_path / "pr"
+    root.mkdir()
+    dialog = ProjectDesignDialog(start_dir=str(root))
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("ProgressiveRatio"))
+    dialog.name_edit.setText("PR")
+    dialog.well_a_edit.setText("Sucrose")
+    dialog.well_b_edit.setText("Yeast")
+    warned: list[str] = []
+    monkeypatch.setattr(dialog, "_warn", warned.append)
+
+    assert dialog.labels_edit.text() == "Training, Test"
+    assert not dialog.labels_edit.isEnabled()
+    assert not dialog.cutoffs_edit.isEnabled()
+    dialog._save()
+
+    assert warned == []
+    assert dialog.saved_dir == str(root)
+    g = yaml.safe_load((root / "project.yaml").read_text())["design"]["global"]
+    assert g["experiment_type"] == "ProgressiveRatio"
+    assert "facet_cutoffs" not in g and "facet_labels" not in g
+    assert g["constants"]["require_training_complete"] is True

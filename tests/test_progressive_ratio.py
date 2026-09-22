@@ -421,3 +421,51 @@ def test_script_editor_type_key_matches_the_registry_spelling(spelling, key):
     from pyflic.base.script_editor.actions import requires_key_for
 
     assert requires_key_for(spelling) == key
+
+
+def test_dfm_qc_figures_are_built_without_pyplot_and_save_in_a_thread(exp):
+    """The Hub writes QC reports in a worker thread; a pyplot-managed figure
+    there is a Qt canvas off the GUI thread and fails in FreeType."""
+    import threading
+
+    import matplotlib.pyplot as plt
+
+    dfm = exp.dfms[1]
+    before = set(plt.get_fignums())
+    figs = [dfm.plot_raw(), dfm.plot_baselined(include_thresholds=True),
+            dfm.plot_cumulative_licks(transform_licks=True)]
+    assert set(plt.get_fignums()) == before          # nothing registered with pyplot
+    errors: list[BaseException] = []
+
+    def work():
+        try:
+            import io
+            for fig in figs:
+                fig.savefig(io.BytesIO(), format="png", dpi=100, bbox_inches="tight")
+        except BaseException as err:  # noqa: BLE001
+            errors.append(err)
+
+    t = threading.Thread(target=work)
+    t.start()
+    t.join()
+    assert errors == []
+
+
+def test_matplotlib_loads_before_qt_in_every_app_module():
+    """Two FreeType copies (matplotlib's bundled one, Qt's system one) bind
+    each other's calls by load order; Qt first breaks matplotlib's text
+    renderer (``FT_Render_Glyph … raster overflow``).  ``pyflic.base`` imports
+    matplotlib first, and every app module imports ``pyflic.base`` first."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, pyflic.base.hub, pyflic.base.qc_viewer, pyflic.base.config_editor, "
+        "pyflic.base.plot_editor\n"
+        "order = list(sys.modules)\n"
+        "print(order.index('matplotlib.ft2font') < order.index('PyQt6.QtCore'))\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         env={**__import__('os').environ, "QT_QPA_PLATFORM": "offscreen"})
+    assert out.returncode == 0, out.stderr[-800:]
+    assert out.stdout.strip().endswith("True"), out.stdout

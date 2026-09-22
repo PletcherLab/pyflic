@@ -19,6 +19,23 @@ from .utils import natural_sorted, range_bounds, range_is_specified
 
 # ── DFM CSV loading (formerly io.py) ────────────────────────────────────────
 
+def _subplots(*args, figsize=None, **kwargs):
+    """``plt.subplots`` without pyplot.
+
+    A :class:`~matplotlib.figure.Figure` built directly has no canvas widget
+    and touches no pyplot state, so it is safe to build in a worker thread
+    (the Hub's QC task) under any backend — through pyplot under QtAgg the
+    same call would create a Qt canvas off the GUI thread, which matplotlib
+    documents as likely to fail.  ``savefig`` and ``FigureCanvasQTAgg(fig)``
+    both work on such a figure.
+    """
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=figsize)
+    axes = fig.subplots(*args, **kwargs)
+    return fig, axes
+
+
 @dataclass(frozen=True, slots=True)
 class _LoadedDFM:
     df: pd.DataFrame
@@ -1057,12 +1074,11 @@ class DFM:
         return df[(df["Minutes"] > a) & (df["Minutes"] <= b)]
 
     def plot_raw(self, *, range_minutes: Sequence[float] = (0, 0)):
-        import matplotlib.pyplot as plt
 
         df = self._apply_range(self.raw_df, range_minutes)
         wcols = [f"W{i}" for i in range(1, 13) if f"W{i}" in df.columns]
         n = len(wcols)
-        fig, axes = plt.subplots(n, 1, sharex=True, figsize=(10, max(6, n * 1.3)))
+        fig, axes = _subplots(n, 1, sharex=True, figsize=(10, max(6, n * 1.3)))
         if n == 1:
             axes = [axes]
         for ax, col in zip(axes, wcols, strict=False):
@@ -1074,12 +1090,11 @@ class DFM:
         return fig
 
     def plot_baselined(self, *, range_minutes: Sequence[float] = (0, 0), include_thresholds: bool = False):
-        import matplotlib.pyplot as plt
 
         df = self._apply_range(self.baseline_df, range_minutes)
         wcols = [f"W{i}" for i in range(1, 13) if f"W{i}" in df.columns]
         n = len(wcols)
-        fig, axes = plt.subplots(n, 1, sharex=True, figsize=(10, max(6, n * 1.3)))
+        fig, axes = _subplots(n, 1, sharex=True, figsize=(10, max(6, n * 1.3)))
         if n == 1:
             axes = [axes]
         for ax, col in zip(axes, wcols, strict=False):
@@ -1096,13 +1111,12 @@ class DFM:
 
     def plot_raw_well(self, well: int, *, range_minutes: Sequence[float] = (0, 0)):
         """Plot the raw signal for a single well."""
-        import matplotlib.pyplot as plt
 
         col = f"W{well}"
         df = self._apply_range(self.raw_df, range_minutes)
         if col not in df.columns:
             raise ValueError(f"Well {well} not found in DFM {self.id} raw data (expected column '{col}').")
-        fig, ax = plt.subplots(figsize=(10, 3))
+        fig, ax = _subplots(figsize=(10, 3))
         ax.plot(df["Minutes"], df[col], linewidth=0.7, color="steelblue")
         ax.set_xlabel("Minutes")
         ax.set_ylabel("Signal")
@@ -1112,13 +1126,12 @@ class DFM:
 
     def plot_baselined_well(self, well: int, *, range_minutes: Sequence[float] = (0, 0), include_thresholds: bool = False):
         """Plot the baseline-subtracted signal for a single well."""
-        import matplotlib.pyplot as plt
 
         col = f"W{well}"
         df = self._apply_range(self.baseline_df, range_minutes)
         if col not in df.columns:
             raise ValueError(f"Well {well} not found in DFM {self.id} baselined data (expected column '{col}').")
-        fig, ax = plt.subplots(figsize=(10, 3))
+        fig, ax = _subplots(figsize=(10, 3))
         ax.plot(df["Minutes"], df[col], linewidth=0.7, color="steelblue")
         if include_thresholds and hasattr(self, "thresholds") and col in self.thresholds:
             thr = self.thresholds[col]
@@ -1140,14 +1153,13 @@ class DFM:
         range_minutes: Sequence[float] = (0, 0),
         transform_licks: bool = True,
     ):
-        import matplotlib.pyplot as plt
 
         binned = self.binned_feeding_summary(binsize_min=binsize_min, range_minutes=range_minutes, transform_licks=transform_licks)
         if binned.empty:
-            fig, ax = plt.subplots(figsize=(8, 3))
+            fig, ax = _subplots(figsize=(8, 3))
             ax.set_title(f"DFM {self.id} (no data)")
             return fig
-        fig, ax = plt.subplots(figsize=(10, 4))
+        fig, ax = _subplots(figsize=(10, 4))
         if "LicksA" in binned.columns:
             binned = binned.copy()
             binned["LicksTotal"] = binned["LicksA"] + binned["LicksB"]
@@ -1246,16 +1258,15 @@ class DFM:
         return pd.concat(parts, ignore_index=True)[cols] if parts else pd.DataFrame(columns=cols)
 
     def plot_cumulative_pi(self, *, range_minutes: Sequence[float] = (0, 0), single_plot: bool = False):
-        import matplotlib.pyplot as plt
 
         data = self.cumulative_pi_data(range_minutes=range_minutes)
         if data.empty:
-            fig, ax = plt.subplots(figsize=(8, 3))
+            fig, ax = _subplots(figsize=(8, 3))
             ax.set_title(f"DFM {self.id} cumulative PI (no data)")
             return fig
         chambers = sorted(data["Chamber"].unique().tolist())
         if single_plot:
-            fig, ax = plt.subplots(figsize=(10, 4))
+            fig, ax = _subplots(figsize=(10, 4))
             for ch in chambers:
                 tmp = data[data["Chamber"] == ch]
                 ax.plot(tmp["Minutes"], tmp["PI"], marker=".", linewidth=1.0, label=f"Ch{int(ch)}")
@@ -1266,7 +1277,7 @@ class DFM:
             ax.set_title(f"DFM {self.id} cumulative PI")
             fig.tight_layout()
             return fig
-        fig, axes = plt.subplots(len(chambers), 1, sharex=True, figsize=(10, max(4, len(chambers) * 1.6)))
+        fig, axes = _subplots(len(chambers), 1, sharex=True, figsize=(10, max(4, len(chambers) * 1.6)))
         if len(chambers) == 1:
             axes = [axes]
         for ax, ch in zip(axes, chambers, strict=False):
@@ -1287,18 +1298,17 @@ class DFM:
         single_plot: bool = False,
         by_bout: bool = False,
     ):
-        import matplotlib.pyplot as plt
 
         data = self.cumulative_event_pi_data(events_limit=events_limit, range_minutes=range_minutes)
         if data.empty:
-            fig, ax = plt.subplots(figsize=(8, 3))
+            fig, ax = _subplots(figsize=(8, 3))
             ax.set_title(f"DFM {self.id} cumulative event PI (no data)")
             return fig
         chambers = sorted(data["Chamber"].unique().tolist())
         xcol = "EventNum" if by_bout else "Minutes"
         xlabel = "Event Number" if by_bout else "Minutes"
         if single_plot:
-            fig, ax = plt.subplots(figsize=(10, 4))
+            fig, ax = _subplots(figsize=(10, 4))
             for ch in chambers:
                 tmp = data[data["Chamber"] == ch]
                 ax.plot(tmp[xcol], tmp["PI"], marker=".", linewidth=1.0, label=f"Ch{int(ch)}")
@@ -1309,7 +1319,7 @@ class DFM:
             ax.set_title(f"DFM {self.id} cumulative EventPI")
             fig.tight_layout()
             return fig
-        fig, axes = plt.subplots(len(chambers), 1, sharex=True, figsize=(10, max(4, len(chambers) * 1.6)))
+        fig, axes = _subplots(len(chambers), 1, sharex=True, figsize=(10, max(4, len(chambers) * 1.6)))
         if len(chambers) == 1:
             axes = [axes]
         for ax, ch in zip(axes, chambers, strict=False):
@@ -1323,7 +1333,6 @@ class DFM:
         return fig
 
     def plot_cumulative_licks(self, *, single_plot: bool = False, transform_licks: bool = True):
-        import matplotlib.pyplot as plt
 
         first_min = float(self.baseline_df["Minutes"].iloc[0]) if len(self.baseline_df) else 0.0
         last_min = float(self.baseline_df["Minutes"].iloc[-1]) if len(self.baseline_df) else 0.0
@@ -1341,7 +1350,7 @@ class DFM:
             return x, y
 
         if single_plot:
-            fig, ax = plt.subplots(figsize=(10, 5))
+            fig, ax = _subplots(figsize=(10, 5))
             for well in range(1, 13):
                 x, y = cumulative_for_well(well)
                 ax.plot(x, y, linewidth=1.0, label=f"W{well}")
@@ -1353,7 +1362,7 @@ class DFM:
             return fig
 
         if self.params.chamber_size == 1:
-            fig, axes = plt.subplots(6, 2, sharex=True, figsize=(12, 10))
+            fig, axes = _subplots(6, 2, sharex=True, figsize=(12, 10))
             for well in range(1, 13):
                 r = (well - 1) // 2
                 c = (well - 1) % 2
@@ -1367,7 +1376,7 @@ class DFM:
             fig.tight_layout()
             return fig
 
-        fig, axes = plt.subplots(len(self.chambers), 2, sharex=True, figsize=(12, max(8, len(self.chambers) * 1.4)))
+        fig, axes = _subplots(len(self.chambers), 2, sharex=True, figsize=(12, max(8, len(self.chambers) * 1.4)))
         if len(self.chambers) == 1:
             axes = [axes]
         for row_idx, ch in enumerate(self.chambers):
@@ -1412,7 +1421,6 @@ class DFM:
         gold diamond symbol overlaid on the cumulative licks line.
         If *treatment* is provided it is included in the plot title.
         """
-        import matplotlib.pyplot as plt
 
         ch = self.chambers[chamber - 1]
         baseline_r = self._apply_range(self.baseline_df, range_minutes)
@@ -1457,18 +1465,18 @@ class DFM:
             ax.legend(fontsize=8)
 
         if isinstance(ch, OneWellChamber):
-            fig, ax = plt.subplots(figsize=(10, 4))
+            fig, ax = _subplots(figsize=(10, 4))
             plot_well(ax, ch.well, f"W{ch.well}", "steelblue")
             ax.set_xlabel("Minutes")
             ax.set_title(title)
         elif single_plot:
-            fig, ax = plt.subplots(figsize=(10, 4))
+            fig, ax = _subplots(figsize=(10, 4))
             plot_well(ax, ch.well_a, f"{self._well_label('A')} (W{ch.well_a})", "steelblue")
             plot_well(ax, ch.well_b, f"{self._well_label('B')} (W{ch.well_b})", "tomato")
             ax.set_xlabel("Minutes")
             ax.set_title(title)
         else:
-            fig, axes = plt.subplots(2, 1, sharex=True, figsize=(10, 6))
+            fig, axes = _subplots(2, 1, sharex=True, figsize=(10, 6))
             plot_well(axes[0], ch.well_a, f"{self._well_label('A')} (W{ch.well_a})", "steelblue")
             plot_well(axes[1], ch.well_b, f"{self._well_label('B')} (W{ch.well_b})", "tomato")
             axes[0].set_title(title)
