@@ -372,3 +372,52 @@ def test_project_pools_the_difference_and_makes_it_primary(tmp_path):
 
     pdf = write_project_report(project, log=lambda *_a, **_k: None)
     assert Path(pdf).is_file()
+
+
+# ---------------------------------------------------------------------------
+# Common-range truncation and the Script Editor's type key
+# ---------------------------------------------------------------------------
+
+def test_pooled_pr_diff_mean_stops_at_the_shortest_series():
+    rows = []
+    for series, last in (("a", 5), ("b", 5), ("c", 3)):     # c ends early
+        for minute in range(1, last + 1):
+            rows.append({"Experiment": "rep1", "Treatment": "Ctrl", "DFM": 1,
+                         "Group": series, "Minutes": float(minute),
+                         "DiffCumLicks": 10.0 * minute})
+    frame = pd.DataFrame(rows)
+    tidy = pubfigures.timecourse_data(frame, "DiffCumLicks")
+    kept = pubfigures.common_range_rows(tidy)
+    assert kept["Minutes"].max() == 3.0
+    spec = pubfigures.default_spec("timecourse_pr_diff")
+    assert spec.common_range is True
+    assert pubfigures.default_spec("timecourse_licks").common_range is False
+    pubfigures.build_figure("timecourse_pr_diff", tidy, spec, pubfigures.PlotStyle()).draw()
+
+
+def test_member_diff_curve_mean_is_truncated_but_traces_are_not(exp):
+    data = exp.cumulative_diff_data()
+    ends = data.groupby(["DFM", "Group"])["Minutes"].max()
+    assert ends.nunique() > 1                     # groups really do end apart
+    stat = exp.cumulative_diff_stat()
+    assert stat["Minutes"].max() == pytest.approx(ends.min())
+    ## Every averaged point has every group of its treatment in it.
+    n_groups = data.groupby("Treatment")[["DFM", "Group"]].nunique().max(axis=1)
+    for treatment, sub in stat.groupby("Treatment"):
+        assert (sub["count"] == n_groups[treatment]).all()
+    exp.plot_cumulative_diff().draw()
+
+
+@pytest.mark.parametrize("spelling,key", [
+    ("ProgressiveRatio", "progressive_ratio"),
+    ("progressive_ratio", "progressive_ratio"),
+    ("Progressive-Ratio", "progressive_ratio"),
+    ("Hedonic", "hedonic"),
+    ("", None),
+    (None, None),
+    ("Custom", None),
+])
+def test_script_editor_type_key_matches_the_registry_spelling(spelling, key):
+    from pyflic.base.script_editor.actions import requires_key_for
+
+    assert requires_key_for(spelling) == key

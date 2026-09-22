@@ -658,6 +658,24 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             return pd.DataFrame(columns=cols)
         return pd.concat(frames, ignore_index=True)[cols]
 
+    def cumulative_diff_stat(self, *, binsize_min: float = 1.0) -> pd.DataFrame:
+        """Mean ± SEM of the paired-minus-yoked curve per Treatment and bin —
+        the line the Cumulative Difference Curve draws.  Runs only as far as
+        the shortest Chamber Group, so every group is in every averaged point
+        and the curve never jumps when one group's recording ends."""
+        data = self.cumulative_diff_data(binsize_min=binsize_min)
+        cols = ["Treatment", "Minutes", "mean", "sem", "count", "ymin", "ymax"]
+        if data.empty:
+            return pd.DataFrame(columns=cols)
+        common_end = float(data.groupby(["DFM", "Group"])["Minutes"].max().min())
+        stat = (data[data["Minutes"] <= common_end]
+                .groupby(["Treatment", "Minutes"], sort=True)["DiffCumLicks"]
+                .agg(["mean", "sem", "count"]).reset_index())
+        stat["sem"] = stat["sem"].fillna(0.0)
+        stat["ymin"] = stat["mean"] - stat["sem"]
+        stat["ymax"] = stat["mean"] + stat["sem"]
+        return stat[cols]
+
     def write_cumulative_diff(self, path: str | Path | None = None, *,
                               binsize_min: float = 1.0) -> Path:
         """Write ``analysis/pr_cumulative_diff.csv`` — the binned difference
@@ -681,7 +699,8 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                              figsize: tuple[float, float] = (8.0, 5.0)):
         """The Cumulative Difference Curve: mean ± SEM per Treatment of the
         paired-minus-yoked cumulative sucrose-well licks against minutes since
-        training end, the individual Chamber Group traces faint behind."""
+        training end, the individual Chamber Group traces faint behind.  The
+        mean is drawn only over the range every group covers."""
         import plotnine as p9
 
         from .experiment import _OKABE_ITO
@@ -692,11 +711,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                                                "(no chamber group completed training)")
         data = data.copy()
         data["Trace"] = data["DFM"].astype(str) + ":" + data["Group"].astype(str)
-        stat = (data.groupby(["Treatment", "Minutes"], sort=True)["DiffCumLicks"]
-                .agg(["mean", "sem", "count"]).reset_index())
-        stat["sem"] = stat["sem"].fillna(0.0)
-        stat["ymin"] = stat["mean"] - stat["sem"]
-        stat["ymax"] = stat["mean"] + stat["sem"]
+        stat = self.cumulative_diff_stat(binsize_min=binsize_min)
         treatments = list(dict.fromkeys(data["Treatment"]))
         palette = {t: _OKABE_ITO[i % len(_OKABE_ITO)] for i, t in enumerate(treatments)}
         well_a = (self.well_names or {}).get("A", "well A")

@@ -113,7 +113,7 @@ PLOT_TYPES: dict[str, dict] = {
         "y_limits": None, "ref_line": 0.0,
         "display": "Paired − yoked cumulative licks since training",
         "layout": "two_well", "experiment_type": "ProgressiveRatio",
-        "source": "pr_diff",
+        "source": "pr_diff", "common_range": True,
     },
 }
 
@@ -260,6 +260,10 @@ class PlotSpec:
     #: ribbon around each treatment's mean.
     binsize: float = 30.0
     ribbon: bool = True
+    #: Time-course family: draw the mean only over the x range every series
+    #: covers, so a series ending early never changes the average by leaving
+    #: it (cumulative curves since a per-group training end).
+    common_range: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -290,6 +294,7 @@ def default_spec(plot_id: str, well_a: str = "well A") -> PlotSpec:
         free_y=bool(info.get("free_y", False)),
         x_label=("" if info["family"] == FAMILY_FACETED
                  else str(info.get("x_label") or "Time (min)")),
+        common_range=bool(info.get("common_range", False)),
     )
 
 
@@ -595,11 +600,28 @@ def build_faceted(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
                           show_legend=mark)
 
 
+def common_range_rows(data: pd.DataFrame) -> pd.DataFrame:
+    """The rows of a tidy time course at bins every series contributes to.
+
+    A tidy frame carries no series id, but each series has exactly one row per
+    bin, so the bins with the most rows are the ones every series reaches;
+    keeping only those truncates the average to the shortest series instead
+    of letting it jump when one series ends.
+    """
+    if data is None or data.empty or "Minutes" not in data.columns:
+        return data
+    counts = data.groupby("Minutes").size()
+    full = counts[counts == counts.max()].index
+    return data[data["Minutes"].isin(full)]
+
+
 def build_timecourse(df: pd.DataFrame, spec: PlotSpec, style: PlotStyle):
     """One line per treatment over time bins, with an SEM ribbon."""
     import plotnine as p9
 
     data, labels, colors = _apply_treatment_order(df, spec, style)
+    if getattr(spec, "common_range", False):
+        data = common_range_rows(data)
     stat = data.groupby(["Minutes", "Treatment"], observed=True)["Value"].agg(
         ["mean", "sem"]).reset_index()
     stat["sem"] = stat["sem"].fillna(0.0)

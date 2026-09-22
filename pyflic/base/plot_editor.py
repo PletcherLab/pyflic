@@ -322,7 +322,8 @@ class PlotEditorWindow(QMainWindow):
         self._loading = True
         self.plot_list.clear()
         layout = self.project.chamber_layout if self.project else "two_well"
-        for plot_id in pubfigures.plots_for_layout(layout):
+        type_name = (self.project.experiment_type.name if self.project else None)
+        for plot_id in pubfigures.plots_for_layout(layout, type_name):
             item = QListWidgetItem(pubfigures.PLOT_TYPES[plot_id]["display"])
             item.setData(Qt.ItemDataRole.UserRole, plot_id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -449,7 +450,8 @@ class PlotEditorWindow(QMainWindow):
             return None
         info = pubfigures.PLOT_TYPES[plot_id]
         if info["family"] == pubfigures.FAMILY_TIMECOURSE:
-            source = self._binned_frame
+            source = pubfigures.frame_for(plot_id, self._facet_frame,
+                                          self._binned_frame, self.project)
             if source is None or source.empty:
                 return None
             return pubfigures.timecourse_data(source, info["metric"])
@@ -570,10 +572,13 @@ class PlotEditorWindow(QMainWindow):
             return
         data = self._data_for(plot_id)
         if data is None or data.empty:
-            family = pubfigures.family_of(plot_id)
+            source = pubfigures.source_of(plot_id)
             self.preview_label.setText(
+                "No paired − yoked curve data saved yet — run the basic "
+                "analysis (or plot_pr_cumulative_diff) in each member."
+                if source == "pr_diff" else
                 "No binned data saved yet — run a binned CSV in each "
-                "member." if family == pubfigures.FAMILY_TIMECOURSE
+                "member." if source == "binned"
                 else "No combined analysis yet — build it from the Hub's "
                      "Project panel.")
             self.preview_label.setPixmap(QPixmap())

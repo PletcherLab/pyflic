@@ -841,6 +841,19 @@ class AnalysisHubWindow(QMainWindow):
             button.clicked.connect(
                 lambda _c=False, a=action: self._run_plot_action(a))
             card.add_body(button)
+        ## Progressive Ratio figures, shown only while such a member is loaded.
+        self._pr_plot_buttons: list = []
+        for label, icon_name, action in (
+            ("Cumulative difference curve", "plot", "plot_pr_cumulative_diff"),
+            ("Training-aligned traces (QC)", "plot", "plot_pr_cumulative_licks"),
+            ("Breaking-point plots", "plot", "plot_breaking_point"),
+        ):
+            button = ActionButton(label, Category.PLOTS, icon_name)
+            button.clicked.connect(
+                lambda _c=False, a=action: self._run_plot_action(a))
+            button.setVisible(False)
+            card.add_body(button)
+            self._pr_plot_buttons.append(button)
         self.panels["plots"].add_card(card)
 
     def _build_scripts_panel(self) -> None:
@@ -2909,10 +2922,15 @@ class AnalysisHubWindow(QMainWindow):
         self.tiles["qc"].set_summary(
             [str(self.experiment_name),
              "reports on disk" if qc_on_disk else "no reports yet"])
-        facets = len(exp.facet_windows())
+        ## Labels, not windows: a Progressive Ratio member has two Facets
+        ## with no fixed windows at all (ADR-0013).
+        labels_of = getattr(exp, "facet_labels", None)
+        facets = len(labels_of()) if callable(labels_of) else len(exp.facet_windows())
         self.tiles["plots"].set_summary(
             [str(self.experiment_name),
              f"{facets} facet(s)" if facets else "no facets"])
+        for button in getattr(self, "_pr_plot_buttons", []):
+            button.setVisible(type_name == "ProgressiveRatio")
 
         from .metrics import binned_metrics
 

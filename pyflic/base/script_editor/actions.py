@@ -60,6 +60,20 @@ ParamType = Literal[
 
 Requires = Literal["two_well", "hedonic", "progressive_ratio"]
 
+#: Experiment Type name (registry spelling) -> the ``requires`` key above.
+_REQUIRES_KEY_BY_TYPE = {"hedonic": "hedonic", "progressiveratio": "progressive_ratio"}
+
+
+def requires_key_for(experiment_type: str | None) -> str | None:
+    """The ``requires`` key an Experiment Type answers to, from any spelling
+    the registry accepts (``ProgressiveRatio``, ``progressive_ratio``, …), or
+    ``None`` for a Custom Experiment / unknown value."""
+    raw = str(experiment_type or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not raw:
+        return None
+    compact = raw.replace("_", "")
+    return _REQUIRES_KEY_BY_TYPE.get(compact)
+
 
 @dataclass(frozen=True)
 class Param:

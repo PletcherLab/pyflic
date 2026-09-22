@@ -394,9 +394,10 @@ table), effect, contrast (the model term, not the table).
 The Progressive Ratio headline figure: Paired-Yoked Difference of cumulative
 Sucrose-Well licks against minutes since the group's training end, binned
 (1 min by default), one mean ± SEM curve per Treatment with the individual
-Chamber Group traces faint behind it. A group contributes until its own
-recording ends, so the ribbon widens late rather than every curve stopping
-at the shortest group. The companion per-DFM **training-aligned trace** (one
+Chamber Group traces faint behind it. The mean is drawn only over the range
+every group covers — it stops at the shortest group rather than jumping when
+one group's recording ends — while the faint traces run to each group's own
+end. The companion per-DFM **training-aligned trace** (one
 panel per Chamber Group, Paired and Yoked as two lines, light-on samples
 drawn as points) is a QC figure, not a result.
 _Avoid_: breaking-point plot (that is the per-light-period ΔLicks table's
