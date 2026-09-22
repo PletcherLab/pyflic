@@ -158,8 +158,12 @@ entirely; a *partial* one is an error, never a shorter tuple.
 _Avoid_: group, condition, label, cohort.
 
 **Facet**:
-A named time window within a recording, fixed by the Design's
-`facet_cutoffs:` so every Member is windowed identically. Facets are a
+A named time window within a recording, normally fixed by the Design's
+`facet_cutoffs:` so every Member is windowed identically. The one exception
+is the Progressive Ratio type, whose two Facets — **Training** and **Test** —
+are split at each Chamber Group's own data-derived training end; the type
+owns them, so a PR config never states `facet_cutoffs`. A Facet is still one
+named window per row, so every consumer of the Facet column works unchanged. Facets are a
 **column**, not a directory: analysis writes `feeding_summary.csv` plus
 `feeding_summary_facet.csv` carrying a Facet column. The Hub's Start/End
 controls select a Facet rather than filtering the load. Replaces the
@@ -326,6 +330,79 @@ and then only to the Projects actually running.
 _Avoid_: exclusion overlay, removal config, the CSV (ambiguous with the
 per-Member file it writes into).
 
+### Progressive Ratio
+
+**Chamber Group**:
+In a Progressive Ratio experiment, a fixed pair of adjacent two-well
+Chambers on one DFM — 1+2, 3+4, 5+6 — that share one light circuit and one
+Treatment. The unit of pairing and of paired-vs-yoked comparison: a difference
+is always taken *within* a Chamber Group, never between group means. Three per
+DFM, derived from the Chamber Layout; never stated in the config.
+_Avoid_: pair (ambiguous with the paired fly), block, quad, well group (the
+group is four wells, but it is counted in chambers).
+
+**Paired Chamber** / **Yoked Chamber**:
+The two roles inside a Chamber Group. The **Paired** fly receives light-driven
+neuronal stimulation contingent on its own feeding at the sucrose well, and is
+the only chamber that undergoes and completes **Training**. The **Yoked** fly
+is lit at the same moments as its Paired partner, independent of its own
+behaviour. The role is structural, not a Treatment level: the config names the
+Paired chamber per DFM (`paired_chambers: [1, 4, 5]`, exactly one from each
+Chamber Group) and Yoked is always the other member, never written. Both
+chambers of a Chamber Group must carry the same Treatment.
+_Avoid_: test fly / control fly, stimulated / unstimulated (the yoked fly is
+stimulated too), master / slave, active / passive.
+
+**Sucrose Well**:
+In a Progressive Ratio experiment, the well whose feeding triggers the light
+for the Paired fly — always **well A**. The type requires `well_names` to name
+A (sucrose) and B (yeast), and the existing per-DFM physical key
+`pi_direction` says which side of that DFM well A sits on, exactly as in any
+two-well experiment. No separate side key exists: one physical fact, one key.
+_Avoid_: reward well, stimulated well (the yoked fly's well is lit too),
+training well (it stays the sucrose well after training ends), left/right
+well (that is the physical position, which varies per DFM).
+
+**Training**:
+The opening phase of a Progressive Ratio recording in which the Paired fly's
+feeding at the Sucrose Well always turns the light on (pure closed loop). The
+firmware marks it **per well**: a raw sample above 40000 means that well is
+still in training, and its true value is the raw value minus 65536. A well's
+**training end** is the last minute its own column is flagged; every well
+reads its own column, and the four wells of a Chamber Group are expected to
+clear together, because the group is trained as a unit. The **group's**
+training end is the Sucrose Well (well A) of its Paired Chamber; any other
+well of the group that clears at a different minute, or never clears, is a
+per-well QC warning, never a load error. Training end varies
+between Chamber Groups (it is behaviour-contingent), so it is a data-derived
+per-group time, never a fixed-minute Facet cutoff. The **Test** phase is
+everything after it, and Progressive Ratio time axes run from training end,
+not from the start of the recording.
+_Avoid_: acclimation, baseline period, phase 1, conditioning (the light is
+conditioned on feeding, but "conditioning" is not the protocol's word).
+
+**Paired-Yoked Difference**:
+The within-Chamber-Group contrast — Paired minus Yoked — for a metric within
+one Facet, written to `paired_yoked_diff.csv` with one row per Chamber Group
+per Facet. Never a difference of group means: a group missing either chamber
+(excluded, or unassigned) contributes no row. Pooled by the Combined Analysis
+like any other summary, so statistics can be run on the difference directly.
+_Avoid_: delta (used for per-period lick differences in the breaking-point
+table), effect, contrast (the model term, not the table).
+
+**Cumulative Difference Curve**:
+The Progressive Ratio headline figure: Paired-Yoked Difference of cumulative
+Sucrose-Well licks against minutes since the group's training end, binned
+(1 min by default), one mean ± SEM curve per Treatment with the individual
+Chamber Group traces faint behind it. A group contributes until its own
+recording ends, so the ribbon widens late rather than every curve stopping
+at the shortest group. The companion per-DFM **training-aligned trace** (one
+panel per Chamber Group, Paired and Yoked as two lines, light-on samples
+drawn as points) is a QC figure, not a result.
+_Avoid_: breaking-point plot (that is the per-light-period ΔLicks table's
+figure), PR timecourse (the generic `timecourse_*` family uses recording
+time, not training-aligned time).
+
 ### Cross-app
 
 **MIRRORED.md**:
@@ -388,6 +465,17 @@ _Avoid_: manual, documentation, the docs, USAGE.
 - **Experiment Scripts** and **Project Scripts** have separate action
   registries and cannot mix; `run_in_experiments` is the only bridge. A
   **Batch Run** runs a Project Script — there is no Batch script level.
+- In a **Progressive Ratio** experiment a **DFM** holds three **Chamber
+  Groups**, each holding one **Paired Chamber** and one **Yoked Chamber** that
+  share one **Treatment**, one light circuit and one **Training** end. The
+  config names the Paired chamber per DFM; Yoked is derived. The **Sucrose
+  Well** is always well A, and `pi_direction` places it, exactly as in any
+  two-well experiment.
+- The two Progressive Ratio **Facets**, Training and Test, are split at each
+  Chamber Group's own training end (ADR-0013). The **Paired-Yoked Difference**
+  table has one row per Chamber Group per Facet and is the primary input to the
+  **Combined Analysis** statistics for this type; the per-chamber summaries,
+  carrying Group and Role columns, are secondary.
 - Many **Help buttons** across the apps open the one **Help window**; each
   names a single **Help topic**. A tooltip may summarise a topic but never
   restates it — the topic is the only copy of the text.
@@ -408,6 +496,15 @@ _Avoid_: manual, documentation, the docs, USAGE.
 > fails to load. Either the whole Project uses 22, or that recording isn't a
 > Member of this Project. Only `pi_direction` and `chamber_sets` vary, and
 > only per-DFM, because those describe hardware rather than analysis."
+
+>
+> **Dev:** "Chamber 2 on DFM 3 is yoked. Its wells read above 40000 for the
+> whole recording — is that fly still in training at the end?"
+> **Domain expert:** "No. Only the Paired fly *does* training; the group's
+> training ended when the Paired chamber's Sucrose Well cleared. The yoked
+> wells should have cleared at the same minute, and if they didn't that is a
+> QC note about the firmware, not a fact about the fly. Its TrainingMinutes is
+> NA because training was never its behaviour."
 
 ## Flagged ambiguities
 
@@ -445,6 +542,21 @@ _Avoid_: manual, documentation, the docs, USAGE.
   shipped code; `docs/` holds decision records for developers and nothing
   else. Long-form prose is a **guide**, assembled from topics rather than
   written. Say **help topic**, **guide**, or **ADR**, never "the docs".
+
+- The Progressive Ratio training flag was described as clearing on all four
+  wells of a Chamber Group at once, but the first real dataset
+  (`test_data/progressive_ratio`) clears it on exactly one well per group —
+  the Paired chamber's Sucrose Well — and leaves the other three flagged to the
+  end of the recording. Resolved as a rule plus a tolerance: each well reads
+  its own column and the four *should* agree; the group's training end is the
+  Paired Sucrose Well's; any other well disagreeing or never clearing is a
+  per-well QC warning, never a load error. Revisit if new firmware confirms
+  which behaviour is intended.
+- The R port's "configuration 1-4" conflated *which chamber of the group is
+  Paired* with *which side the Sucrose Well is on*, and forced one position for
+  all three groups of a DFM. Resolved: `paired_chambers:` names the Paired
+  chamber per group and `pi_direction` names the side; the configuration
+  integer is retired.
 
 ## Migration
 

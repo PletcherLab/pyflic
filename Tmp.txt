@@ -1,0 +1,23 @@
+/grill-with-docs We need to take a closer look at the implementation of a progressive ratio experiment.  Here are the experimental design issues that should be considered when implementing constraints and additions to the config yaml for this type of experiment and the types of analyses and plots that should be available for them.
+
+A progressive ratio experiment is necessarily a two-well design.
+
+As with other experiments there may be experimental factors, such as genotype, each with two or more levels that will be used for statistical analyses
+
+There are six chambers per DFM and  they are grouped into 3 groups of 2.  Chambers 1 and 2 are grouped, 3 and 4 grouped and 5 and 6 are grouped.
+
+Each chamber will have a choice of two foods: sucrose or yeast, and a specific side of the DFM needs to be chosen for each, as it always is for a two-choice experiment. The choice applies to all chambers in a specific DFM, but the side can change across different DFMs.
+
+Each group with have a single "paired" fly and a single "yoked" fly. Although the position in each group will be defined in the config file (e.g., the paired flies may be in chambers 1, 4, 5).  These flies will be "linked" to one another, for example when calculating difference between paired and yolked, that will happen within chamber groups, not at the level of group means. 
+
+Each chamber group will be associated with a specific set of treatment factors.
+
+Analyses will often (but not always) be interested in the difference between paired and yoked.  Paired flies have light-dependent neuronal stimulation paired with feeding on the sucrose well.  Yoked flies are flashed with the light at the same time as paired, but independent of their behavior.
+
+Prior to the actual progressive ratio test data, flies will experience a training period.  The training period is a period of pure closed loop activation (light is always on when feeding).  It is indicated in the data set by a signal value > 65000.  During the training period, the actual signal value is the value in the file minus 65000.  After training is complete, the signal value is reported normally.  We will be interested in the duration of the training period an din representing feeding behavior (cumulative licks, etc.) as a function of time since training ended.
+
+Feeding summary, for now, is calculated similarly to a standard two choice experiment with additional columns (time in training, only for paired fly.  Yoked has NA), total time light on per chamber.
+
+For now, we will visualize the data with one plot where the y axis is cumulative licks, x axis it time since training ended, and data plotted in a line plot with points added to the line (or a change in line color) only for the data in which the light is on the DFM for that chamber, which is normally calculated during the dfm analysis step. 
+
+Note that there is a previous semi-impelmentation of the progressive ratio experiment.  Feel free to add or complete replace that file/code.

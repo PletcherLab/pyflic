@@ -136,3 +136,80 @@ R ports.
 5. No R parity test for the port.
 6. `plot_breaking_point` silently drops its range params.
 7. Missing `OptoCol1` yields a silent empty result rather than a clear error.
+
+---
+
+# Decided direction (grilling session, 2026-09-22)
+
+Vocabulary is fixed in `CONTEXT.md` under **Progressive Ratio**; the facet
+decision is ADR-0013. This section lists what was decided so the survey above
+can be read as "before" and this as "after".
+
+## Config
+
+- **Roles.** Each `dfms:` entry gains `paired_chambers: [c, c, c]` — exactly one
+  chamber from each Chamber Group (1–2, 3–4, 5–6). Yoked is the other member,
+  never written. Missing key, wrong count, or two from one group is a lint and
+  load error. Both chambers of a group must carry the same Treatment.
+- **Side.** No new key. The type requires `well_names` A (sucrose) and B
+  (yeast); the existing per-DFM physical key `pi_direction` places well A.
+  The Config Editor relabels the field for this type ("Sucrose (well A) side")
+  and shows a Paired marker per chamber in the DFM tab.
+- **Facets.** Owned by the type (`facets_fixed = True`): Training and Test,
+  split at each group's own training end. `facet_cutoffs` must not appear; the
+  Design editor hides the cutoff controls. The 30-minute default is gone.
+- **Constants.** Hedonic's three cutoffs stay as defaults, plus
+  `require_training_complete: true`.
+- The R `configuration` 1–4 parameter is retired everywhere.
+
+## Loading and training
+
+- Training flag read per well from its own column (`> 40000`, value − 65536),
+  as `_calculate_progressive_ratio_training` already does; it will additionally
+  record per-well "cleared at" vs "never cleared".
+- A group's training end = last flagged minute of well A of its paired
+  chamber. Other wells of the group disagreeing or never clearing → per-well QC
+  warning in `summary.txt` and the QC output, never an error.
+- Paired well A never clears → both chambers keep their rows with
+  `TrainingComplete = false`, `TrainingMinutes = NA`, no Test-facet data;
+  `require_training_complete` auto-removes the group via the existing
+  exclusion path and it appears in the exclusions table.
+- Light on for a chamber = OR of its two wells' `OptoCol1` bits (the data
+  shows all four bits of a group set together).
+- Version-2 data (no flags, no `OptoCol1`) is a clear load error for this type.
+
+## Outputs (`analysis/`)
+
+| File | Grain | Notes |
+|---|---|---|
+| `feeding_summary.csv` | chamber, whole recording | standard two-well columns + `Group`, `Role`, `TrainingMinutes` (paired only), `TrainingComplete`, `LightOn_sec` |
+| `feeding_summary_facet.csv` | chamber × Facet (Training, Test) | per-group windows; `StartMin`/`EndMin` vary by row |
+| `paired_yoked_diff.csv` | Chamber Group × Facet | Paired − Yoked for LicksA/B, EventsA/B, PI, MedDurationA/B; plus `PairedChamber`, `YokedChamber`, `TrainingMinutes`, `LightOn_sec`; no row if either chamber is missing |
+| `pr_cumulative_diff.png` | experiment | Cumulative Difference Curve: mean ± SEM per Treatment over groups, faint group traces, x = min since training end, 1-min bins, raw licks |
+| `pr_cumulative_licks_dfm<id>.png` | DFM, panel per group | QC: paired and yoked cumulative well-A licks, light-on samples as points, x from 0 at the group's training end |
+| `summary.txt` | — | gains per-group training table and flag-disagreement warnings |
+
+Cumulative curves always use raw lick counts; the tables obey
+`transform_licks` as every type does.
+
+## Report set and statistics
+
+- Report set: `timecourse_pr_diff` (new Plot Spec, timecourse family, data
+  source `paired_yoked_diff` binned), then `faceted_licks`, `faceted_events`,
+  `faceted_pi` defaulting to Facet = Test. Generic `timecourse_licks` is out of
+  the default set (recording-time x axis) but stays available in the Script
+  Editor.
+- Combined Analysis stacks `paired_yoked_diff.csv` with an `Experiment` column.
+  Statistics: primary = pooled tests and mixed model on the difference table,
+  Facet = Test, Treatment fixed, DFM nested in Experiment random, one
+  observation per Chamber Group. Per-chamber tables run as today, with `Role`
+  available for splitting, as the secondary section.
+
+## Breaking point
+
+Rewritten on the new model, spirit preserved: one method returning the
+per-light-on-period table (minutes since training end, `DeltaMinutes`,
+`DeltaLicks`) for a chamber, driven by the group's training end and the
+chamber's Role. `plot_breaking_point` becomes a per-DFM figure of that table
+with the dead `start`/`end` params removed. No breakpoint scalar yet; the
+details are to be revisited once the structure above is in place.
