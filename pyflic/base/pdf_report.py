@@ -16,7 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -58,13 +57,26 @@ def _slim_summary(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _page_figure(figsize):
+    """``plt.subplots`` without pyplot, for one page of the report.
+
+    A :class:`~matplotlib.figure.Figure` built directly registers with
+    nothing and needs no canvas, so a report written on the Hub's worker
+    thread no longer asks matplotlib to start a GUI there.  ``pdf.savefig``
+    takes such a figure unchanged.  Same reasoning as ``dfm._subplots``.
+    """
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=figsize)
+    return fig, fig.subplots()
+
+
 def _text_page(pdf: PdfPages, title: str, body: str) -> None:
-    fig, ax = plt.subplots(figsize=(8.5, 11))
+    fig, ax = _page_figure((8.5, 11))
     ax.axis("off")
     ax.text(0.02, 0.98, title, fontsize=16, fontweight="bold", va="top")
     ax.text(0.02, 0.94, body, fontsize=9, family="monospace", va="top", wrap=True)
     pdf.savefig(fig, bbox_inches="tight")
-    plt.close(fig)
 
 
 def _table_page(
@@ -88,7 +100,7 @@ def _table_page(
     figsize = (11, 8.5) if landscape else (8.5, 11)
     fontsize = max(5.0, min(8.0, 80.0 / n_cols))
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, ax = _page_figure(figsize)
     ax.axis("off")
     ax.set_title(title, fontsize=12, fontweight="bold", loc="left", pad=12)
 
@@ -116,7 +128,6 @@ def _table_page(
             fontsize=7, style="italic", ha="center", transform=ax.transAxes,
         )
     pdf.savefig(fig, bbox_inches="tight")
-    plt.close(fig)
 
 
 def _ggplot_to_mpl(fig_or_gg):
@@ -136,6 +147,11 @@ def _figure_page(pdf: PdfPages, title: str, fig) -> None:
         return
     fig.suptitle(title, fontsize=14, fontweight="bold")
     pdf.savefig(fig, bbox_inches="tight")
+    ## plotnine still draws through pyplot, so a ggplot page leaves a figure
+    ## in pyplot's registry; a long report would hold every one of them.
+    ## Our own pages are not registered and this is a no-op for them.
+    import matplotlib.pyplot as plt
+
     plt.close(fig)
 
 

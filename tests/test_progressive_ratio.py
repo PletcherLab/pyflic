@@ -519,6 +519,43 @@ def test_dfm_qc_figures_are_built_without_pyplot_and_save_in_a_thread(exp):
     assert errors == []
 
 
+def test_every_app_draws_through_agg_not_a_gui_backend():
+    """Left to choose, matplotlib picks QtAgg once PyQt6 is imported, and then
+    every pyplot figure built on a worker thread — the PDF report's pages,
+    plotnine's own — warns that it is starting a GUI off the main thread.  No
+    pyflic app shows a figure through pyplot (both Hubs embed their own
+    ``FigureCanvasQTAgg``), so Agg is the honest backend and has no GUI to
+    start."""
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "import pyflic.base.hub, pyflic.base.qc_viewer, pyflic.base.plot_editor\n"
+        "import matplotlib\n"
+        "print(matplotlib.get_backend().lower())\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True,
+                         env={**os.environ, "QT_QPA_PLATFORM": "offscreen"})
+    assert out.returncode == 0, out.stderr[-800:]
+    assert out.stdout.strip().endswith("agg"), out.stdout
+    assert "qtagg" not in out.stdout
+
+
+def test_a_report_page_is_built_without_pyplot():
+    """A figure built straight from ``Figure`` registers with nothing, so the
+    Hub's worker thread never asks matplotlib for a canvas it cannot make."""
+    import matplotlib.pyplot as plt
+
+    from pyflic.base.pdf_report import _page_figure
+
+    before = set(plt.get_fignums())
+    fig, ax = _page_figure((8.5, 11))
+    assert set(plt.get_fignums()) == before
+    assert ax.get_figure() is fig
+
+
 def test_matplotlib_loads_before_qt_in_every_app_module():
     """Two FreeType copies (matplotlib's bundled one, Qt's system one) bind
     each other's calls by load order; Qt first breaks matplotlib's text

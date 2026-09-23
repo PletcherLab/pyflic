@@ -8,9 +8,22 @@ Presentation only: it never alters a ``flic_config.yaml``.  Opening a Member
 redirects up to its Project, because a Publication Figure is a statement about
 the pooled result, not about one recording.
 
-Two spec families share one editor.  The Content tab swaps its facet controls
-for binning controls depending on which family the selected plot belongs to;
-the Style tab is identical for both, because a Plot Style is what makes a
+One plot at a time.  The Plot picker in the toolbar chooses which figure the
+editor is editing, and the preview shows that one — the same shape as
+PyTrackingAnalysis's editor, because only one figure can be previewed at once
+and a multi-select list said otherwise.  Every plot the Project can draw is
+always part of its figure set; ``plot_specs.yaml`` records how each one is
+drawn, not which ones exist.
+
+Everything that shapes the current figure is on one panel, in four groups —
+the shared Style, this plot, its Facets, its Treatments — the same column
+PyTrackingAnalysis's editor uses.  Tabs hid half the controls behind a click
+and made "which of these does the preview answer to" a question; a figure is
+one thing and its knobs belong in one place, scrolled rather than paged.
+
+Two spec families share that panel.  The Facets group and the binning row
+swap places depending on which family the selected plot belongs to; the
+Style group is identical for both, because a Plot Style is what makes a
 Project's figures look like one set.
 """
 
@@ -20,8 +33,8 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -30,6 +43,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -37,10 +51,12 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QHeaderView,
     QPushButton,
     QScrollArea,
     QSplitter,
-    QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -50,7 +66,18 @@ from . import pubfigures
 from .gui_env import sanitize_input_method_environment
 from .ui import Category, apply_theme, icon
 from .ui import settings as ui_settings
-from .ui.widgets import ActionButton, Card
+from .ui.widgets import ActionButton, Card, CardGroup
+
+
+def _readable_on(colour: str) -> str:
+    """Black or white, whichever can be read on *colour*.
+
+    A colour button labelled with its own hex has to stay legible against
+    every swatch a user picks, including the dark end of the palette.
+    """
+    c = QColor(colour)
+    luminance = (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) / 255
+    return "#000000" if luminance > 0.6 else "#ffffff"
 
 
 class PlotEditorWindow(QMainWindow):
@@ -81,6 +108,23 @@ class PlotEditorWindow(QMainWindow):
         top.addWidget(open_btn)
         self.project_label = QLabel("No project open")
         top.addWidget(self.project_label, 1)
+        top.addWidget(QLabel("Plot:"))
+        ## One plot is edited at a time, so the picker is a combo, not a list
+        ## with check boxes: the preview can only ever show one figure, and
+        ## ticking several implied otherwise.  Nothing here includes or
+        ## excludes a figure from the Project's set — every plot the data
+        ## supports is rendered; this only chooses which one to work on.
+        self.plot_combo = QComboBox()
+        self.plot_combo.setMinimumWidth(240)
+        self.plot_combo.currentIndexChanged.connect(self._on_plot_selected)
+        top.addWidget(self.plot_combo)
+        self.reset_btn = ActionButton("Restore defaults", Category.NEUTRAL,
+                                      "clear")
+        self.reset_btn.setToolTip(
+            "Discard this plot's saved Spec and start from the default. "
+            "Shared Styles are untouched.")
+        self.reset_btn.clicked.connect(self._restore_defaults)
+        top.addWidget(self.reset_btn)
         self.save_btn = ActionButton("Save plot_specs.yaml", Category.LOAD,
                                      "save")
         self.save_btn.clicked.connect(self._save_specs)
@@ -94,7 +138,7 @@ class PlotEditorWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_left())
         splitter.addWidget(self._build_preview())
-        splitter.setSizes([460, 840])
+        splitter.setSizes([470, 830])
         root.addWidget(splitter, 1)
 
         if target:
@@ -105,30 +149,50 @@ class PlotEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_left(self) -> QWidget:
+        """One scrolling column of groups, not a tab stack.
+
+        Every control here shapes the one figure in the preview, so paging
+        half of them behind a tab only asked which half was in force.  The
+        groups are ordered as upstream's are: the shared look first, then
+        this plot, then the two things it is drawn over.
+        """
         host = QWidget()
         lay = QVBoxLayout(host)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
-        plots_card = Card("Figures", Category.PLOTS, icon_name="plots",
-                          subtitle="Tick a plot to include it in this "
-                                   "project's figure set.")
-        self.plot_list = QListWidget()
-        self.plot_list.currentItemChanged.connect(self._on_plot_selected)
-        self.plot_list.itemChanged.connect(self._on_plot_toggled)
-        self.plot_list.setMinimumHeight(190)
-        plots_card.add_body(self.plot_list)
-        lay.addWidget(plots_card)
+        column = QWidget()
+        self._controls_lay = QVBoxLayout(column)
+        self._controls_lay.setContentsMargins(2, 2, 2, 2)
+        self._controls_lay.setSpacing(10)
+        self._controls_lay.addWidget(self._build_style_group())
+        self._controls_lay.addWidget(self._build_plot_group())
+        self._controls_lay.addWidget(self._build_facets_group())
+        self._controls_lay.addWidget(self._build_treatments_group())
+        self._controls_lay.addStretch(1)
 
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_content_tab(), "Content")
-        self.tabs.addTab(self._build_style_tab(), "Style")
-        lay.addWidget(self.tabs, 1)
+        self.controls_scroll = QScrollArea()
+        self.controls_scroll.setWidgetResizable(True)
+        ## Wide enough for the longest field row; the splitter may grow this
+        ## side but not squeeze it until the spin boxes clip.
+        self.controls_scroll.setMinimumWidth(430)
+        self.controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        ## The column is a fixed width so a long treatment name can never
+        ## push the preview off the window; it scrolls vertically only.
+        self.controls_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.controls_scroll.setWidget(column)
+        lay.addWidget(self.controls_scroll, 1)
         return host
 
-    def _build_content_tab(self) -> QWidget:
+    def _build_plot_group(self) -> CardGroup:
+        group = CardGroup("This plot")
         page = QWidget()
         form = QFormLayout(page)
+        form.setContentsMargins(0, 0, 0, 0)
+        ## A narrow column drops the label onto its own line rather than
+        ## shaving the field until its digits are cut off.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         self.title_edit = QLineEdit()
         self.title_edit.editingFinished.connect(self._apply_content)
@@ -164,14 +228,8 @@ class PlotEditorWindow(QMainWindow):
         self.mark_experiments.toggled.connect(self._apply_content)
         form.addRow("", self.mark_experiments)
 
-        ## Family-specific rows. Both are built once and shown or hidden, so
-        ## switching plots never rebuilds the form (and never loses focus).
-        self.facet_list = QListWidget()
-        self.facet_list.setMaximumHeight(90)
-        self.facet_list.itemChanged.connect(self._apply_content)
-        self.facet_row_label = QLabel("Facets:")
-        form.addRow(self.facet_row_label, self.facet_list)
-
+        ## Family-specific rows, built once and shown or hidden, so switching
+        ## plots never rebuilds the form (and never steals focus mid-edit).
         self.binsize = QDoubleSpinBox()
         self.binsize.setRange(0.5, 600.0)
         self.binsize.setValue(30.0)
@@ -185,15 +243,49 @@ class PlotEditorWindow(QMainWindow):
         self.ribbon_label = QLabel("")
         form.addRow(self.ribbon_label, self.ribbon)
 
-        self.treatment_list = QListWidget()
-        self.treatment_list.setMaximumHeight(110)
-        self.treatment_list.itemChanged.connect(self._apply_content)
-        form.addRow("Treatments:", self.treatment_list)
-        return page
+        group.add(page)
+        return group
 
-    def _build_style_tab(self) -> QWidget:
+    def _build_facets_group(self) -> CardGroup:
+        """The Facets box, hidden whole for a time course — which has none."""
+        self.facets_group = CardGroup("Facets")
+        self.facet_list = QListWidget()
+        self.facet_list.setMaximumHeight(110)
+        self.facet_list.itemChanged.connect(self._apply_content)
+        self.facets_group.add(self.facet_list)
+        return self.facets_group
+
+    def _build_treatments_group(self) -> CardGroup:
+        """One row per treatment: shown or not, what it is called, its colour.
+
+        Three decisions about one thing, so three columns of one table — a
+        second list keyed by the same names could only ever say the same
+        names twice.  The colour sits in the Style, not the Spec, so it is
+        marked as shared where it is edited.
+        """
+        group = CardGroup("Treatments")
+        self.treatment_table = QTableWidget(0, 3)
+        self.treatment_table.setHorizontalHeaderLabels(
+            ["Treatment", "Label", "Colour"])
+        self.treatment_table.verticalHeader().setVisible(False)
+        header = self.treatment_table.horizontalHeader()
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.treatment_table.setMaximumHeight(150)
+        self.treatment_table.itemChanged.connect(self._apply_content)
+        group.add(self.treatment_table)
+        group.add_note("Untick to leave a treatment out; the Label is what "
+                       "the figure prints.  Colours live in the Style, so "
+                       "every figure sharing it changes together.")
+        return group
+
+    def _build_style_group(self) -> CardGroup:
+        group = CardGroup("Style (shared across plots)")
         page = QWidget()
         form = QFormLayout(page)
+        form.setContentsMargins(0, 0, 0, 0)
+        ## A narrow column drops the label onto its own line rather than
+        ## shaving the field until its digits are cut off.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
 
         row = QHBoxLayout()
         self.style_combo = QComboBox()
@@ -209,10 +301,25 @@ class PlotEditorWindow(QMainWindow):
         self.height_mm = QDoubleSpinBox()
         self.height_mm.setRange(20.0, 600.0)
         size = QHBoxLayout()
-        size.addWidget(self.width_mm)
+        size.setSpacing(4)
+        size.addWidget(self.width_mm, 1)
         size.addWidget(QLabel("×"))
-        size.addWidget(self.height_mm)
-        form.addRow("Size (mm):", size)
+        size.addWidget(self.height_mm, 1)
+        form.addRow("Figure (mm):", size)
+
+        ## Sizing per panel rather than per figure, so a plot with three
+        ## facets is not three squeezed panels in the width of a one-facet
+        ## plot.  Zero means off — the figure keeps the size above, which is
+        ## what ``effective_width_mm``/``effective_height_mm`` already do.
+        self.facet_width_mm = QDoubleSpinBox()
+        self.facet_width_mm.setRange(0.0, 300.0)
+        self.facet_width_mm.setSpecialValueText("off")
+        form.addRow("Facet width (mm):", self.facet_width_mm)
+
+        self.facet_height_mm = QDoubleSpinBox()
+        self.facet_height_mm.setRange(0.0, 300.0)
+        self.facet_height_mm.setSpecialValueText("off")
+        form.addRow("Facet height (mm):", self.facet_height_mm)
 
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(list(pubfigures._THEMES))
@@ -245,7 +352,8 @@ class PlotEditorWindow(QMainWindow):
         self.line_pt.setRange(0.1, 6.0)
         form.addRow("Line weight:", self.line_pt)
 
-        for widget in (self.width_mm, self.height_mm, self.base_pt,
+        for widget in (self.width_mm, self.height_mm, self.facet_width_mm,
+                       self.facet_height_mm, self.base_pt,
                        self.point_size, self.line_pt):
             widget.valueChanged.connect(self._apply_style)
         for widget in (self.theme_combo, self.geom_combo, self.mean_combo,
@@ -253,12 +361,8 @@ class PlotEditorWindow(QMainWindow):
             widget.currentTextChanged.connect(self._apply_style)
         self.font_edit.editingFinished.connect(self._apply_style)
 
-        self.color_list = QListWidget()
-        self.color_list.setMaximumHeight(110)
-        self.color_list.itemDoubleClicked.connect(self._pick_color)
-        form.addRow("Treatment colors:", self.color_list)
-        form.addRow("", QLabel("Double-click a treatment to set its color."))
-        return page
+        group.add(page)
+        return group
 
     def _build_preview(self) -> QWidget:
         card = Card("Preview", Category.PLOTS, icon_name="plot",
@@ -266,11 +370,46 @@ class PlotEditorWindow(QMainWindow):
                              "uses — what you see is what lands in figures/.")
         self.preview_scroll = QScrollArea()
         self.preview_scroll.setWidgetResizable(True)
+        ## The figure is fitted to this viewport, so it never needs sideways
+        ## scrolling — a figure running off both edges shows the middle of
+        ## itself and hides the axes, which is where the reading happens.
+        self.preview_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.preview_scroll.viewport().installEventFilter(self)
         self.preview_label = QLabel("Open a Project to begin.")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_scroll.setWidget(self.preview_label)
         card.add_body(self.preview_scroll)
         return card
+
+    def eventFilter(self, watched, event):  # noqa: N802 (Qt override)
+        """Refit the preview when its pane changes width.
+
+        Dragging the splitter resizes the viewport without resizing the
+        window, so a window-level ``resizeEvent`` would miss it.
+        """
+        if (watched is self.preview_scroll.viewport()
+                and event.type() == QEvent.Type.Resize):
+            self._fit_preview()
+        return super().eventFilter(watched, event)
+
+    def _fit_preview(self) -> None:
+        """Show the rendered figure scaled to the width of its pane.
+
+        Never scaled *up*: the preview claims to be what lands in figures/,
+        and a magnified one would promise detail the file does not have.
+        """
+        source = getattr(self, "_preview_pixmap", None)
+        if source is None or source.isNull():
+            return
+        available = self.preview_scroll.viewport().width() - 8
+        if available <= 0:
+            return
+        if source.width() <= available:
+            self.preview_label.setPixmap(source)
+            return
+        self.preview_label.setPixmap(source.scaledToWidth(
+            available, Qt.TransformationMode.SmoothTransformation))
 
     # ------------------------------------------------------------------
     # Project handling
@@ -310,7 +449,6 @@ class PlotEditorWindow(QMainWindow):
         ## an editor nobody changed must not rewrite the file.
         self._apply_content()
         self._apply_style()
-        self._prune_unchecked_plots()
         self._opened_payload = self._specs_payload()
 
     def _choose_project(self) -> None:
@@ -320,31 +458,33 @@ class PlotEditorWindow(QMainWindow):
 
     def _reload_lists(self) -> None:
         self._loading = True
-        self.plot_list.clear()
+        self.plot_combo.clear()
         layout = self.project.chamber_layout if self.project else "two_well"
         type_name = (self.project.experiment_type.name if self.project else None)
         for plot_id in pubfigures.plots_for_layout(layout, type_name):
-            item = QListWidgetItem(pubfigures.PLOT_TYPES[plot_id]["display"])
-            item.setData(Qt.ItemDataRole.UserRole, plot_id)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked
-                               if plot_id in self.specs.plots
-                               else Qt.CheckState.Unchecked)
-            self.plot_list.addItem(item)
+            self.plot_combo.addItem(pubfigures.PLOT_TYPES[plot_id]["display"],
+                                    plot_id)
         self.style_combo.clear()
         self.style_combo.addItems(list(self.specs.styles))
         self.style_combo.setCurrentText(self.specs.default_style)
+        ## The combo was filled with ``_loading`` set, so the handler that
+        ## fills the Style tab never ran — and the Style tab is what
+        ## ``_apply_style`` harvests the style FROM.  Harvesting it empty
+        ## overwrote the Project's style with the spin boxes' minimums: a
+        ## 20x20 mm figure, which previews as a thumbnail and saves over
+        ## plot_specs.yaml on close.  Load it here, before anyone reads it.
+        self._load_style_into_form(self.style_combo.currentText())
         self._loading = False
-        if self.plot_list.count():
-            self.plot_list.setCurrentRow(0)
+        if self.plot_combo.count():
+            self.plot_combo.setCurrentIndex(0)
+            self._on_plot_selected()
 
     # ------------------------------------------------------------------
     # Selection / spec editing
     # ------------------------------------------------------------------
 
     def current_plot_id(self) -> str | None:
-        item = self.plot_list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
+        return self.plot_combo.currentData()
 
     def current_spec(self) -> pubfigures.PlotSpec | None:
         plot_id = self.current_plot_id()
@@ -356,19 +496,23 @@ class PlotEditorWindow(QMainWindow):
             self.specs.plots[plot_id] = pubfigures.default_spec(plot_id, well_a)
         return self.specs.plots[plot_id]
 
-    def _on_plot_toggled(self, item: QListWidgetItem) -> None:
-        if self._loading:
-            return
-        plot_id = item.data(Qt.ItemDataRole.UserRole)
-        if item.checkState() == Qt.CheckState.Unchecked:
-            self.specs.plots.pop(plot_id, None)
-        else:
-            self.current_spec()
-        self._render_preview()
-
     def _on_plot_selected(self, *_args) -> None:
         if self._loading:
             return
+        self._load_spec_into_form()
+        self._render_preview()
+
+    def _restore_defaults(self) -> None:
+        """Throw away this plot's Spec and start from the type's default.
+
+        Content only: the Styles are shared, and resetting one figure must
+        not repaint the rest of the set.
+        """
+        plot_id = self.current_plot_id()
+        if plot_id is None or self.project is None:
+            return
+        self.specs.plots.pop(plot_id, None)
+        self.current_spec().style = self.specs.default_style
         self._load_spec_into_form()
         self._render_preview()
 
@@ -393,8 +537,7 @@ class PlotEditorWindow(QMainWindow):
         self.binsize.setValue(spec.binsize)
         self.ribbon.setChecked(spec.ribbon)
 
-        for widget in (self.facet_list, self.facet_row_label):
-            widget.setVisible(not is_timecourse)
+        self.facets_group.setVisible(not is_timecourse)
         for widget in (self.binsize, self.binsize_label, self.ribbon,
                        self.ribbon_label):
             widget.setVisible(is_timecourse)
@@ -415,35 +558,42 @@ class PlotEditorWindow(QMainWindow):
                                    else Qt.CheckState.Unchecked)
                 self.facet_list.addItem(item)
 
-        self.treatment_list.clear()
-        self.color_list.clear()
-        if data is not None and not data.empty:
-            merged = pubfigures.merged_treatments(spec, data)
-            style = self.specs.style_for(spec)
-            for index, (name, entry) in enumerate(merged.items()):
-                item = QListWidgetItem(str(entry.get("label", name)))
-                item.setData(Qt.ItemDataRole.UserRole, name)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable
-                              | Qt.ItemFlag.ItemIsEditable)
-                item.setCheckState(Qt.CheckState.Checked
-                                   if entry.get("show", True)
-                                   else Qt.CheckState.Unchecked)
-                self.treatment_list.addItem(item)
-
-                color = style.color_for(name, index)
-                swatch = QListWidgetItem(f"{name}  —  {color}")
-                swatch.setData(Qt.ItemDataRole.UserRole, name)
-                pixmap = QPixmap(14, 14)
-                pixmap.fill(Qt.GlobalColor.transparent)
-                from PyQt6.QtGui import QColor, QPainter
-
-                painter = QPainter(pixmap)
-                painter.fillRect(0, 0, 14, 14, QColor(color))
-                painter.end()
-                swatch.setIcon(icon("plot") if False else swatch.icon())
-                swatch.setData(Qt.ItemDataRole.DecorationRole, pixmap)
-                self.color_list.addItem(swatch)
+        self._fill_treatment_table(spec, data)
         self._loading = False
+
+    def _fill_treatment_table(self, spec, data) -> None:
+        """Rebuild the Treatments table from *spec* over the data's groups."""
+        self.treatment_table.setRowCount(0)
+        if data is None or data.empty:
+            return
+        merged = pubfigures.merged_treatments(spec, data)
+        style = self.specs.style_for(spec)
+        self.treatment_table.setRowCount(len(merged))
+        for row, (name, entry) in enumerate(merged.items()):
+            shown = QTableWidgetItem(str(name))
+            shown.setData(Qt.ItemDataRole.UserRole, name)
+            ## The original name identifies the treatment everywhere — in the
+            ## Style's colours and in the data — so it is shown, not edited.
+            shown.setFlags((shown.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                           & ~Qt.ItemFlag.ItemIsEditable)
+            shown.setCheckState(Qt.CheckState.Checked
+                                if entry.get("show", True)
+                                else Qt.CheckState.Unchecked)
+            self.treatment_table.setItem(row, 0, shown)
+
+            label = QTableWidgetItem(str(entry.get("label", name)))
+            self.treatment_table.setItem(row, 1, label)
+
+            colour = style.color_for(name, row)
+            button = QPushButton(colour)
+            button.setFlat(True)
+            button.setStyleSheet(
+                f"QPushButton {{ background: {colour}; "
+                f"color: {_readable_on(colour)}; border: none; }}")
+            button.clicked.connect(
+                lambda _c=False, n=name: self._pick_color(n))
+            self.treatment_table.setCellWidget(row, 2, button)
+        self.treatment_table.resizeColumnToContents(0)
 
     def _data_for(self, plot_id: str | None):
         if plot_id is None or self.project is None:
@@ -485,25 +635,37 @@ class PlotEditorWindow(QMainWindow):
         spec.facets = facets or None
 
         treatments = {}
-        for index in range(self.treatment_list.count()):
-            item = self.treatment_list.item(index)
-            name = item.data(Qt.ItemDataRole.UserRole)
+        for row in range(self.treatment_table.rowCount()):
+            shown = self.treatment_table.item(row, 0)
+            label = self.treatment_table.item(row, 1)
+            if shown is None:
+                continue
+            name = shown.data(Qt.ItemDataRole.UserRole)
             treatments[str(name)] = {
-                "label": item.text(),
-                "show": item.checkState() == Qt.CheckState.Checked,
+                "label": label.text() if label is not None else str(name),
+                "show": shown.checkState() == Qt.CheckState.Checked,
             }
         spec.treatments = treatments
         self._render_preview()
 
     # ---- style ------------------------------------------------------
 
-    def _on_style_selected(self, name: str) -> None:
-        if self._loading or not name or name not in self.specs.styles:
+    def _load_style_into_form(self, name: str) -> None:
+        """Fill the Style tab's widgets from the named style.
+
+        The counterpart of :meth:`_apply_style`, and its precondition: those
+        widgets are the only place the style is read back from, so every path
+        that changes which style is current has to come through here first.
+        """
+        style = self.specs.styles.get(name)
+        if style is None:
             return
-        style = self.specs.styles[name]
+        was_loading = self._loading
         self._loading = True
         self.width_mm.setValue(style.width_mm)
         self.height_mm.setValue(style.height_mm)
+        self.facet_width_mm.setValue(style.facet_width_mm)
+        self.facet_height_mm.setValue(style.facet_height_mm)
         self.theme_combo.setCurrentText(style.theme)
         self.font_edit.setText(style.font_family)
         self.base_pt.setValue(style.base_pt)
@@ -512,7 +674,12 @@ class PlotEditorWindow(QMainWindow):
         self.strip_combo.setCurrentText(style.strip_style)
         self.point_size.setValue(style.point_size)
         self.line_pt.setValue(style.line_pt)
-        self._loading = False
+        self._loading = was_loading
+
+    def _on_style_selected(self, name: str) -> None:
+        if self._loading or not name or name not in self.specs.styles:
+            return
+        self._load_style_into_form(name)
         spec = self.current_spec()
         if spec is not None:
             spec.style = name
@@ -527,6 +694,8 @@ class PlotEditorWindow(QMainWindow):
             return
         style.width_mm = self.width_mm.value()
         style.height_mm = self.height_mm.value()
+        style.facet_width_mm = self.facet_width_mm.value()
+        style.facet_height_mm = self.facet_height_mm.value()
         style.theme = self.theme_combo.currentText()
         style.font_family = self.font_edit.text()
         style.base_pt = self.base_pt.value()
@@ -549,12 +718,13 @@ class PlotEditorWindow(QMainWindow):
         self.style_combo.addItem(name)
         self.style_combo.setCurrentText(name)
 
-    def _pick_color(self, item: QListWidgetItem) -> None:
-        name = item.data(Qt.ItemDataRole.UserRole)
+    def _pick_color(self, name: str) -> None:
         style = self.specs.styles.get(self.style_combo.currentText())
         if style is None:
             return
-        chosen = QColorDialog.getColor(parent=self)
+        chosen = QColorDialog.getColor(
+            QColor(style.color_for(str(name), 0)), self,
+            f"Colour for {name}")
         if not chosen.isValid():
             return
         style.colors[str(name)] = chosen.name()
@@ -573,7 +743,7 @@ class PlotEditorWindow(QMainWindow):
         data = self._data_for(plot_id)
         if data is None or data.empty:
             source = pubfigures.source_of(plot_id)
-            self.preview_label.setText(
+            self._show_preview_message(
                 "No paired − yoked curve data saved yet — run the basic "
                 "analysis (or plot_pr_cumulative_diff) in each member."
                 if source == "pr_diff" else
@@ -581,7 +751,6 @@ class PlotEditorWindow(QMainWindow):
                 "member." if source == "binned"
                 else "No combined analysis yet — build it from the Hub's "
                      "Project panel.")
-            self.preview_label.setPixmap(QPixmap())
             return
         try:
             figure = pubfigures.build_figure(
@@ -589,13 +758,27 @@ class PlotEditorWindow(QMainWindow):
             png = pubfigures.render_png_bytes(
                 figure, self.specs.style_for(spec))
         except Exception as err:  # noqa: BLE001
-            self.preview_label.setText(f"Preview failed: {err}")
-            self.preview_label.setPixmap(QPixmap())
+            self._show_preview_message(f"Preview failed: {err}")
             return
         pixmap = QPixmap()
         pixmap.loadFromData(png)
-        self.preview_label.setPixmap(pixmap)
+        ## Keep the full-resolution render and fit a copy of it, so widening
+        ## the pane sharpens the preview instead of upscaling a thumbnail.
+        self._preview_pixmap = pixmap
         self.preview_label.setText("")
+        self._fit_preview()
+
+    def _show_preview_message(self, message: str) -> None:
+        """Say why there is no figure, in the space the figure would fill.
+
+        A QLabel carries text or a pixmap, never both, and each setter
+        clears the other — so setting the (empty) pixmap after the text
+        wiped the message and left the preview blank, which is exactly what
+        a missing figure already looks like.  Clear first, then speak.
+        """
+        self._preview_pixmap = None
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText(message)
 
     def _specs_payload(self) -> str:
         """The state a save would write, as a comparable string."""
@@ -607,31 +790,9 @@ class PlotEditorWindow(QMainWindow):
             "plots": {i: p.to_dict() for i, p in self.specs.plots.items()},
         }, sort_keys=True)
 
-    def _prune_unchecked_plots(self) -> None:
-        """Drop specs for plots the list shows unchecked.
-
-        The check state is the membership authority — unchecking pops the
-        spec — but merely *selecting* a row lazily creates one so the form
-        has something to edit.  Saving those would define plots nobody
-        checked, and they would come back checked on the next open.  Specs
-        for plots the current layout does not list are kept untouched.
-        """
-        listed: set[str] = set()
-        checked: set[str] = set()
-        for i in range(self.plot_list.count()):
-            item = self.plot_list.item(i)
-            plot_id = item.data(Qt.ItemDataRole.UserRole)
-            listed.add(plot_id)
-            if item.checkState() == Qt.CheckState.Checked:
-                checked.add(plot_id)
-        for plot_id in list(self.specs.plots):
-            if plot_id in listed and plot_id not in checked:
-                self.specs.plots.pop(plot_id)
-
     def _save_specs(self) -> None:
         if self.project is None:
             return
-        self._prune_unchecked_plots()
         path = pubfigures.save_project_specs(
             self.project.project_directory, self.specs)
         self._opened_payload = self._specs_payload()
@@ -663,7 +824,6 @@ class PlotEditorWindow(QMainWindow):
         if self.project is not None:
             self._apply_content()
             self._apply_style()
-            self._prune_unchecked_plots()
             if self._specs_payload() != getattr(self, "_opened_payload", None):
                 try:
                     pubfigures.save_project_specs(

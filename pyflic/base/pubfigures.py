@@ -744,7 +744,12 @@ def frame_for(plot_id: str, facet, binned, project=None):
 
 def render_all(project, fmt: str = "svg", out_dir: str | None = None,
                only: list[str] | None = None, log=print) -> list[str]:
-    """Render every Plot Spec in the Project's ``plot_specs.yaml``.
+    """Render every figure this Project can draw.
+
+    Not "every Spec in ``plot_specs.yaml``": the Plot Editor edits one plot
+    at a time and curates no subset, so a Spec records *how* a figure is
+    drawn, never *whether* it is.  A plot the file does not mention is drawn
+    from its default Spec, exactly as the Project Report already does.
 
     A plot whose data is unavailable (a time course with no saved binned
     summaries, a PI figure on a single-well Project) is skipped with a log
@@ -766,17 +771,19 @@ def render_all(project, fmt: str = "svg", out_dir: str | None = None,
         _, label_of = project.window_labels(facet)
         label_order = list(dict.fromkeys(label_of.values()))
 
+    well_a = str((project.design_global.get("well_names") or {}).get("A")
+                 or "well A")
     written: list[str] = []
-    for plot_id, spec in specs.plots.items():
+    ## plots_for_layout has already applied the layout and Experiment Type
+    ## gates, so anything it lists is a figure this Project is entitled to.
+    for plot_id in plots_for_layout(project.chamber_layout,
+                                    project.experiment_type.name):
         if only and plot_id not in only:
             continue
+        spec = specs.plots.get(plot_id) or default_spec(plot_id, well_a)
         info = PLOT_TYPES[plot_id]
         metric = info["metric"]
         family = info["family"]
-        if not plot_allowed(plot_id, project.chamber_layout,
-                            project.experiment_type.name):
-            log(f"    skipped {plot_id}: not applicable to this experiment type")
-            continue
         source = frame_for(plot_id, facet, binned, project)
         if source is None or source.empty:
             log(f"    skipped {plot_id}: no {source_of(plot_id)} data")
