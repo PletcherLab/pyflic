@@ -37,6 +37,12 @@ the fix — it goes inert as well as dimmed, and its hint names where the fix is
 "Open Project" — the controls that fix the empty state — so a closed-looking tile there
 would be pointing away from the only way forward.
 
+**Help is on every panel.** Each panel's cards carry a `?` beside their title, and the
+type-specific groups (*Progressive Ratio only*, *Hedonic only*) carry their own, opening
+this window at the topic for that area. The `?` at the right-hand end of the output area,
+beside **Clear Errors**, opens help at the start whatever is open, and **F1** opens this
+topic.
+
 **One thing is open at a time.** Expanding the Experiment group closes a container
 panel and vice versa; a click in the background closes the open panel *and* folds the
 group; Esc closes only the panel. The subtiles' panels are narrow columns of buttons,
@@ -176,11 +182,15 @@ analysis deliberately skips QC — that is the QC panel's job — but it does ap
 Design's auto-removal cutoffs, once, before writing anything.
 
 A **Progressive Ratio only** group appears while such a member is loaded: **Paired −
-yoked difference CSV** writes `paired_yoked_diff.csv`. The type's light QC is on the QC
-panel.
+yoked difference CSV** writes `paired_yoked_diff.csv`, and **Breaking point CSV** writes
+`pr_breaking_point.csv` and logs each group's breaking point with its sensitivity to the
+gap. The type's light QC is on the QC panel.
 
 The **Bin size** box sets the bin of the binned CSV, the binned plots, the PDF report, and
 the two Progressive Ratio curve figures (cumulative difference, training-aligned traces).
+Those two default to 1-minute bins in a script and in basic analysis; from the Hub they
+follow this box, so set it to 1 to match. See
+[Progressive Ratio experiments](concepts-progressive-ratio.md#outputs).
 
 ## QC panel
 
@@ -197,7 +207,7 @@ A **Progressive Ratio only** group appears while such a member is loaded — did
 fly earn its light? **Light QC table** writes `pr_light_qc.csv` and `pr_light_events.csv`
 and logs every chamber group that failed or warned; **Licks per light event (QC)** and
 **Sucrose Well resting level (QC)** draw the two per-DFM figures behind the verdict. See
-[Experiment types](concepts-experiment-types.md#progressive-ratio) and
+[Light QC](concepts-progressive-ratio.md#light-qc) and
 [Plot catalogue](plots-catalog.md#did-the-paired-fly-earn-its-light-qc).
 
 ## Plots panel
@@ -216,8 +226,8 @@ the Metric box does not reach them. **Well A vs B** is offered only on a two-wel
 (*Progressive Ratio only*, *Hedonic only*) and appear only while a member of that type
 is loaded, so the card never offers a button whose only possible answer is "this requires
 a different Experiment Type". The Progressive Ratio group holds the cumulative difference
-curve, the training-aligned traces and the breaking-point plots; its light QC figures are
-on the QC panel.
+curve, the training-aligned traces, the still-responding curve and the breaking-point
+plots; its light QC figures are on the QC panel.
 
 The panel does not repeat which member is loaded: the Experiment tile it hangs from
 already says so, as does the status strip.
@@ -255,7 +265,9 @@ clearing, the theme toggle, and this help.
 
 Below the strip: an **Output** tab carrying everything a run prints, an **Errors** tab
 collecting the warnings and failures (it badges itself while unread), and one tab per
-figure. The buttons in the top-right corner clear each of the three.
+figure. The buttons in the top-right corner clear each of the three — **Clear Tabs**,
+**Clear Output**, **Clear Errors** — and the `?` after them opens this help window at its
+first page, for when you want help without opening a panel first.
 
 During a Batch Run the figure tabs pile up faster than anyone reads them. **Suppress
 new plot / output tabs during Batch Runs**, in the Batch panel, stops new ones being

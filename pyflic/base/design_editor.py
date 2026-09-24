@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 
 from . import experiment_types, project as project_mod
 from .config_editor import FactorsWidget, ParamsForm
+from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
 from .ui import Category, icon
 from .ui.widgets import Card, CardGroup
 
@@ -54,42 +55,29 @@ _CONSTANT_ROWS: tuple[tuple[str, str, str], ...] = (
     ("max_events_cutoff", "Max Events", "e.g. 150  (leave blank to skip)"),
 )
 
-#: Progressive Ratio's own switches: which failed Chamber Groups auto-removal
-#: takes out.  (key, label, tooltip)
-_PR_SWITCH_ROWS: tuple[tuple[str, str, str], ...] = (
-    ("require_training_complete", "Exclude groups whose training never completed",
-     "require_training_complete — both chambers of a chamber group whose paired "
-     "fly never finished training leave the analysis."),
-    ("exclude_failed_pr_groups", "Exclude groups that fail the light QC",
-     "exclude_failed_pr_groups — both chambers of a chamber group whose light "
-     "followed the sensor rather than the fly (self-triggered light, "
-     "implausible training) leave the analysis.  Off keeps them; "
-     "pr_light_qc.csv lists them either way."),
-)
-
-#: The light QC's thresholds (pyflic.base.pr_light_qc).  (key, label, tooltip)
-_PR_NUMBER_ROWS: tuple[tuple[str, str, str], ...] = (
-    ("pr_lick_free_run", "Lick-free run (light events)",
-     "pr_lick_free_run — this many consecutive Test light events with no "
-     "Sucrose Well licks between them make a group's light self-triggered "
-     "(fails the group)."),
-    ("pr_trend_min_events", "Trend needs (light events)",
-     "pr_trend_min_events — Test light events needed before the "
-     "licks-per-event trend is judged; fewer is reported, never flagged."),
-    ("pr_trend_min_rho", "Trend minimum rho",
-     "pr_trend_min_rho — Spearman's rho of licks per light event against "
-     "event number below which a group gets the 'no increasing trend' "
-     "warning."),
-    ("pr_resting_level_rise", "Resting level rise (counts)",
-     "pr_resting_level_rise — a rise of the paired Sucrose Well's resting "
-     "level above its first 30 minutes by this many counts is a warning; it "
-     "is also the margin an 'elevated' well must clear."),
-    ("pr_resting_level_ratio", "Resting level ratio (×)",
-     "pr_resting_level_ratio — a paired Sucrose Well resting at this many "
-     "times the DFM's other Sucrose Wells is 'elevated' (a warning)."),
-)
-_PR_KEYS = {key for key, _l, _t in (*_PR_SWITCH_ROWS, *_PR_NUMBER_ROWS)}
+#: Progressive Ratio's own constants, (key, label, tooltip) per row, from the
+#: one description the Config Editor and the type's validation also read
+#: (``experiment_types.progressive_ratio.PR_CONSTANT_FIELDS``): the switches
+#: that decide which failed Chamber Groups auto-removal takes out, the light
+#: QC's thresholds (pyflic.base.pr_light_qc) and the breaking point's
+#: first-gap rule (pyflic.base.pr_breaking_point, ADR-0014).
+_PR_SWITCH_ROWS: tuple[tuple[str, str, str], ...] = tuple(
+    (f.key, f.label, f.tooltip) for f in PR_CONSTANT_FIELDS if f.group == "switch")
+_PR_NUMBER_ROWS: tuple[tuple[str, str, str], ...] = tuple(
+    (f.key, f.label, f.tooltip) for f in PR_CONSTANT_FIELDS if f.group == "light_qc")
+_PR_BREAK_ROWS: tuple[tuple[str, str, str], ...] = tuple(
+    (f.key, f.label, f.tooltip) for f in PR_CONSTANT_FIELDS if f.group == "break")
+_PR_KEYS = {key for key, _l, _t in (*_PR_SWITCH_ROWS, *_PR_NUMBER_ROWS, *_PR_BREAK_ROWS)}
 _MANAGED_KEYS = {key for key, _l, _p in _CONSTANT_ROWS} | _PR_KEYS
+
+
+def _add_help(target: Card | CardGroup, ref: str, tooltip: str) -> None:
+    """Put a ``?`` opening *ref* in *target*'s title row, if help is available."""
+    try:
+        from ..help import HelpButton
+    except Exception:  # noqa: BLE001 - help is optional, the editor is not
+        return
+    target.add_title_widget(HelpButton(ref, target, tooltip=tooltip))
 
 
 def _truthy(value) -> bool:
@@ -228,6 +216,8 @@ class ProjectDesignDialog(QDialog):
     def _build_design_card(self) -> Card:
         card = Card("Design", Category.ANALYZE, icon_name="settings",
                     subtitle="Enforced on every member of this Project.")
+        _add_help(card, "concepts-project#the-design-is-an-authority",
+                  "What the design owns, and why a member cannot differ")
         form = QFormLayout()
         form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -295,6 +285,8 @@ class ProjectDesignDialog(QDialog):
         card = Card("Detection parameters", Category.ANALYZE,
                     subtitle="One detection rule across every member — that is "
                             "what makes the Combined Analysis comparable.")
+        _add_help(card, "reference-parameters",
+                  "Every detection parameter, and which way it moves results")
         self.params_form = ParamsForm(override_mode=False, chamber_size=2,
                                       num_columns=2)
         card.add_body(self.params_form)
@@ -337,8 +329,33 @@ class ProjectDesignDialog(QDialog):
             self.pr_number_edits[key] = edit
             pform.addRow(f"{label}:", edit)
         self.pr_qc_group.add(pform)
+        _add_help(self.pr_qc_group, "concepts-progressive-ratio#light-qc",
+                  "What the light QC checks, and what its thresholds do")
         self.pr_qc_group.setVisible(False)
         card.add_body(self.pr_qc_group)
+
+        ## The breaking point's settings, shown with the light QC's; their
+        ## fields share pr_number_edits so loading and saving treat them alike.
+        self.pr_break_group = CardGroup(
+            "Progressive ratio breaking point",
+            note="When did the paired fly stop working for the light?  Hover "
+                 "a field for what it does.")
+        bform = QFormLayout()
+        bform.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        for key, label, tip in _PR_BREAK_ROWS:
+            edit = QLineEdit()
+            edit.setMaximumWidth(240)
+            edit.setToolTip(tip)
+            if key == "pr_test_window_min":
+                edit.setPlaceholderText("blank: no cap")
+            self.pr_number_edits[key] = edit
+            bform.addRow(f"{label}:", edit)
+        self.pr_break_group.add(bform)
+        _add_help(self.pr_break_group, "concepts-progressive-ratio#breaking-point",
+                  "How the breaking point and sucrose persistence are measured")
+        self.pr_break_group.setVisible(False)
+        card.add_body(self.pr_break_group)
         return card
 
     # ------------------------------------------------------------------
@@ -404,8 +421,9 @@ class ProjectDesignDialog(QDialog):
             if edit is not None and not edit.text().strip():
                 edit.setText(f"{value:g}" if isinstance(value, float)
                              else str(value))
-        self.pr_qc_group.setVisible(
-            bool(_PR_KEYS & set(item.default_constants or {})))
+        pr_type = bool(_PR_KEYS & set(item.default_constants or {}))
+        self.pr_qc_group.setVisible(pr_type)
+        self.pr_break_group.setVisible(pr_type)
         self._on_layout_changed()
 
     def _on_layout_changed(self) -> None:
@@ -599,7 +617,7 @@ class ProjectDesignDialog(QDialog):
         if _PR_KEYS & set(item.default_constants or {}):
             for key, check in self.pr_switch_checks.items():
                 constants[key] = check.isChecked()
-            for key, label, _tip in _PR_NUMBER_ROWS:
+            for key, label, _tip in (*_PR_NUMBER_ROWS, *_PR_BREAK_ROWS):
                 text = self.pr_number_edits[key].text().strip()
                 if not text:
                     continue

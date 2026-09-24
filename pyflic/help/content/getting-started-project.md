@@ -1,8 +1,8 @@
-# Setting up a project directory
+# Setting up an experiment directory
 
-A **project directory** is one folder holding one experiment: its configuration, its raw
-data, and everything pyflic writes. You make the folder and the `data/` subfolder
-yourself; pyflic creates the rest.
+An **Experiment Directory** is one folder holding one FLIC recording: its configuration,
+its raw data, and everything pyflic writes about it. You make the folder and its `data/`
+subfolder yourself; pyflic creates the rest.
 
 ## What you create
 
@@ -14,8 +14,9 @@ my_experiment/
     DFM2_0.csv
 ```
 
-Only two things are required: a configuration file, and a `data/` folder containing your
-raw CSVs. The folder name is yours to choose — pyflic never reads meaning from it.
+Only two things are required: a configuration file named `flic_config.yaml`, and a `data/`
+folder containing your raw CSVs. The folder name is yours to choose — pyflic never reads
+meaning from it.
 
 ## What pyflic adds
 
@@ -23,21 +24,18 @@ raw CSVs. The folder name is yours to choose — pyflic never reads meaning from
 my_experiment/
   flic_config.yaml
   data/
-  remove_chambers.csv        <-- optional; chamber exclusions
-  flic_config_results/       <-- created on first run
-    qc/                      <-- quality-control output
-    analysis/                <-- summaries, CSV exports, plots
-  .pyflic_cache/             <-- cached feeding summaries; safe to delete
+  remove_chambers.csv     <-- optional; chamber exclusions you declare
+  qc/                     <-- quality-control output
+  analysis/               <-- summaries, CSV exports, plots, the experiment report
+  .pyflic_cache/          <-- cached feeding summaries; safe to delete
 ```
 
-Output folders are **named after the configuration file**. `flic_config.yaml` writes into
-`flic_config_results/`; a second config called `my_protocol.yaml` writes into
-`my_protocol_results/`. That is what lets you keep several analyses of the same raw data
-side by side without them overwriting each other.
+Results always go to `analysis/` and `qc/`, whatever time range you analysed. Time windows
+within a recording are [Facets](concepts-facets.md) — a column in the output, not a separate
+folder — so re-running never scatters results across differently named directories.
 
-When you load a restricted time range, the output subfolders are suffixed with it —
-`qc_0_360/` and `analysis_0_360/` for minutes 0–360 — so ranged runs do not clobber
-whole-experiment runs.
+An Experiment Directory holds exactly **one** configuration. To analyse the same recording
+two ways, make a second Experiment Directory with its own copy of `data/`.
 
 ## Naming your data files
 
@@ -53,15 +51,21 @@ Experiments recorded in several segments are stitched together automatically in 
 order, so `DFM1_0.csv`, `DFM1_1.csv`, `DFM1_2.csv` load as one continuous recording. You
 do not need to concatenate them yourself.
 
+CSVs left at the folder's root rather than in `data/` are not read. Inside a Project the Hub
+shows such a folder as a **blocked member** and offers to file them for you.
+
 > **The `data_dir` key no longer exists.** Older configurations sometimes carry one. Data
-> is always read from `<project directory>/data/`, and `pyflic lint` will flag a leftover
+> is always read from `<experiment directory>/data/`, and `pyflic lint` will flag a leftover
 > `data_dir` so you can delete it.
 
 ## More than one experiment
 
-Give each experiment its own project directory. If you keep them as sibling folders under
-a common parent, pyflic can run all of them in one click — see
-[Running many projects at once](scripts-batch.md).
+When several recordings address one question — a dose series, a genotype panel, a pilot
+and its follow-up — put their Experiment Directories side by side inside a **Project**: a
+folder with a `project.yaml` whose design every member shares, and where results are pooled.
+The Hub's **Create project…** and **Initialize existing directory…** set one up. See
+[Projects and members](concepts-project.md), and
+[Running many projects at once](scripts-batch.md) for a folder of Projects.
 
 ---
 

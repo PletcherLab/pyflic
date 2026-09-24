@@ -54,7 +54,8 @@ global:
 
 ## Facets in a Project
 
-`facet_cutoffs` is part of the design, so every member in a Project is windowed
+`facet_cutoffs` (with `facet_labels`) sits in the design's `global:` block — the Project
+Design dialog's **Facet cutoffs** and **Phase names** fields — and is part of the design, so every member in a Project is windowed
 identically by construction. There is nothing to reconcile at pooling time — which is the
 whole point.
 

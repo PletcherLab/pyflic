@@ -102,3 +102,63 @@ def test_p_values_and_tones():
     assert rl.tone_of("ok") == "ok" and rl.tone_of("warning") == "warning"
     assert rl.tone_of("excluded") == "failed" and rl.tone_of("retained (x)") == "failed"
     assert rl.tone_of("") is None and rl.tone_of("something") is None
+
+
+# ---------------------------------------------------------------------------
+# The experiment report builds for every layout, not only the typed ones
+# ---------------------------------------------------------------------------
+
+def _custom_experiment(root, *, layout: str):
+    import yaml
+
+    from pyflic.base.yaml_config import load_experiment_yaml
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "data").mkdir()
+    rng = np.random.default_rng(1)
+    n = 3000
+    cols = {"Sample": np.arange(1, n + 1), "Seconds": np.arange(n) / 5.0}
+    for w in range(1, 13):
+        sig = rng.normal(0.0, 0.3, size=n)
+        for k in range(15):
+            start = 60 + 180 * k + (w * 7) % 40
+            sig[start:start + 8] += 10.0
+        cols[f"W{w}"] = sig
+    pd.DataFrame(cols).to_csv(root / "data" / "DFM1_0.csv", index=False)
+    if layout == "single_well":
+        chambers = {c: ("Ctrl" if c <= 6 else "Exp") for c in range(1, 13)}
+    else:
+        chambers = {c: ("Ctrl" if c <= 3 else "Exp") for c in range(1, 7)}
+    cfg = {"global": {"chamber_layout": layout,
+                      "params": {"feeding_threshold": 5, "feeding_minimum": 5,
+                                 "tasting_minimum": 1, "tasting_maximum": 4,
+                                 "feeding_event_link_gap": 2, "samples_per_second": 5,
+                                 "correct_for_dual_feeding": False}},
+           "dfms": [{"id": 1, "chambers": chambers}]}
+    (root / "flic_config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
+    return load_experiment_yaml(root, parallel=False, use_disk_cache=False)
+
+
+@pytest.mark.parametrize("layout,section", [("single_well", "Consumption"),
+                                            ("two_well", "Preference")])
+def test_the_experiment_report_builds_for_a_custom_experiment(tmp_path, layout, section):
+    from pyflic.base.pdf_report import build_experiment_report
+
+    e = _custom_experiment(tmp_path / "exp", layout=layout)
+    doc = build_experiment_report(e, metrics=("Licks",))
+    headings = [b.text for b in doc.blocks if isinstance(b, rl.Heading)]
+    assert section in headings and "Quality control" in headings
+    if layout == "single_well":
+        assert "Preference" not in headings and "Simultaneous feeding" not in headings
+    ## No figure in it failed to draw.
+    doc._layout()
+    assert doc.save(tmp_path / "r.pdf").stat().st_size > 10_000
+
+
+def test_a_section_heading_stays_with_its_first_subsection():
+    doc = _doc(rl.Paragraph("line " * 1150), rl.Heading("Quality control"),
+               rl.Heading("Data integrity", level=2),
+               rl.Table(pd.DataFrame({"A": range(20)})))
+    doc._layout()
+    pages = {label: page for _level, label, page in doc._toc}
+    assert pages["1  Quality control"] == pages["1.1  Data integrity"]

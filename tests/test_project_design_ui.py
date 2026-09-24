@@ -319,6 +319,32 @@ def test_the_progressive_ratio_light_qc_settings_round_trip(app, tmp_path):
     assert dialog.pr_qc_group.isHidden()
 
 
+def test_the_progressive_ratio_breaking_point_settings_round_trip(app, tmp_path):
+    """The breaking point's gap and Test window cap are fields for a
+    Progressive Ratio design (ADR-0014): a stated gap loads, a blank cap is
+    not written, and both hide for any other type."""
+    root = tmp_path / "pr"
+    _write(root / "project.yaml", {"name": "PR", "design": {"global": {
+        "experiment_type": "ProgressiveRatio",
+        "well_names": {"A": "Sucrose", "B": "Yeast"},
+        "constants": {"pr_break_gap_min": 90},
+    }}})
+    dialog = ProjectDesignDialog(start_dir=str(root))
+    assert not dialog.pr_break_group.isHidden()
+    assert dialog.pr_number_edits["pr_break_gap_min"].text() == "90"
+    assert dialog.pr_number_edits["pr_test_window_min"].text() == ""
+    assert "pr_test_window_min" in dialog.pr_number_edits["pr_test_window_min"].toolTip()
+
+    constants = dialog._build_design()["global"]["constants"]
+    assert constants["pr_break_gap_min"] == 90
+    assert "pr_test_window_min" not in constants
+    dialog.pr_number_edits["pr_test_window_min"].setText("600")
+    assert dialog._build_design()["global"]["constants"]["pr_test_window_min"] == 600
+
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("Hedonic"))
+    assert dialog.pr_break_group.isHidden()
+
+
 def test_a_standalone_config_keeps_constants_it_has_no_field_for(app, tmp_path):
     path = tmp_path / "solo" / "flic_config.yaml"
     _write(path, {"global": {"experiment_type": "ProgressiveRatio",
@@ -331,3 +357,13 @@ def test_a_standalone_config_keeps_constants_it_has_no_field_for(app, tmp_path):
     constants = editor._collect_yaml()["global"]["constants"]
     assert constants["exclude_failed_pr_groups"] is False
     assert constants["pr_lick_free_run"] == 9
+
+
+def test_the_progressive_ratio_groups_have_help(app, tmp_path):
+    from pyflic.help.button import HelpButton
+
+    dialog = ProjectDesignDialog(start_dir=str(tmp_path / "new"))
+    refs = {g: [b.ref for b in g.findChildren(HelpButton)]
+            for g in (dialog.pr_qc_group, dialog.pr_break_group)}
+    assert refs[dialog.pr_qc_group] == ["concepts-progressive-ratio#light-qc"]
+    assert refs[dialog.pr_break_group] == ["concepts-progressive-ratio#breaking-point"]

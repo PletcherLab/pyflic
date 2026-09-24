@@ -350,7 +350,7 @@ def test_breaking_point_table_is_per_light_period_after_training(exp):
     ## Chamber 1 is paired: its rows are the group's Light Event Ledger.
     assert list(bp.columns) == ["Minutes", "CumLicks", "DeltaMinutes", "DeltaLicks",
                                 "MinutesSincePrev", "LicksSincePrev", "LickFree",
-                                "RestingLevel"]
+                                "RestingLevel", "Counted"]
     assert (bp["Minutes"] > 0).all()
     assert bp["DeltaLicks"].iloc[0] == 0.0 and (bp["DeltaLicks"].iloc[1:] > 0).all()
     assert (bp["LicksSincePrev"] > 0).all() and not bp["LickFree"].any()

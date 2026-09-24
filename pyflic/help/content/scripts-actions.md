@@ -23,9 +23,11 @@ several devices. `group` defaults to the **script's name** — see
 | `basic_analysis` | — | The standard pipeline: auto-removal (the `constants:` cutoffs, once), summary, feeding summary, summary plot (QC is `run_qc`'s job) |
 | `run_qc` | — | Per-DFM QC reports into `qc/`: integrity, data breaks, bleeding, raw / baselined / cumulative-licks plots |
 | `feeding_csv` | — | Per-chamber feeding summary to CSV |
+| `facet_csv` | — | Per-chamber summary per Facet to `feeding_summary_facet.csv` (the Hub's **Faceted summary CSV**); skipped when the experiment has no Facets |
 | `binned_csv` | `binsize` | Feeding metrics binned over time, to CSV |
 | `weighted_duration` | — | Weighted-duration summary (hedonic experiments) |
 | `paired_yoked_diff` | — | Paired − yoked table, one row per chamber group per Facet (progressive ratio) |
+| `breaking_point` | — | **Breaking point table**: per chamber group, the paired fly's lick-backed Test light events before its first pause longer than `pr_break_gap_min`. Writes `pr_breaking_point.csv` and logs the table with its sensitivity to the gap (progressive ratio) |
 | `pr_light_qc` | — | **Light QC table**: per chamber group, did the paired fly earn its light? Writes `pr_light_qc.csv` and `pr_light_events.csv` and logs each flagged group (progressive ratio) |
 | `tidy_export` | `kind` | **Event statistics**: one row per individual event, for downstream statistics |
 | `bootstrap` | `metric`, `mode`, `n_boot`, `ci`, `seed` | Bootstrap confidence intervals |
@@ -78,7 +80,38 @@ parameter for a publication — an effect that appears only at one link gap is n
 | `plot_pr_cumulative_licks` | `binsize` | Per-DFM training-aligned paired/yoked traces, light-on as points, lick-free light events as rings (progressive ratio, QC) |
 | `plot_pr_light_events` | — | Per-DFM sucrose licks per Test light event; lick-free events as red rings (progressive ratio, QC) |
 | `plot_pr_resting_level` | — | Per-DFM paired Sucrose Well resting level over the recording, light onsets as a rug (progressive ratio, QC) |
-| `plot_breaking_point` | — | Per-DFM ΔLicks per light-on period since training end (progressive ratio) |
+| `plot_pr_still_responding` | — | Fraction of paired flies whose breaking point reached each ratio, per treatment; censored flies as ticks (progressive ratio) |
+| `plot_breaking_point` | — | Per-DFM ΔLicks per light-on period since training end, the break marked (progressive ratio) |
+
+Every plot action also writes its figure into the member's `analysis/`:
+`feeding_summary.png`, `binned_<metric>.png`, `dot_<metric>.png`,
+`moving_window_<metric>.png`, `moving_median_duration_chambers.png`,
+`moving_median_duration_treatments.png`, `well_comparison_<metric>.png`, and for
+Progressive Ratio `pr_cumulative_diff.png`, `pr_still_responding.png`, and per DFM
+`pr_cumulative_licks_dfm<id>.png`, `pr_light_events_dfm<id>.png`,
+`pr_resting_level_dfm<id>.png` and `breaking_point_dfm<id>.png`.
+
+## Project actions
+
+These belong to **Project Scripts** (`project.yaml` `scripts:`) and cannot appear in an
+Experiment Script, nor the ones above in a Project Script.
+
+| Action | Parameters | What it does |
+|---|---|---|
+| `validate_design` | — | Fail the script early when a member contradicts the design |
+| `run_in_experiments` | `script`, `only` | Run a named Experiment Script in every member, or only those listed — the one bridge between the levels |
+| `run_all_analyses` | `skip_analyzed`, `reports` | Basic analysis in every member, optionally skipping current ones and writing each member's PDF report |
+| `build_combined_analysis` | — | Stack the members' saved summaries into the Combined Analysis, with pooled and mixed-model statistics |
+| `project_report` | `ai_summary` | The Project Report; builds the Combined Analysis first when it is missing — see [Reports](reports.md#the-project-report) |
+| `render_publication_figures` | `format`, `only` | Every figure in `plot_specs.yaml` into `figures/`, SVG by default |
+| `generate_ai_narrative` | `provider` | The [AI summary](concepts-ai-summary.md) of the Combined Analysis |
+
+The Combined Analysis never analyses a member: one with no saved summary is omitted and
+listed. For a Progressive Ratio Project it also stacks each member's
+`paired_yoked_diff.csv`, `pr_light_qc.csv` and `pr_breaking_point.csv` into
+`<project>_PairedYokedDiff.csv`, `<project>_LightQC.csv` and `<project>_BreakingPoint.csv`,
+and `<project>_Stats.txt` adds the tests against zero and the breaking point's log-rank
+test ([Statistics](concepts-progressive-ratio.md#statistics)).
 
 ## `metric` and `mode`
 

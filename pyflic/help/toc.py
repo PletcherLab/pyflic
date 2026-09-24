@@ -56,6 +56,7 @@ TOC: tuple[Section, ...] = (
             "concepts-metrics",
             "concepts-light-phase",
             "concepts-experiment-types",
+            "concepts-progressive-ratio",
             "concepts-project",
             "concepts-facets",
             "concepts-exclusions",
@@ -136,6 +137,19 @@ GUIDES: tuple[Guide, ...] = (
             "concepts-two-well-pi",
             "config-dfms-chambers",
             "plots-catalog",
+        ),
+    ),
+    Guide(
+        "progressive-ratio",
+        "Progressive Ratio experiments",
+        "Paired and yoked flies, training, the light QC and the breaking point",
+        (
+            "concepts-experiment-types",
+            "concepts-progressive-ratio",
+            "config-dfms-chambers",
+            "config-structure",
+            "plots-catalog",
+            "reports",
         ),
     ),
     Guide(

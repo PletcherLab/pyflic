@@ -35,6 +35,13 @@ Each **DFM** tab has its own sub-tabs:
   This is your window onto electrical crosstalk; see
   [dual-feeding correction](concepts-two-well-pi.md#dual-feeding-correction).
 - **Bleeding** — signal bleeding between wells.
+- **Raw Signal**, **Baselined** and **Cumulative Licks** — the saved QC plots from `qc/`,
+  once QC has run.
+
+A Progressive Ratio experiment's own QC — the light QC table and its figures — is on the
+Hub's QC panel rather than here; see
+[Light QC](concepts-progressive-ratio.md#light-qc). The Feeding Summary tab shows its
+`Group`, `Role` and light QC columns like any other.
 
 ## What to look for
 
@@ -75,7 +82,9 @@ place to configure.
 
 ## Saving exclusions
 
-**Save removed chambers…** writes your current chamber selection to a named group in
+On the **Feeding Summary** tab, tick the chambers to exclude — **Mark All Excluded** and
+**Clear All** set every box at once. **Save Exclusions…** writes your current selection to a
+named group in
 `remove_chambers.csv`. That is the intended path from "this chamber looks wrong" to a
 recorded, reusable exclusion set — see
 [exclusions](config-dfms-chambers.md#excluding-chambers).
@@ -83,10 +92,13 @@ recorded, reusable exclusion set — see
 Name the group after the analysis it belongs to. A script's bare `remove_chambers` step
 looks for a group named after the script.
 
-## Auto Filter Criteria
+## Auto Filter
 
-Applies the cutoffs from `global.constants` to select chambers automatically. Review what
-it selected before saving — automatic criteria are a starting point, not a verdict.
+**Auto Filter** applies the cutoffs from `global.constants` to select chambers
+automatically — for a Progressive Ratio experiment, that includes the chamber groups whose
+training never completed or whose light QC failed. **View Criteria** shows what the last run
+used and why each chamber was selected. Review the selection before saving — automatic
+criteria are a starting point, not a verdict.
 
 ---
 

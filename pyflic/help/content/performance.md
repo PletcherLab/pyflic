@@ -20,7 +20,7 @@ DFMs are loaded concurrently. Worth enabling on any experiment with more than on
 ## The disk cache
 
 With `use_disk_cache=True` (the default), the computed feeding summary is cached in
-`<project directory>/.pyflic_cache/`.
+`<experiment directory>/.pyflic_cache/`.
 
 The cache key is derived from the **SHA-256 hash of the configuration file** together with
 the **modification times and sizes of every DFM CSV**. Change a parameter, edit the
@@ -31,13 +31,13 @@ That construction is why you almost never need to clear it: a stale entry cannot
 served for changed inputs. Clearing is a disk-space operation, not a correctness one.
 
 ```bash
-pyflic clear-cache /path/to/project
+pyflic clear-cache /path/to/experiment
 ```
 
 ```python
 from pathlib import Path
 from pyflic.base import cache
-cache.clear(Path("/path/to/project"))
+cache.clear(Path("/path/to/experiment"))
 ```
 
 The directory is safe to delete by hand, and safe to exclude from version control — add
@@ -64,13 +64,16 @@ exp = load_experiment_yaml(path, range_minutes=(0, 240))
 ```
 
 Analysing a window rather than a whole multi-day recording is often the largest saving
-available. Ranged loads write into their own suffixed output folders, so they never
-overwrite whole-experiment results.
+available. Outputs still go to `analysis/`, so a ranged run replaces the whole-recording
+results there; to compare phases of one recording, use [Facets](concepts-facets.md).
 
 ## In the hub
 
-Turn off **Interactive plots** when generating many figures. Interactive figures keep a
-live canvas in memory; static ones are rasterised once and released.
+**Parallel** loading and the worker count sit in the Project panel beside the members
+table. Figures are embedded as static images, rasterised once and released, so many tabs
+cost little memory; **Clear Tabs** in the output area closes them all. During a Batch Run,
+**Suppress new plot / output tabs** stops them being created at all. **Clear cache** is on
+the Tools panel.
 
 ---
 

@@ -2,24 +2,24 @@
 
 Every detection parameter, what it does, and which way your results move when you change
 it. These go under `global.params`, and any DFM may override any of them for itself.
-The auto-removal cutoffs and the Progressive Ratio light QC thresholds are not detection
-parameters; they live under `global.constants` —
-[see there](config-structure.md#globalconstants).
+Inside a Project they belong to the design, and only the physical keys `pi_direction` and
+`chamber_sets` may vary per DFM. The auto-removal cutoffs and the Progressive Ratio
+light QC and breaking-point settings are not detection parameters; they live under
+`global.constants` — [see there](config-structure.md#globalconstants).
 
 ```yaml
 global:
   params:
-    chamber_size: 2
     feeding_threshold: 20
     feeding_event_link_gap: 5
 ```
 
 ## Defaults at a glance
 
-pyflic starts from a preset chosen by `chamber_size` — it never uses a bare set of
+pyflic starts from a preset chosen by the chamber layout — it never uses a bare set of
 defaults — so these are the values you actually get when you leave a parameter out:
 
-| Parameter | `chamber_size: 1` | `chamber_size: 2` | Units |
+| Parameter | `single_well` | `two_well` | Units |
 |---|---|---|---|
 | `baseline_window_minutes` | `3` | `3` | minutes |
 | `samples_per_second` | `5` | `5` | Hz |
@@ -32,7 +32,7 @@ defaults — so these are the values you actually get when you leave a parameter
 | `tasting_minevents` | `1` | `1` | samples |
 | `pi_direction` | `left` | `left` | — |
 | `correct_for_dual_feeding` | `false` | **`true`** | — |
-| `chamber_size` | *required* | *required* | wells |
+| `chamber_size` | `1` (derived) | `2` (derived) | wells |
 
 Only `chamber_size` and `correct_for_dual_feeding` differ between the two presets.
 
@@ -40,14 +40,15 @@ Only `chamber_size` and `correct_for_dual_feeding` differ between the two preset
 
 ## `chamber_size`
 
-**Required.** Wells per chamber: `1` or `2`.
+**Derived — do not set it.** Wells per chamber, `1` or `2`, follows from the chamber layout:
+an Experiment Type fixes the layout (Hedonic and Progressive Ratio are `two_well`), and a
+Custom experiment states `chamber_layout: single_well` or `two_well` (two-well when
+omitted). A typed config that states `chamber_size` is refused, because the value decides
+which physical wells are grouped into a chamber and it must not be able to disagree with
+the assay. See [Experiment types](concepts-experiment-types.md).
 
-pyflic raises an error if it is missing rather than guessing, because the value determines
-which physical wells are grouped into a chamber — the wrong value silently reinterprets
-your entire plate rather than failing visibly.
-
-`1` gives 12 independent chambers per DFM. `2` pairs wells into 6 chambers, and enables the
-preference index. Any other value is rejected.
+`single_well` gives 12 independent chambers per DFM. `two_well` pairs wells into 6
+chambers, and enables the preference index.
 
 ## `baseline_window_minutes`
 
@@ -186,10 +187,10 @@ Meaningless for single-well experiments, where there is no neighbouring well to 
 
 Which wells make up each chamber. You will rarely set this.
 
-The defaults follow the physical layout: for `chamber_size: 2`, the pairs
-`(1,2), (3,4), (5,6), (7,8), (9,10), (11,12)`; for `chamber_size: 1`, wells 1 through 12
-individually. Values must be between 1 and 12, and the number of columns must equal
-`chamber_size`.
+The defaults follow the physical layout: for `two_well`, the pairs
+`(1,2), (3,4), (5,6), (7,8), (9,10), (11,12)`; for `single_well`, wells 1 through 12
+individually. Values must be between 1 and 12, and the number of columns must equal the
+wells per chamber.
 
 Override it only if your rig is wired unusually.
 

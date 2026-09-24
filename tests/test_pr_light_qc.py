@@ -300,12 +300,16 @@ def test_the_report_carries_the_light_qc_and_the_breaking_point(fail_dir, tmp_pa
     assert path.is_file() and path.stat().st_size > 0
 
 
-def test_the_breaking_point_is_the_test_light_events_earned(fexp):
+def test_the_breaking_point_counts_lick_backed_light_events(fexp):
     summary = fexp.breaking_point_summary()
-    ## The self-triggered and bad-training groups are excluded; the working
-    ## ratio earned 12, the fly that stopped 3.
+    ## The working ratio earned 12, the fly that stopped 3.  An hour-long
+    ## recording is shorter than the default 120-minute gap, so no group can
+    ## be seen to stop: every count is censored, a lower bound (ADR-0014).
     got = {(int(r.DFM), int(r.Group)): int(r.BreakingPoint) for r in summary.itertuples()}
     assert got[(1, 1)] == 12 and got[(2, 1)] == 3
+    assert summary["Censored"].all()
+    ## The self-triggered group's light events are all lick-free: none counts.
+    assert got[(1, 2)] == 0
     row = summary[(summary.DFM == 1) & (summary.Group == 1)].iloc[0]
     assert row.LargestRequirement == 12 * 4 + 4
     assert row.TestMinutes == pytest.approx(54.0, abs=0.1)

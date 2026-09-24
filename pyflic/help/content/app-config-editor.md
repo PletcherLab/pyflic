@@ -67,6 +67,29 @@ canonical name. The same goes for configurations written before pyflic split
 Experiment Type from Chamber Layout: `experiment_type: two_well` still opens — as
 a Custom Experiment with that layout — and saving migrates it.
 
+**Progressive Ratio adds a paired-chamber picker.** With *Progressive Ratio* chosen, each
+DFM tab shows **Paired chamber per chamber group**: one picker per group (1+2, 3+4, 5+6)
+naming its paired chamber, written as `paired_chambers:`. The other chamber is yoked and
+never written. Give both chambers of a group the same treatment, and set **PI Direction**
+on the DFM to the side the sucrose well (well A) is on. See
+[Progressive Ratio experiments](concepts-progressive-ratio.md#chamber-groups-paired-and-yoked).
+
+**Progressive Ratio has its own settings.** Below the auto-filter thresholds, a
+*Progressive Ratio* section holds the type's own constants: whether a chamber group whose
+training never completed, or whose light QC failed, leaves the analysis; the light QC's
+thresholds; and the breaking point's **Break gap** (`pr_break_gap_min`) and **Test window
+cap** (`pr_test_window_min`). They follow the thresholds' rule. A blank field shows the
+type's default as grey text and keeps it, and a switch left on *default* does the same;
+only a value you type or pick is written under `global.constants`. A value out of range,
+such as a gap of 0, is counted on the tab and listed before saving, and pyflic refuses to
+load a config that states one. What each setting does is in
+[the light QC](concepts-progressive-ratio.md#light-qc) and
+[the breaking point](concepts-progressive-ratio.md#breaking-point).
+
+**A member's config shows the design read-only.** Opened on a Project's member, the
+editor fills the global settings from `project.yaml`, marks them read-only with a banner,
+and writes only `dfms:` — see [Projects and members](concepts-project.md).
+
 **Exclusions do not live here.** `excluded_chambers` in YAML is ignored at load
 time. Chamber exclusions belong in `remove_chambers.csv` — see
 [exclusions](config-dfms-chambers.md#excluding-chambers).
@@ -79,12 +102,13 @@ Validate:
 pyflic lint my_experiment/
 ```
 
-or use **Lint config** in the hub's Tools card. The editor produces valid YAML, but the
-linter also catches things it cannot know — a DFM with no matching CSV, a stale key from an
-older version of pyflic.
+or use **Lint / migration check** on the Hub's Tools panel. The editor produces valid YAML,
+but the linter also catches things it cannot know — a DFM with no matching CSV, a stale key
+from an older version of pyflic.
 
-If the hub is already open on this project, click **Reload config** there to pick up your
-changes.
+If the Hub already has this member loaded, load it again — double-click its row in the
+Project panel — to pick up your changes. **F1**, or the editor's **Help** menu, opens this
+topic.
 
 ---
 

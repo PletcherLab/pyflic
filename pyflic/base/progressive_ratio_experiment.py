@@ -27,6 +27,7 @@ from typing import Any, Literal, Sequence
 import numpy as np
 import pandas as pd
 
+from . import pr_breaking_point as pbp
 from . import pr_light_qc as lqc
 from . import windowing
 from .dfm import DFM
@@ -48,9 +49,15 @@ TEST_LABEL = "Test"
 FACET_LABELS = (TRAINING_LABEL, TEST_LABEL)
 
 #: Per-chamber metrics the Paired-Yoked Difference table carries, as ``d<name>``.
+#: ``PersistA`` is Sucrose Persistence, measured from training end (ADR-0014),
+#: so its difference exists on Test rows only.
 DIFF_METRICS: tuple[str, ...] = (
     "LicksA", "LicksB", "EventsA", "EventsB", "PI", "EventPI",
-    "MedDurationA", "MedDurationB",
+    "MedDurationA", "MedDurationB", "PersistA",
+)
+#: The differences the reports test, between treatments and against zero.
+DIFF_REPORT_METRICS: tuple[str, ...] = (
+    "dLicksA", "dLicksB", "dEventsA", "dPI", "dMedDurationA", "dPersistA",
 )
 
 #: Two wells clearing within this many minutes of each other count as together.
@@ -72,6 +79,18 @@ LIGHT_QC_COLUMNS: tuple[str, ...] = (
 )
 #: What the light QC adds to every per-chamber summary row.
 LIGHT_QC_ROW_COLUMNS: tuple[str, ...] = ("LightQC", "LickFreeLightEvents")
+#: Sucrose Persistence on every per-chamber summary row (ADR-0014): minutes
+#: since training end of the chamber's last Sucrose Well feeding event before
+#: the first gap over ``pr_break_gap_min``, and whether that is censored.
+PERSIST_COLUMNS: tuple[str, ...] = ("PersistA", "PersistACensored")
+#: On a Paired chamber's breaking-point table and the Light Event Ledger:
+#: whether the Light Event is one the group's Breaking Point counts.
+COUNTED_COLUMN = "Counted"
+#: ``analysis/pr_breaking_point.csv``, after ``Treatment`` and the factors.
+BREAKING_POINT_SUMMARY_COLUMNS: tuple[str, ...] = (
+    "DFM", "Group", "PairedChamber", "BreakingPoint", "BreakMin", "Censored",
+    "TestMinutes", "LargestRequirement", "LickFreeLightEvents", "LightQC",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -560,9 +579,10 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
     def light_events_ledger(self) -> pd.DataFrame:
         """Every group's Test-phase Light Event Ledger stacked — the Paired
         chamber's :meth:`breaking_point_table` with ``DFM, Group,
-        PairedChamber, Event`` in front.  ``analysis/pr_light_events.csv``."""
+        PairedChamber, Event`` in front; ``Counted`` marks the events the
+        group's Breaking Point holds.  ``analysis/pr_light_events.csv``."""
         cols = ["DFM", "Group", "PairedChamber", "Event",
-                *BREAKING_POINT_COLUMNS, *LEDGER_COLUMNS]
+                *BREAKING_POINT_COLUMNS, *LEDGER_COLUMNS, COUNTED_COLUMN]
         frames = []
         for dfm_id in sorted(self.dfms):
             for group in CHAMBER_GROUPS:
@@ -704,20 +724,40 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
     # ------------------------------------------------------------------
 
     def _augment_rows(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Append ``Group, Role, TrainingMinutes, TrainingComplete, LightOn_sec``
-        and the light QC's ``LightQC, LickFreeLightEvents`` to a per-chamber
-        frame carrying ``DFM, Chamber, StartMin, EndMin``.
+        """Append ``Group, Role, TrainingMinutes, TrainingComplete, LightOn_sec``,
+        the light QC's ``LightQC, LickFreeLightEvents`` and Sucrose
+        Persistence's ``PersistA, PersistACensored`` to a per-chamber frame
+        carrying ``DFM, Chamber, StartMin, EndMin``.
 
-        The light QC columns are redone on every call, even on a frame that
-        already has the rest: a summary read back from the disk cache carries
-        whatever they said when it was written, and their thresholds live in
-        the design, which that cache's key does not cover.
+        The light QC and persistence columns are redone on every call, even on
+        a frame that already has the rest: a summary read back from the disk
+        cache carries whatever they said when it was written, and their
+        thresholds live in the design, which that cache's key does not cover.
         """
         if df is None or df.empty:
             return df
         if "Role" not in df.columns:
             df = self._augment_role_rows(df)
-        return self._with_light_qc_columns(df)
+        return self._with_persistence_columns(self._with_light_qc_columns(df))
+
+    def _with_persistence_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """``PersistA`` and ``PersistACensored`` on every row: the chamber's
+        Sucrose Persistence over its group's Test phase
+        (:meth:`chamber_persistence`), whatever window the row covers — like
+        ``TrainingMinutes``, a fact about the group, not the window.
+        :meth:`feeding_summary_facet` blanks it on Training rows; a group that
+        never completed training has none."""
+        settings = self.break_settings()
+        df = df.drop(columns=[c for c in PERSIST_COLUMNS if c in df.columns])
+        values: list[float] = []
+        flags: list[bool | None] = []
+        for dfm_id, chamber in zip(df["DFM"].astype(int), df["Chamber"].astype(int)):
+            result = self.chamber_persistence(dfm_id, chamber, settings)
+            values.append(np.nan if result is None else float(result[0]))
+            flags.append(None if result is None else bool(result[1]))
+        df["PersistA"] = values
+        df["PersistACensored"] = pd.Series(flags, index=df.index, dtype=object)
+        return df
 
     def _with_light_qc_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """``LightQC`` (the group's flags, comma-joined; empty when clean) and
@@ -843,6 +883,11 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                     df = df.copy()
                     df.insert(0, "FacetRange", windowing.format_range(window))
                     df.insert(0, "Facet", label)
+                    if label != TEST_LABEL:
+                        ## Sucrose Persistence is measured from training end:
+                        ## a Training row has none.
+                        df["PersistA"] = np.nan
+                        df["PersistACensored"] = None
                     frames.append(df)
         if not frames:
             return pd.DataFrame()
@@ -862,13 +907,16 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         transform_licks: bool | None = None,
     ) -> pd.DataFrame:
         """One row per Chamber Group per Facet: paired minus yoked for each of
-        :data:`DIFF_METRICS` (as ``d<metric>``).  A group missing either
-        chamber contributes no row."""
+        :data:`DIFF_METRICS` (as ``d<metric>``), and ``dPersistCensored`` —
+        either fly's Sucrose Persistence censored, so ``dPersistA`` is a
+        difference of lower bounds (kept and flagged, never dropped;
+        ADR-0014).  A group missing either chamber contributes no row."""
         facet = self.feeding_summary_facet(transform_licks=transform_licks)
         cols = ["Treatment", *(self.design_factors or []), "DFM", "Group", "Facet",
                 "FacetRange", "PairedChamber", "YokedChamber", "StartMin", "EndMin",
                 "TrainingMinutes", "TrainingComplete", "LightOn_sec",
-                *LIGHT_QC_ROW_COLUMNS, *(f"d{m}" for m in DIFF_METRICS)]
+                *LIGHT_QC_ROW_COLUMNS, *(f"d{m}" for m in DIFF_METRICS),
+                "dPersistCensored"]
         if facet is None or facet.empty:
             return pd.DataFrame(columns=cols)
         rows = []
@@ -897,6 +945,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 pv, yv = p.get(m, np.nan), y.get(m, np.nan)
                 row[f"d{m}"] = (float(pv) - float(yv)
                                 if pd.notna(pv) and pd.notna(yv) else np.nan)
+            pc = _flag(p.get("PersistACensored"))
+            yc = _flag(y.get("PersistACensored"))
+            row["dPersistCensored"] = None if pc is None or yc is None else (pc or yc)
             rows.append(row)
         return pd.DataFrame(rows, columns=cols)
 
@@ -1615,9 +1666,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         return g
 
     def write_pr_figures(self, *, binsize_min: float = 1.0, dpi: int = 200) -> dict[str, Path]:
-        """Write the headline curve and the per-DFM QC figures into
-        ``analysis/``: training-aligned traces, licks per light event and the
-        Sucrose Well resting level."""
+        """Write the headline curve, the still-responding curve and the per-DFM
+        QC figures into ``analysis/``: training-aligned traces, licks per light
+        event and the Sucrose Well resting level."""
         if self.analysis_dir is None:
             raise ValueError("experiment_dir must be set to write figures.")
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -1625,6 +1676,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         path = self.analysis_dir / "pr_cumulative_diff.png"
         self.plot_cumulative_diff(binsize_min=binsize_min).save(str(path), dpi=dpi, verbose=False)
         written["pr_cumulative_diff"] = path
+        path = self.analysis_dir / "pr_still_responding.png"
+        self.plot_still_responding().save(str(path), dpi=dpi, verbose=False)
+        written["pr_still_responding"] = path
         for dfm_id in sorted(self.dfms):
             for stem, build in (
                 ("pr_cumulative_licks",
@@ -1638,8 +1692,82 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         return written
 
     # ------------------------------------------------------------------
-    # Breaking point — spirit of breaking_point.R on the new model
+    # Breaking point and Sucrose Persistence: the first-gap rule (ADR-0014)
     # ------------------------------------------------------------------
+    #
+    # When did the fly stop?  Responses are read in order from the group's
+    # training end, and the first pause longer than pr_break_gap_min ends the
+    # count (pyflic.base.pr_breaking_point).  The Breaking Point asks it of
+    # the Paired fly's lick-backed Test Light Events; Sucrose Persistence asks
+    # it of either fly's Sucrose Well feeding events.
+
+    def break_settings(self) -> pbp.BreakSettings:
+        """The first-gap rule's settings, from the design's ``constants:``
+        (``pr_break_gap_min``, ``pr_test_window_min``)."""
+        return pbp.BreakSettings.from_constants(self.global_constants)
+
+    def _test_window(self, dfm_id: int, group: int,
+                     settings: pbp.BreakSettings) -> float | None:
+        """The group's Test window in minutes since training end — to the end
+        of the recording, capped at ``pr_test_window_min`` — or ``None`` when
+        training never ended."""
+        gt = self.group_training(dfm_id, group)
+        if not gt.complete:
+            return None
+        dfm = self.dfms[int(dfm_id)]
+        return settings.test_end(self._recording_end(dfm) - float(gt.training_end))
+
+    def _test_events(self, dfm_id: int, group: int) -> pd.DataFrame:
+        """The Test-phase rows of :meth:`light_events_table`."""
+        events = self.light_events_table(dfm_id, group)
+        return events[events["Phase"] == TEST_LABEL]
+
+    def group_break(self, dfm_id: int, group: int,
+                    settings: pbp.BreakSettings | None = None) -> pbp.GapBreak | None:
+        """The first-gap rule on one Chamber Group's Test Light Events.
+
+        ``count`` is the group's **Breaking Point**, ``last_min`` the minute
+        since training end of the last event counted (0 when none),
+        ``censored`` whether the Test window ended before any gap longer than
+        ``pr_break_gap_min``, and ``counted`` which Test events count —
+        aligned with the Test rows of :meth:`light_events_table`.  Lick-free
+        Light Events never count and never end a gap.  ``None`` for a group
+        that never completed training.
+        """
+        settings = settings or self.break_settings()
+        window = self._test_window(dfm_id, group, settings)
+        if window is None:
+            return None
+        test = self._test_events(dfm_id, group)
+        return pbp.breaking_point(test["Minutes"].to_numpy(dtype=float),
+                                  ~test["LickFree"].to_numpy(dtype=bool),
+                                  window, settings.gap_min)
+
+    def chamber_persistence(self, dfm_id: int, chamber: int,
+                            settings: pbp.BreakSettings | None = None,
+                            ) -> tuple[float, bool] | None:
+        """``(minutes, censored)``: the chamber's **Sucrose Persistence** — the
+        first-gap rule on the onsets of its Sucrose Well feeding events (the
+        events ``EventsA`` counts) since its group's training end.  Paired and
+        yoked alike; ``None`` for a group that never completed training."""
+        settings = settings or self.break_settings()
+        dfm_id, chamber = int(dfm_id), int(chamber)
+        cache = self._light_cache(dfm_id)
+        key = ("persist", chamber, settings)
+        if key in cache:
+            return cache[key]
+        group = group_of(chamber)
+        window = self._test_window(dfm_id, group, settings)
+        result = None
+        if window is not None:
+            dfm = self.dfms[dfm_id]
+            end = float(self.group_training(dfm_id, group).training_end)
+            column = f"W{self._sucrose_well(dfm, chamber)}"
+            mins = pd.to_numeric(dfm.event_df["Minutes"], errors="coerce").to_numpy(dtype=float)
+            onsets = mins[dfm.event_df[column].to_numpy(dtype=float) > 0]
+            result = pbp.persistence(onsets[onsets > end] - end, window, settings.gap_min)
+        cache[key] = result
+        return result
 
     def breaking_point_table(self, dfm_id: int, chamber: int) -> pd.DataFrame:
         """Per-light-on-period table for one chamber after its group's training
@@ -1655,29 +1783,32 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         fell in training, ``LickFree`` marks an event with no licks since the
         previous one ended, and ``RestingLevel`` is the well's per-minute
         median raw level at the onset (see :meth:`light_events_table`).
+        ``Counted`` says whether the event is one of the group's Breaking
+        Point (:meth:`group_break`).  The Yoked chamber's rows are the same
+        onsets with its own licks; it has no breaking point of its own.
 
         An onset is a light event beginning after training end; an event lit
-        across the training end belongs to training.  The details are
-        provisional (see the decided-direction notes in
-        ``docs/progressive-ratio-implementation.md``); what is kept from the R
-        port is the shape: ΔLicks per light period, read against time.
+        across the training end belongs to training.
         """
         dfm_id, chamber = int(dfm_id), int(chamber)
         role = self.role_of(dfm_id, chamber)
         paired = role.role == ROLE_PAIRED
-        cols = [*BREAKING_POINT_COLUMNS, *(LEDGER_COLUMNS if paired else ())]
+        cols = [*BREAKING_POINT_COLUMNS,
+                *((*LEDGER_COLUMNS, COUNTED_COLUMN) if paired else ())]
         dfm = self.dfms[dfm_id]
         gt = self.group_training(dfm_id, role.group)
         if not gt.complete:
             return pd.DataFrame(columns=cols)
         end = float(gt.training_end)
         if paired:
-            events = self.light_events_table(dfm_id, role.group)
-            test = events[events["Phase"] == TEST_LABEL]
+            test = self._test_events(dfm_id, role.group)
             out = pd.DataFrame({"Minutes": test["Minutes"].to_numpy(dtype=float),
                                 "CumLicks": test["CumLicks"].to_numpy(dtype=float)})
             for col in LEDGER_COLUMNS:
                 out[col] = test[col].to_numpy()
+            result = self.group_break(dfm_id, role.group)
+            out[COUNTED_COLUMN] = (result.counted if result is not None
+                                   else np.zeros(len(out), dtype=bool))
         else:
             mins = pd.to_numeric(dfm.lick_df["Minutes"], errors="coerce").to_numpy(dtype=float)
             well_a = self._sucrose_well(dfm, chamber)
@@ -1700,35 +1831,97 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
     def plot_breaking_point_dfm(self, dfm_id: int, *, base_font_size: float = 10.0,
                                 figsize: tuple[float, float] = (10.5, 6.0)):
         """ΔLicks per light-on period against minutes since training end, one
-        panel per chamber, role in the strip."""
+        panel per chamber, the role and the group's breaking point in the strip.
+
+        The break is marked on both chambers of a group: a dashed line at the
+        last light event the Breaking Point counts, and every onset past it —
+        or past the Test window — in grey.  On the paired panel a Lick-free
+        Light Event, which never counts, is a hollow red ring.  A censored
+        group has no line: it was still responding when its window ended.
+        """
         import plotnine as p9
 
         dfm_id = int(dfm_id)
-        frames = []
+        settings = self.break_settings()
+        before, after, free_label = "before the break", "after the break", "lick-free"
+        frames, breaks = [], []
         for chamber, df in self.breaking_point_dfm(dfm_id).items():
             if df.empty:
                 continue
-            tmp = df[["Minutes", "DeltaLicks"]].copy()
             r = self.role_of(dfm_id, chamber)
+            result = self.group_break(dfm_id, r.group, settings)
+            window = self._test_window(dfm_id, r.group, settings)
+            minutes = df["Minutes"].to_numpy(dtype=float)
+            ## A group auto-removal took out is drawn for reference only: its
+            ## light followed the sensor, so no break is marked on it.
             removed = (self.design.treatment_for(dfm_id, chamber) is None
                        and (dfm_id, chamber) in self._design_snapshot())
-            tmp["Chamber"] = (f"Chamber {chamber} ({r.role}, group {r.group})"
-                              + (" — excluded" if removed else ""))
-            frames.append(tmp)
+            marked = result is not None and not removed
+            if r.role == ROLE_PAIRED:
+                lick_free = df["LickFree"].to_numpy(dtype=bool)
+                counted = (df[COUNTED_COLUMN].to_numpy(dtype=bool) if marked
+                           else ~lick_free)
+                status = np.where(counted, before,
+                                  np.where(lick_free, free_label, after))
+            else:
+                late = np.zeros(minutes.size, dtype=bool)
+                if marked and not result.censored:
+                    late |= minutes > result.last_min
+                if marked and window is not None:
+                    late |= minutes > window
+                status = np.where(late, after, before)
+            label = f"Chamber {chamber} ({r.role}, group {r.group})"
+            if marked and r.role == ROLE_PAIRED:
+                label += f" — BP {pbp.format_count(result.count, result.censored)}"
+            if removed:
+                label += " — excluded"
+            frames.append(pd.DataFrame({
+                "Minutes": minutes,
+                "DeltaLicks": df["DeltaLicks"].to_numpy(dtype=float),
+                "Status": status, "Chamber": label}))
+            if marked and not result.censored:
+                breaks.append({"Chamber": label, "BreakMin": float(result.last_min)})
         if not frames:
             return p9.ggplot() + p9.labs(title=f"DFM {dfm_id} — no breaking-point data")
         data = pd.concat(frames, ignore_index=True)
-        data["Chamber"] = pd.Categorical(data["Chamber"],
-                                         categories=list(dict.fromkeys(data["Chamber"])),
-                                         ordered=True)
-        return (p9.ggplot(data, p9.aes("Minutes", "DeltaLicks"))
-                + p9.geom_line(size=0.5, color="#2166ac")
-                + p9.geom_point(size=1.6, color="#2166ac")
-                + p9.facet_wrap("~ Chamber", ncol=3)
+        order = list(dict.fromkeys(data["Chamber"]))
+        data["Chamber"] = pd.Categorical(data["Chamber"], categories=order, ordered=True)
+        dots = data[data["Status"] != free_label]
+        free = data[data["Status"] == free_label]
+        g = (p9.ggplot(data, p9.aes("Minutes", "DeltaLicks"))
+             + p9.geom_line(size=0.4, color="#9E9E9E"))
+        if breaks:
+            marks = pd.DataFrame(breaks)
+            marks["Chamber"] = pd.Categorical(marks["Chamber"], categories=order,
+                                              ordered=True)
+            g += p9.geom_vline(marks, p9.aes(xintercept="BreakMin"), linetype="dashed",
+                               color="#555555", size=0.5)
+        if not dots.empty:
+            g += p9.geom_point(dots, p9.aes(color="Status"), size=1.6)
+        if not free.empty:
+            g += p9.geom_point(free, shape="o", fill="none", color="#D62728", size=2.2,
+                               stroke=0.6)
+        return (g
+                + p9.scale_color_manual(values={before: "#2166ac", after: "#BDBDBD"})
+                + p9.facet_wrap("~ Chamber", ncol=3, scales="free_y")
                 + p9.labs(title=f"DFM {dfm_id} — ΔLicks per light-on period",
-                          x="Time since training end (min)", y="ΔLicks")
+                          caption=(f"Dashed: the break, the last light event counted "
+                                   f"(pause over {settings.gap_min:g} min).\n"
+                                   f"Grey: past the break.  Hollow red: lick-free, "
+                                   f"never counted.  BP n+: censored."),
+                          x="Time since training end (min)", y="ΔLicks", color="")
                 + p9.theme_bw(base_size=base_font_size)
-                + p9.theme(figure_size=figsize))
+                + p9.theme(figure_size=figsize, legend_position="bottom"))
+
+    def plot_still_responding(self, *, base_font_size: float = 10.0,
+                              figsize: tuple[float, float] = (6.5, 4.5)):
+        """The still-responding curve: per Treatment, the Kaplan-Meier fraction
+        of paired flies that reached each ratio, a censored fly as a tick
+        (:func:`pyflic.base.analytics.still_responding`)."""
+        from . import report_content as rc
+
+        return rc.still_responding_plot(self.breaking_point_summary(),
+                                        base_font_size=base_font_size, figsize=figsize)
 
     # ------------------------------------------------------------------
     # Summary text and the basic pipeline
@@ -1760,6 +1953,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         else:
             buf.append("  (all four wells of every group cleared together)")
         buf.extend(self._light_qc_summary_lines())
+        buf.extend(self._breaking_point_summary_lines())
         return text + "\n".join(buf) + "\n"
 
     # ------------------------------------------------------------------
@@ -1767,47 +1961,131 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
     # ------------------------------------------------------------------
 
     def breaking_point_summary(self) -> pd.DataFrame:
-        """One row per Chamber Group in the analysis (both chambers present,
-        training complete): the paired fly's **breaking point**, the number of
-        Test light events it earned — the last ratio it completed.
+        """One row per Chamber Group in the analysis — both chambers in the
+        design and training complete — as ``analysis/pr_breaking_point.csv``.
 
-        Also: ``LargestRequirement`` (the most Sucrose Well licks credited to a
-        single Test light event), ``TestMinutes`` (Test time the recording
-        allowed, which differs by group because training end does) and
-        ``LastLightEventMin`` (minutes after training end of the last light
-        event).  A group the light QC excluded is not here; one it failed but
-        kept (``exclude_failed_pr_groups: false``) is, with ``LightQC``.
+        ``BreakingPoint`` is the paired fly's lick-backed Test Light Events
+        before the first gap longer than ``pr_break_gap_min`` (ADR-0014);
+        ``BreakMin`` the minute since training end of the last one counted (0
+        when none); ``Censored`` true when no such gap came before the Test
+        window ended, so the count is a lower bound; ``TestMinutes`` the window
+        the rule saw (recording end minus training end, capped at
+        ``pr_test_window_min``); ``LargestRequirement`` the most Sucrose Well
+        licks credited to one counted event, descriptive only;
+        ``LickFreeLightEvents`` and ``LightQC`` the group's light QC count and
+        flags.  A group the light QC excluded is not here; one it failed but
+        kept (``exclude_failed_pr_groups: false``) is, whole, with its flags.
         """
         factors = list(self.design_factors or [])
-        cols = ["Treatment", *factors, "DFM", "Group", "PairedChamber", "BreakingPoint",
-                "LargestRequirement", "TestMinutes", "LastLightEventMin", "LightQC"]
-        diff = self.paired_yoked_diff()
-        if diff.empty:
-            return pd.DataFrame(columns=cols)
-        test = diff[diff["Facet"] == TEST_LABEL]
+        cols = ["Treatment", *factors, *BREAKING_POINT_SUMMARY_COLUMNS]
+        settings = self.break_settings()
         by_group = self._light_qc_by_group()
         rows = []
-        for _, r in test.iterrows():
-            key = (int(r["DFM"]), int(r["Group"]))
-            events = self.light_events_table(*key)
-            earned = events[events["Phase"] == TEST_LABEL]
-            gt = self.group_training(*key)
-            end = self._recording_end(self.dfms[key[0]])
-            row = {"Treatment": r["Treatment"]}
-            for f in factors:
-                row[f] = r.get(f, "")
-            row.update({
-                "DFM": key[0], "Group": key[1], "PairedChamber": int(r["PairedChamber"]),
-                "BreakingPoint": int(len(earned)),
-                "LargestRequirement": (int(earned["LicksSincePrev"].max())
-                                       if len(earned) else 0),
-                "TestMinutes": float(end - float(gt.training_end)),
-                "LastLightEventMin": (float(earned["Minutes"].max())
-                                      if len(earned) else np.nan),
-                "LightQC": by_group[key]["Verdict"],
-            })
+        for dfm_id in sorted(self.dfms):
+            for group, pair in CHAMBER_GROUPS.items():
+                if any(self.design.treatment_for(dfm_id, c) is None for c in pair):
+                    continue
+                result = self.group_break(dfm_id, group, settings)
+                if result is None:
+                    continue
+                gt = self.group_training(dfm_id, group)
+                credited = self._test_events(dfm_id, group)["LicksSincePrev"] \
+                    .to_numpy(dtype=float)[result.counted]
+                qc = by_group.get((int(dfm_id), int(group)), {})
+                rows.append({
+                    "Treatment": self.design.treatment_for(dfm_id, gt.paired_chamber),
+                    "DFM": int(dfm_id), "Chamber": int(gt.paired_chamber),
+                    "Group": int(group), "PairedChamber": int(gt.paired_chamber),
+                    "BreakingPoint": int(result.count),
+                    "BreakMin": float(result.last_min),
+                    "Censored": bool(result.censored),
+                    "TestMinutes": float(self._test_window(dfm_id, group, settings)),
+                    "LargestRequirement": int(credited.max()) if credited.size else 0,
+                    "LickFreeLightEvents": qc.get("LickFreeEvents", np.nan),
+                    "LightQC": qc.get("Flags", ""),
+                })
+        if not rows:
+            return pd.DataFrame(columns=cols)
+        return self._append_factor_columns(pd.DataFrame(rows))[cols].reset_index(drop=True)
+
+    def breaking_point_sensitivity(self, gaps: Sequence[float] | None = None) -> pd.DataFrame:
+        """Every group of :meth:`breaking_point_summary` under other values of
+        ``pr_break_gap_min``: ``DFM, Group`` and, per gap, ``BP_<gap>`` (the
+        Breaking Point) and ``Censored_<gap>``.  By default the gaps are
+        :data:`pyflic.base.pr_breaking_point.SENSITIVITY_GAPS_MIN` and the
+        configured one."""
+        settings = self.break_settings()
+        if gaps is None:
+            gaps = sorted({*pbp.SENSITIVITY_GAPS_MIN, settings.gap_min})
+        gaps = [float(g) for g in gaps]
+        cols = ["DFM", "Group",
+                *(c for g in gaps for c in (f"BP_{g:g}", f"Censored_{g:g}"))]
+        rows = []
+        for r in self.breaking_point_summary().itertuples(index=False):
+            row: dict[str, Any] = {"DFM": int(r.DFM), "Group": int(r.Group)}
+            for g in gaps:
+                result = self.group_break(r.DFM, r.Group, settings.with_gap(g))
+                row[f"BP_{g:g}"] = int(result.count)
+                row[f"Censored_{g:g}"] = bool(result.censored)
             rows.append(row)
         return pd.DataFrame(rows, columns=cols)
+
+    def write_breaking_point(self, path: str | Path | None = None) -> Path:
+        """Write ``analysis/pr_breaking_point.csv`` — one row per Chamber Group
+        (:meth:`breaking_point_summary`), which a Project stacks."""
+        if path is None:
+            if self.analysis_dir is None:
+                raise ValueError("path must be provided when no experiment_dir is set.")
+            path = self.analysis_dir / "pr_breaking_point.csv"
+        out = Path(path).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        self.breaking_point_summary().to_csv(out, index=False, na_rep="NA")
+        return out
+
+    def breaking_point_lines(self) -> list[str]:
+        """The breaking point by chamber group and its sensitivity to
+        ``pr_break_gap_min`` as plain text — for ``summary.txt`` and the
+        Script Editor's log.  ``+`` marks a censored count."""
+        settings = self.break_settings()
+        summary = self.breaking_point_summary()
+        lines = [f"Settings: {settings.describe()}", ""]
+        if summary.empty:
+            return lines + ["(no chamber group in the analysis has a Test phase)"]
+        show = pd.DataFrame({
+            "DFM": summary["DFM"], "Group": summary["Group"],
+            "Paired": summary["PairedChamber"], "Treatment": summary["Treatment"],
+            "BreakingPoint": [pbp.format_count(c, x) for c, x
+                              in zip(summary["BreakingPoint"], summary["Censored"])],
+            "BreakMin": [f"{v:.1f}" for v in summary["BreakMin"]],
+            "TestMin": [f"{v:.1f}" for v in summary["TestMinutes"]],
+            "LargestReq": summary["LargestRequirement"],
+            "LightQC": [_light_qc_verdict_text(f) for f in summary["LightQC"]],
+        })
+        lines.append(show.to_string(index=False))
+        sens = self.breaking_point_sensitivity()
+        table = pd.DataFrame({"DFM": sens["DFM"], "Group": sens["Group"]})
+        for col in [c for c in sens.columns if c.startswith("BP_")]:
+            gap = col[3:]
+            head = f"gap {gap}" + ("*" if float(gap) == settings.gap_min else "")
+            table[head] = [pbp.format_count(c, x) for c, x
+                           in zip(sens[col], sens[f"Censored_{gap}"])]
+        lines += ["", "Breaking point at other gaps (minutes; * = pr_break_gap_min):",
+                  table.to_string(index=False)]
+        censored = int(summary["Censored"].astype(bool).sum())
+        if censored:
+            lines += ["", f"{censored} of {len(summary)} chamber group(s) censored: still "
+                          f"responding when the Test window ended, so the count is a "
+                          f"lower bound."]
+        return lines
+
+    def _breaking_point_summary_lines(self) -> list[str]:
+        return ["", "Progressive ratio breaking point",
+                "--------------------------------",
+                "The paired fly's lick-backed Test light events before its first pause",
+                "longer than pr_break_gap_min; a lick-free light event neither counts",
+                "nor ends a pause.  '+' marks a censored count: no such pause came",
+                "before the Test window ended, so the count is a lower bound.",
+                *self.breaking_point_lines(), ""]
 
     # ------------------------------------------------------------------
     # Experiment report hooks (pyflic.base.pdf_report)
@@ -1976,13 +2254,16 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         """Replaces the layout's results: the per-treatment plots of a two-well
         experiment pool each paired fly with its own yoked control.  In their
         place — the Cumulative Difference Curve, the Paired-Yoked Difference in
-        the Test phase, and the breaking point."""
+        the Test phase (between treatments and against zero), and the breaking
+        point (ADR-0014)."""
         from . import report_content as rc
         from . import report_layout as rl
-        from .analytics import treatment_comparisons
+        from .analytics import breaking_point_comparisons, treatment_comparisons, zero_tests
 
         names = self.well_names or {}
         well_a = names.get("A") or "well A"
+        settings = self.break_settings()
+        half = (rl.CONTENT_W - 0.25) / 2
 
         def dot(frame, column, label, hline=None):
             return lambda: rc.dot_plot(frame, column, y_label=label,
@@ -2002,7 +2283,12 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             rl.Heading("Paired − yoked difference, Test phase", level=2),
             rl.Paragraph(
                 "One point per chamber group: the paired fly's value minus its yoked "
-                "partner's over the Test phase.  Zero is the null."),
+                "partner's over the Test phase.  Zero is the null.  The first table asks "
+                "whether treatments differ, the second whether the difference is non-zero "
+                f"within each treatment.  Sucrose persistence is the time from training end "
+                f"to a fly's last {well_a} feeding event before a pause longer than "
+                f"{settings.gap_min:g} minutes; where either fly was still feeding when "
+                f"the recording ended, the difference is one of lower bounds."),
         ]
         if test.empty:
             blocks.append(rl.Callout("No chamber group has both chambers and a Test phase "
@@ -2014,52 +2300,68 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 rl.Plot(dot(test, "dPI", rc.metric_label("dPI", names), 0.0),
                         title=rc.metric_label("dPI", names)),
             ], height=3.0))
+            if "dPersistA" in test.columns and test["dPersistA"].notna().any():
+                blocks.append(rl.PlotRow([
+                    rl.Plot(dot(test, "dPersistA", rc.metric_label("dPersistA", names), 0.0),
+                            title=rc.metric_label("dPersistA", names), width=half),
+                ], height=3.0))
             if options.include_comparison:
-                rows = treatment_comparisons(
-                    [(TEST_LABEL, test)],
-                    ["dLicksA", "dLicksB", "dEventsA", "dPI", "dMedDurationA"])
+                metrics = list(DIFF_REPORT_METRICS)
+                rows = treatment_comparisons([(TEST_LABEL, test)], metrics)
                 blocks += rc.stats_table(rows, caption="Treatment comparisons: paired − "
                                                        "yoked difference, Test phase",
                                          well_names=names, show_phase=False)
+                blocks += rc.zero_test_table(
+                    zero_tests([(TEST_LABEL, test)], metrics),
+                    caption="Paired − yoked difference against zero, per treatment, "
+                            "Test phase", well_names=names)
 
         summary = self.breaking_point_summary()
+        window = ("" if settings.test_window_min is None else
+                  f"  Every Test window is capped at {settings.test_window_min:g} minutes "
+                  f"(pr_test_window_min).")
         blocks += [
             rl.Heading("Breaking point", level=2),
             rl.Paragraph(
-                "The breaking point is the number of Test light events a paired fly earned "
-                "— the last ratio it completed.  Test phases differ in length because "
-                "training ends at a different time in every group, so the table gives the "
-                "Test minutes the recording allowed, the largest single requirement met "
-                "(licks credited to one light event) and when the last light event came."),
+                f"The breaking point is the number of lick-backed Test light events the "
+                f"paired fly completed before its first pause longer than "
+                f"{settings.gap_min:g} minutes (pr_break_gap_min); a lick-free light event "
+                f"neither counts nor ends a pause.  A group still responding when its Test "
+                f"window ended is censored: its count is a lower bound, drawn open, and the "
+                f"curve and the log-rank test treat it so.  The yoked fly has no breaking "
+                f"point: its light is its partner's.{window}"),
         ]
         if summary.empty:
             blocks.append(rl.Callout("No chamber group in the analysis has a Test phase.",
                                      tone="warning"))
         else:
             blocks.append(rl.PlotRow([
-                rl.Plot(dot(summary, "BreakingPoint", "Test light events earned"),
+                rl.Plot(lambda: rc.still_responding_plot(summary, base_font_size=8.5),
+                        title="Still responding"),
+                rl.Plot(lambda: rc.censored_dot_plot(summary, "BreakingPoint",
+                                                     y_label="Light events earned",
+                                                     factors=self.design_factors),
                         title="Breaking point by treatment"),
-                rl.Plot(dot(summary, "LargestRequirement",
-                            f"{well_a} licks, one light event"),
-                        title="Largest requirement met"),
-            ], height=3.0))
+            ], height=3.2))
             if options.include_comparison:
-                rows = treatment_comparisons([(TEST_LABEL, summary)],
-                                             ["BreakingPoint", "LargestRequirement"])
-                for r in rows:
-                    if r["metric"] == "LargestRequirement":
-                        r["metric"] = f"Largest requirement met ({well_a} licks)"
-                blocks += rc.stats_table(rows, caption="Treatment comparisons: breaking "
-                                                       "point", well_names=names,
-                                         show_phase=False)
-            view = summary.rename(columns={
-                "PairedChamber": "Paired chamber", "BreakingPoint": "Breaking point",
-                "LargestRequirement": "Largest requirement",
-                "TestMinutes": "Test minutes", "LastLightEventMin": "Last light event (min)",
-                "LightQC": "Light QC"})
-            blocks.append(rl.Table(view, caption="Breaking point by chamber group",
-                                   formats={"Test minutes": "{:.0f}",
-                                            "Last light event (min)": "{:.0f}"},
+                blocks += rc.stats_table(breaking_point_comparisons(summary),
+                                         caption="Treatment comparisons: breaking point",
+                                         well_names=names, show_phase=False)
+            view = pd.DataFrame({
+                "DFM": summary["DFM"], "Group": summary["Group"],
+                "Treatment": summary["Treatment"],
+                "Paired chamber": summary["PairedChamber"],
+                "Breaking point": [pbp.format_count(c, x) for c, x
+                                   in zip(summary["BreakingPoint"], summary["Censored"])],
+                "Break (min)": summary["BreakMin"],
+                "Test minutes": summary["TestMinutes"],
+                "Largest requirement": summary["LargestRequirement"],
+                "Light QC": [_light_qc_verdict_text(f) for f in summary["LightQC"]],
+            })
+            blocks.append(rl.Table(view, caption="Breaking point by chamber group "
+                                                 "(+: censored, a lower bound)",
+                                   formats={"Break (min)": "{:.0f}",
+                                            "Test minutes": "{:.0f}"},
                                    status={"Light QC": rl.tone_of}))
         for dfm_id in sorted(self.dfms):
             blocks.append(rl.Plot(
@@ -2067,7 +2369,8 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 height=4.4, title=f"Licks per light-on period — DFM {dfm_id}",
                 caption="ΔLicks between successive light onsets after training end, one "
                         "panel per chamber (both roles; groups excluded by the light QC "
-                        "included for reference)."))
+                        "included for reference).  Dashed: the break; grey: past it; "
+                        "hollow red: lick-free light events, never counted."))
         return blocks
 
     def execute_basic_analysis(
@@ -2104,6 +2407,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         print(f"  Done → {light['pr_light_qc']}", flush=True)
         for line in self.light_qc_lines():
             print(f"  {line}", flush=True)
+        print("[PR] Breaking point...", flush=True)
+        result["pr_breaking_point"] = self.write_breaking_point()
+        print(f"  Done → {result['pr_breaking_point']}", flush=True)
         print("[PR] Figures...", flush=True)
         figs = self.write_pr_figures(dpi=dpi)
         result.update(figs)
@@ -2115,3 +2421,27 @@ def _truthy(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in ("", "0", "false", "no", "off")
     return bool(value)
+
+
+def _flag(value) -> bool | None:
+    """A boolean cell that may be missing — ``PersistACensored`` on a Training
+    row — as ``None`` when missing, else its truth."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return _truthy(value)
+
+
+def _light_qc_verdict_text(flags: Any) -> str:
+    """A group's light QC flags as one table cell whose first word carries the
+    tone: ``ok``, ``warning: …`` or ``failed: …``."""
+    names = [f for f in str(flags if flags is not None else "").split(", ")
+             if f and f.lower() != "nan"]
+    if not names:
+        return "ok"
+    failing = any(f in lqc.FAILING_FLAGS for f in names)
+    return ("failed: " if failing else "warning: ") + ", ".join(names)

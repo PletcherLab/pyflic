@@ -481,6 +481,30 @@ def _fmt_number(value: Any) -> str:
     return str(int(f)) if f == int(f) else str(f)
 
 
+def _number_or_text(text: str) -> Any:
+    """*text* as an int when it is a whole number and a float otherwise — or
+    the text itself when it is no number at all, so the type's validation
+    names the mistake instead of the value silently vanishing."""
+    try:
+        value = float(text)
+    except ValueError:
+        return text
+    return int(value) if value.is_integer() else value
+
+
+def _switch_value(value: Any) -> bool | None:
+    """A yaml switch as True / False, or None when unset or unreadable."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("true", "yes", "on", "1"):
+            return True
+        if s in ("false", "no", "off", "0"):
+            return False
+    return None
+
+
 class _WestTabBar(QTabBar):
     """A left-hand tab bar whose labels read horizontally.
 
@@ -663,6 +687,14 @@ class DFMWidget(QWidget):
             "Paired chamber per chamber group", Category.LOAD,
             subtitle="Progressive Ratio: the other chamber of each group is "
                      "yoked. Well A is the sucrose well; PI Direction is its side.")
+        try:
+            from ..help import HelpButton
+
+            self._pr_card.add_title_widget(HelpButton(
+                "concepts-progressive-ratio#chamber-groups-paired-and-yoked",
+                self._pr_card, tooltip="Chamber groups, paired and yoked"))
+        except Exception:  # noqa: BLE001 - help is optional, the editor is not
+            pass
         pr_row = QHBoxLayout()
         pr_row.setContentsMargins(0, 0, 0, 0)
         self._paired_combos: list[QComboBox] = []
@@ -1307,6 +1339,39 @@ class FLICConfigEditor(QMainWindow):
         self._max_events_row = self._exp_form.rowCount()
         self._exp_form.addRow("Max Events:", self._max_events_edit)
 
+        ## Progressive Ratio's own constants — the switches that decide which
+        ## failed chamber groups leave, the light QC's thresholds and the
+        ## breaking point's rule — shown only for a type that carries them.
+        ## The same contract as the cutoffs above (ADR-0011): the type's
+        ## default is the placeholder, and only what the experimenter types or
+        ## picks reaches ``constants:``.  The rows come from the description
+        ## the Project Design dialog and the type's validation also read.
+        from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
+
+        pr_header = QLabel("Progressive Ratio  (light QC and breaking point)")
+        pr_header.setObjectName("PyflicSectionDivider")
+        self._pr_header_row = self._exp_form.rowCount()
+        self._exp_form.addRow(pr_header)
+        self._pr_constant_widgets: dict[str, QWidget] = {}
+        self._pr_constant_rows: dict[str, int] = {}
+        for field in PR_CONSTANT_FIELDS:
+            if field.group == "switch":
+                widget = QComboBox()
+                widget.addItem("default", None)
+                widget.addItem(field.choices[0], True)
+                widget.addItem(field.choices[1], False)
+                widget.currentIndexChanged.connect(self._refresh_badges)
+                label = field.short_label or field.label
+            else:
+                widget = QLineEdit()
+                widget.textChanged.connect(self._refresh_badges)
+                label = field.label
+            widget.setMaximumWidth(260)
+            widget.setToolTip(field.tooltip)
+            self._pr_constant_rows[field.key] = self._exp_form.rowCount()
+            self._exp_form.addRow(f"{label}:", widget)
+            self._pr_constant_widgets[field.key] = widget
+
         exp_card.add_body(self._exp_form)
         ## Top-aligned: in a plain hbox the shorter of the two cards is
         ## stretched to the taller one's height, which spreads its title away
@@ -1551,6 +1616,57 @@ class FLICConfigEditor(QMainWindow):
             else:
                 widget.setPlaceholderText(
                     f"{_fmt_number(value)}  (default for {item.display_name})")
+        self._refresh_pr_constant_rows()
+
+    def _pr_constants_apply(self) -> bool:
+        """Whether the selected type carries Progressive Ratio's constants."""
+        from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
+
+        defaults = set(self._current_type().default_constants or {})
+        return bool(defaults & {f.key for f in PR_CONSTANT_FIELDS})
+
+    def _refresh_pr_constant_rows(self) -> None:
+        """Show the Progressive Ratio rows for a type that has them, with the
+        type's defaults as placeholders and as the switches' "default"
+        entry — never as values (ADR-0011)."""
+        if not hasattr(self, "_pr_constant_widgets"):
+            return
+        from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
+
+        item = self._current_type()
+        shown = self._pr_constants_apply()
+        defaults = item.default_constants or {}
+        self._exp_form.setRowVisible(self._pr_header_row, shown)
+        for field in PR_CONSTANT_FIELDS:
+            self._exp_form.setRowVisible(self._pr_constant_rows[field.key], shown)
+            widget = self._pr_constant_widgets[field.key]
+            default = defaults.get(field.key)
+            if field.group == "switch":
+                widget.setItemText(0, "default" if default is None else
+                                   "default: " + field.choices[0 if default else 1])
+            elif default is None:
+                widget.setPlaceholderText(f"{field.blank or 'no default'}  (default)")
+            else:
+                widget.setPlaceholderText(
+                    f"{_fmt_number(default)}  (default for {item.display_name})")
+
+    def _load_pr_constants(self, constants: dict[str, Any]) -> None:
+        """Fill the Progressive Ratio rows from a ``constants:`` block: what it
+        states shows as a value, what it leaves out stays blank (the type's
+        default).  A value that is no number is shown as written, so saving
+        keeps it and the validation names it."""
+        from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
+
+        for field in PR_CONSTANT_FIELDS:
+            widget = self._pr_constant_widgets[field.key]
+            value = constants.get(field.key)
+            if field.group == "switch":
+                state = _switch_value(value)
+                widget.blockSignals(True)
+                widget.setCurrentIndex(0 if state is None else (1 if state else 2))
+                widget.blockSignals(False)
+            else:
+                widget.setText("" if value is None else _fmt_number(value))
 
     def _update_well_names_visibility(self) -> None:
         two_well = self._chamber_size() == 2
@@ -1835,10 +1951,24 @@ class FLICConfigEditor(QMainWindow):
                 constants[key] = float(text)
             except ValueError:
                 pass
-        ## A constant this form has no field for — a type's own, such as
-        ## Progressive Ratio's require_training_complete and light-QC
-        ## thresholds — was typed into the yaml by hand; keep it on save.
-        managed = {key for _widget, key in self._threshold_fields()}
+        from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
+
+        if self._pr_constants_apply():
+            for field in PR_CONSTANT_FIELDS:
+                widget = self._pr_constant_widgets[field.key]
+                if field.group == "switch":
+                    value = widget.currentData()
+                    if value is not None:
+                        constants[field.key] = bool(value)
+                    continue
+                text = widget.text().strip()
+                if text:
+                    constants[field.key] = _number_or_text(text)
+        ## A constant this form has no field for was typed into the yaml by
+        ## hand; keep it on save.  The Progressive Ratio rows are managed like
+        ## the cutoffs: a cleared row, or another type, drops its key.
+        managed = ({key for _widget, key in self._threshold_fields()}
+                   | {field.key for field in PR_CONSTANT_FIELDS})
         loaded = (self._loaded_raw.get("global") or {}).get("constants") or {}
         for key, value in loaded.items():
             if key not in managed:
@@ -1943,6 +2073,12 @@ class FLICConfigEditor(QMainWindow):
                        self._max_dur_edit, self._max_events_edit):
             widget.setEnabled(not governed)
             widget.setToolTip(reason)
+        from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
+
+        for field in PR_CONSTANT_FIELDS:
+            widget = self._pr_constant_widgets[field.key]
+            widget.setEnabled(not governed)
+            widget.setToolTip(reason or field.tooltip)
         self._global_params.set_read_only(governed, reason=reason)
         self._factors_widget.set_read_only(governed, reason=reason)
         ## Re-assert the Experiment Type's claim on the layout: the loop above
@@ -2051,6 +2187,7 @@ class FLICConfigEditor(QMainWindow):
         ):
             val = constants.get(key)
             getattr(self, attr).setText("" if val is None else str(val))
+        self._load_pr_constants(constants)
 
         # Experimental design factors
         factors_node = global_cfg.get("experimental_design_factors") or {}
@@ -2123,6 +2260,7 @@ class FLICConfigEditor(QMainWindow):
         self._min_raw_licks_edit.clear()
         self._max_dur_edit.clear()
         self._max_events_edit.clear()
+        self._load_pr_constants({})
         self._transform_licks_check.setChecked(True)
 
         self._experiment_type_combo.blockSignals(True)

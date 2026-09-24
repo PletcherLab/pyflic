@@ -45,17 +45,18 @@ chambers 1+2, 3+4 and 5+6 — and the other chamber of the group is yoked:
 Exactly one chamber per group, and both chambers of a group carry the same treatment;
 the loader and `pyflic lint` refuse anything else. Well A is always the sucrose well, so
 there is no separate side key: `pi_direction` places it, as in any two-well experiment.
-See [Experiment types](concepts-experiment-types.md).
+The Config Editor shows the three pickers on each DFM tab. See
+[Progressive Ratio experiments](concepts-progressive-ratio.md#chamber-groups-paired-and-yoked).
 
 ## How chambers map to wells
 
-Chamber numbering depends on `chamber_size`, and getting this wrong silently reinterprets
-your whole plate:
+Chamber numbering depends on the chamber layout, which the Experiment Type fixes (or a
+Custom experiment states):
 
-| `chamber_size` | Chambers per DFM | Chamber *n* covers |
+| Chamber layout | Chambers per DFM | Chamber *n* covers |
 |---|---|---|
-| `1` | 12 | well *n* |
-| `2` | 6 | wells 2*n*−1 and 2*n* — so chamber 1 is W1+W2, chamber 2 is W3+W4, … |
+| `single_well` | 12 | well *n* |
+| `two_well` | 6 | wells 2*n*−1 and 2*n* — so chamber 1 is W1+W2, chamber 2 is W3+W4, … |
 
 A two-well configuration listing a chamber `7` is therefore an error: there are only six.
 
@@ -71,7 +72,7 @@ rather than invisible.
 
 ## Excluding chambers
 
-Exclusions live in **`remove_chambers.csv`** in the project directory, not in the YAML.
+Exclusions live in **`remove_chambers.csv`** in the experiment directory, not in the YAML.
 
 ```csv
 group,dfm_id,chamber,note
@@ -89,9 +90,10 @@ Which group applies depends on how you load:
 | How you load | Group applied |
 |---|---|
 | `load_experiment_yaml(..., exclusion_group="general")` | the one you name |
-| The hub's **Remove chambers** button | `general` |
+| The Hub, loading a Project's member | the design's `exclusion_group:` (default `general`) |
+| The Hub, loading a standalone experiment | `general` |
 | The `remove_chambers` script step | the step's `group:`, defaulting to the **script's name** |
-| QC Viewer, **Save removed chambers…** | saves the current selection to any group you name |
+| QC Viewer, **Save Exclusions…** | saves the current selection to any group you name |
 
 That script-step default is worth internalising: a script named `Standard Analysis` with a
 bare `remove_chambers` step applies the group `Standard Analysis`. It is what lets one CSV
@@ -113,10 +115,10 @@ and clears the feeding-summary cache, so everything computed afterwards reflects
 filtered set.
 
 It does not run at load. Basic analysis runs it once, before writing the summary, so the
-Hub's *Basic analysis*, *Analyze all* and a Batch Run all apply it; the QC Viewer's *Auto
-Filter Chambers* and the Python API run it on demand. For a Progressive Ratio experiment
+Hub's *Basic analysis*, *Analyze all* and a Batch Run all apply it; the QC Viewer's **Auto
+Filter** and the Python API run it on demand. For a Progressive Ratio experiment
 it also takes out the chamber groups that fail the light QC — see
-[Experiment types](concepts-experiment-types.md#progressive-ratio).
+[Progressive Ratio experiments](concepts-progressive-ratio.md#light-qc).
 
 ---
 

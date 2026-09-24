@@ -308,3 +308,15 @@ def test_the_preview_is_fitted_to_its_pane_and_never_upscaled(editor, app):
     assert shown.width() <= full.width()
     assert (editor.preview_scroll.horizontalScrollBarPolicy()
             == Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+
+def test_the_toolbar_ends_with_help(app):
+    from pyflic.help.button import HelpButton
+
+    window = PlotEditorWindow()
+    try:
+        refs = [b.ref for b in window.findChildren(HelpButton)]
+        assert "app-plot-editor" in refs
+        assert "app-plot-editor#spec-and-style" in refs
+    finally:
+        window.close()

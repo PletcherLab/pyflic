@@ -26,6 +26,12 @@ import yaml
 
 from . import experiment_types, windowing
 
+#: The Paired-Yoked Difference columns the pooled statistics test, between
+#: treatments and against zero, when a Member's table has them.
+DIFF_TEST_METRICS: tuple[str, ...] = (
+    "dLicksA", "dLicksB", "dEventsA", "dEventsB", "dPI", "dMedDurationA", "dPersistA",
+)
+
 PROJECT_FILENAME = "project.yaml"
 #: The per-Experiment config.  A Project never has one of its own: the shared
 #: design lives in ``project.yaml`` and each Member carries this file.
@@ -830,6 +836,21 @@ class Project:
                 frames.append(df)
         return pd.concat(frames, ignore_index=True) if frames else None
 
+    def combined_breaking_point_frame(self):
+        """The stacked Members' ``pr_breaking_point.csv`` (Progressive Ratio
+        only; ADR-0014), with an ``Experiment`` first column, or ``None`` when
+        no Member has one — a Member analysed before the table existed has
+        none, and is not guessed at."""
+        frames = []
+        for name in self.member_names:
+            path = os.path.join(self.member_dir(name), "analysis",
+                                "pr_breaking_point.csv")
+            if os.path.isfile(path):
+                df = pd.read_csv(path)
+                df.insert(0, "Experiment", name)
+                frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else None
+
     def flagged_groups(self, light_qc: pd.DataFrame | None = None) -> pd.DataFrame | None:
         """Every Chamber Group the light QC flagged, across Members
         (:func:`flagged_light_qc_groups`), or ``None`` when no Member has a
@@ -900,6 +921,11 @@ class Project:
         if light_qc is not None:
             path = os.path.join(self.analysis_path, f"{self.name}_LightQC.csv")
             light_qc.to_csv(path, index=False, na_rep="NA")
+            written.append(path)
+        breaking = self.combined_breaking_point_frame()
+        if breaking is not None:
+            path = os.path.join(self.analysis_path, f"{self.name}_BreakingPoint.csv")
+            breaking.to_csv(path, index=False, na_rep="NA")
             written.append(path)
         path = os.path.join(self.analysis_path, f"{self.name}_Excluded.csv")
         self.aggregated_exclusions().to_csv(path, index=False, na_rep="NA")
@@ -997,9 +1023,36 @@ class Project:
             list(dict.fromkeys(diff["Facet"].astype(str)))
         frames = [(label, diff[diff["Facet"].astype(str) == label])
                   for label in facets]
-        metrics = [c for c in ("dLicksA", "dLicksB", "dEventsA", "dEventsB",
-                               "dPI", "dMedDurationA") if c in diff.columns]
+        metrics = [c for c in DIFF_TEST_METRICS if c in diff.columns]
         return self._compare_frames(frames, metrics)
+
+    def diff_zero_rows(self, diff: pd.DataFrame | None) -> list[dict]:
+        """Per treatment, is the pooled Paired-Yoked Difference non-zero?  One
+        observation per Chamber Group, for the type's report Facets
+        (:func:`pyflic.base.analytics.zero_tests`): the paired t-test and the
+        signed-rank test, with the mixed model's intercept when more than one
+        Member is pooled."""
+        if diff is None or diff.empty:
+            return []
+        from .analytics import zero_tests
+
+        facets = self.experiment_type.report_facets() or \
+            list(dict.fromkeys(diff["Facet"].astype(str)))
+        frames = [(label, diff[diff["Facet"].astype(str) == label])
+                  for label in facets]
+        metrics = [c for c in DIFF_TEST_METRICS if c in diff.columns]
+        return zero_tests(frames, metrics, mixed_p0=self._mixed_p0)
+
+    def breaking_point_rows(self, breaking: pd.DataFrame | None) -> list[dict]:
+        """Treatment comparisons of the pooled Breaking Point, one observation
+        per Chamber Group: the pooled test and the mixed model as for any
+        metric, plus the log-rank test that honours censoring
+        (:func:`pyflic.base.analytics.breaking_point_comparisons`)."""
+        if breaking is None or breaking.empty:
+            return []
+        from .analytics import breaking_point_comparisons
+
+        return breaking_point_comparisons(breaking, mixed_p=self._mixed_p)
 
     def _compare_frames(self, frames: list[tuple[str, pd.DataFrame]],
                         metrics: list[str]) -> list[dict]:
@@ -1045,6 +1098,38 @@ class Project:
                         "Value ~ is_b", sub, groups=sub["Experiment"],
                     ).fit(reml=True, method="lbfgs")
             return float(fit.pvalues["is_b"])
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _mixed_p0(data: pd.DataFrame) -> float | None:
+        """Intercept p-value of a linear mixed model on one treatment's
+        Paired-Yoked Differences: is the mean difference non-zero once
+        between-member and between-device variation is allowed for?  DFM
+        nested within Experiment, as in :meth:`_mixed_p`; ``None`` when the
+        fit fails or only one Member is present."""
+        try:
+            import warnings
+
+            import statsmodels.formula.api as smf
+
+            sub = data.copy()
+            if sub["Experiment"].nunique() < 2:
+                return None
+            sub["DFM"] = sub["DFM"].astype(str)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                try:
+                    fit = smf.mixedlm(
+                        "Value ~ 1", sub, groups=sub["Experiment"],
+                        vc_formula={"DFM": "0 + C(DFM)"},
+                    ).fit(reml=True, method="lbfgs")
+                except Exception:  # noqa: BLE001
+                    fit = smf.mixedlm(
+                        "Value ~ 1", sub, groups=sub["Experiment"],
+                    ).fit(reml=True, method="lbfgs")
+            p = float(fit.pvalues["Intercept"])
+            return p if p == p else None
         except Exception:  # noqa: BLE001
             return None
 
@@ -1099,19 +1184,39 @@ class Project:
         out.append("")
         out.extend(self._flagged_groups_lines())
 
-        def _table(table_rows: list[dict]) -> list[str]:
+        def _table(table_rows: list[dict], *, logrank: bool = False) -> list[str]:
             header = (f"{'Metric':<14}{'Facet':<16}{'A':<12}{'B':<12}"
                       f"{'nA':>4}{'nB':>5}{'diff':>10}{'p_pooled':>11}"
-                      f"{'p_mixed':>10}")
+                      f"{'p_mixed':>10}" + (f"{'p_logrank':>11}" if logrank else ""))
             lines = [header, "-" * len(header)]
             for row in table_rows:
                 p_mixed = ("      n/a" if row["p_mixed"] is None
                            else f"{row['p_mixed']:>10.4g}")
+                p_logrank = ""
+                if logrank:
+                    p_logrank = ("        n/a" if row.get("p_logrank") is None
+                                 else f"{row['p_logrank']:>11.4g}")
                 star = " *" if row["significant"] else ""
                 lines.append(
                     f"{row['metric']:<14}{row['phase']:<16}{row['a']:<12}"
                     f"{row['b']:<12}{row['n_a']:>4}{row['n_b']:>5}"
-                    f"{row['diff']:>10.4g}{row['p_pooled']:>11.4g}{p_mixed}{star}")
+                    f"{row['diff']:>10.4g}{row['p_pooled']:>11.4g}{p_mixed}"
+                    f"{p_logrank}{star}")
+            return lines
+
+        def _zero_table(table_rows: list[dict]) -> list[str]:
+            header = (f"{'Metric':<14}{'Facet':<10}{'Treatment':<14}{'n':>4}"
+                      f"{'mean':>11}{'sem':>10}{'p_t':>10}{'p_wilcoxon':>12}"
+                      f"{'p_mixed':>10}")
+            lines = [header, "-" * len(header)]
+            for row in table_rows:
+                p_w = "n/a" if row["p_wilcoxon"] is None else f"{row['p_wilcoxon']:.4g}"
+                p_m = "n/a" if row["p_mixed"] is None else f"{row['p_mixed']:.4g}"
+                star = " *" if row["significant"] else ""
+                lines.append(
+                    f"{row['metric']:<14}{row['phase']:<10}{row['treatment']:<14}"
+                    f"{row['n']:>4}{row['mean']:>11.4g}{row['sem']:>10.4g}"
+                    f"{row['p_t']:>10.4g}{p_w:>12}{p_m:>10}{star}")
             return lines
 
         if diff is not None:
@@ -1127,6 +1232,39 @@ class Project:
             else:
                 out.append("(no comparable treatment groups found)")
             out.append("")
+            out.append("Paired − yoked difference against zero (is the paired fly "
+                       "different from its yoked partner?)")
+            out.append("p_t: paired t-test, a one-sample t-test on the differences; "
+                       "p_wilcoxon: signed-rank test; p_mixed: mixed-model intercept, "
+                       "DFM nested within Experiment.")
+            out.append("")
+            zero_rows = self.diff_zero_rows(diff)
+            if zero_rows:
+                out.extend(_zero_table(zero_rows))
+                out.append("* p_t < 0.05")
+            else:
+                out.append("(no treatment with two or more differences to test)")
+            out.append("")
+            breaking = self.combined_breaking_point_frame()
+            if breaking is not None:
+                from .analytics import as_bool
+
+                censored = (int(as_bool(breaking["Censored"]).sum())
+                            if "Censored" in breaking.columns else 0)
+                out.append("Breaking point (paired fly; one observation per chamber "
+                           "group)")
+                out.append(f"Chamber groups pooled : {len(breaking)} "
+                           f"({censored} censored)")
+                out.append("p_logrank: pairwise log-rank test on the ratio reached, "
+                           "treating a censored count as a lower bound; p_pooled and "
+                           "p_mixed enter it as observed.")
+                out.append("")
+                bp_rows = self.breaking_point_rows(breaking)
+                if bp_rows:
+                    out.extend(_table(bp_rows, logrank=True))
+                else:
+                    out.append("(no comparable treatment groups found)")
+                out.append("")
             out.append("Per-chamber metrics (secondary)")
             out.append("")
         if not rows:

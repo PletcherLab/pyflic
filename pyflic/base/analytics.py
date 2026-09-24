@@ -544,6 +544,252 @@ def _resolve_metric_col(df: pd.DataFrame, metric: str) -> pd.Series:
     return pd.Series(float("nan"), index=df.index)
 
 
+# ---------------------------------------------------------------------------
+# Censored counts and within-group differences (Progressive Ratio, ADR-0014)
+# ---------------------------------------------------------------------------
+
+def as_bool(values: Any) -> np.ndarray:
+    """Truthiness of a column that may have come back from a CSV as text.
+
+    ``True``, ``"true"``, ``"yes"`` and non-zero numbers are True; ``False``,
+    ``"false"``, zero, empty and missing are False.
+    """
+    series = values.astype(object) if isinstance(values, pd.Series) else \
+        pd.Series(list(np.atleast_1d(values)), dtype=object)
+
+    def one(v: Any) -> bool:
+        if v is None:
+            return False
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "1", "yes", "y", "t")
+        try:
+            if pd.isna(v):
+                return False
+        except (TypeError, ValueError):
+            pass
+        try:
+            return bool(v)
+        except (TypeError, ValueError):
+            return False
+
+    return np.array([one(v) for v in series], dtype=bool)
+
+
+def kaplan_meier(times: Any, observed: Any) -> pd.DataFrame:
+    """Kaplan-Meier estimate of ``S(t) = P(T > t)`` at every distinct time.
+
+    *observed* is False for a censored time.  A censored observation is at
+    risk at its own time, the usual convention: a fly censored after *k*
+    completed ratios was still attempting ratio *k* + 1 when the recording
+    stopped.  Columns: ``time, at_risk, events, censored, survival``.
+    """
+    t = np.asarray(times, dtype=float)
+    e = np.asarray(observed, dtype=bool)
+    keep = np.isfinite(t)
+    t, e = t[keep], e[keep]
+    rows: list[dict] = []
+    s = 1.0
+    for u in np.unique(t):
+        at_risk = int((t >= u).sum())
+        here = t == u
+        d = int((here & e).sum())
+        if at_risk > 0 and d > 0:
+            s *= 1.0 - d / at_risk
+        rows.append({"time": float(u), "at_risk": at_risk, "events": d,
+                     "censored": int((here & ~e).sum()), "survival": s})
+    return pd.DataFrame(rows, columns=["time", "at_risk", "events", "censored",
+                                       "survival"])
+
+
+def still_responding(
+    frame: pd.DataFrame,
+    *,
+    value_col: str = "BreakingPoint",
+    censored_col: str = "Censored",
+    group_col: str = "Treatment",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The "still responding" curve behind the breaking point.
+
+    Per *group_col*, the Kaplan-Meier fraction of paired flies that reached
+    ratio *k* — completed *k* Test light events — which is
+    ``P(BreakingPoint >= k)`` with a censored count taken as the lower bound
+    it is.  Returns ``(steps, ticks)``: *steps* (``group, Ratio, Fraction,
+    n``) are the corners of an ``hv`` step curve starting at ``(0, 1)``;
+    *ticks* (``group, Ratio, Fraction``) mark each censored fly on its curve.
+    """
+    step_cols = [group_col, "Ratio", "Fraction", "n"]
+    tick_cols = [group_col, "Ratio", "Fraction"]
+    if frame is None or frame.empty or value_col not in frame.columns:
+        return pd.DataFrame(columns=step_cols), pd.DataFrame(columns=tick_cols)
+    data = pd.DataFrame({
+        "g": (frame[group_col].astype(str).str.strip() if group_col in frame.columns
+              else "All"),
+        "t": pd.to_numeric(frame[value_col], errors="coerce"),
+        "c": (as_bool(frame[censored_col]) if censored_col in frame.columns
+              else np.zeros(len(frame), dtype=bool)),
+    }).dropna(subset=["t"])
+    steps: list[dict] = []
+    ticks: list[dict] = []
+    for g, sub in data.groupby("g", sort=False):
+        t = sub["t"].to_numpy(dtype=float)
+        censored = sub["c"].to_numpy(dtype=bool)
+        km = kaplan_meier(t, ~censored)
+
+        def reached(k: float, _km: pd.DataFrame = km) -> float:
+            before = _km.loc[_km["time"] <= k - 1, "survival"]
+            return float(before.iloc[-1]) if not before.empty else 1.0
+
+        ## A fly that broke after k ratios did not reach ratio k + 1, so its
+        ## drop is drawn at k + 1.
+        xs, ys = [0.0], [1.0]
+        for row in km.itertuples(index=False):
+            if row.events > 0:
+                xs.append(float(row.time) + 1.0)
+                ys.append(float(row.survival))
+        x_end = max(float(t.max()), xs[-1])
+        if x_end > xs[-1]:
+            xs.append(x_end)
+            ys.append(ys[-1])
+        steps += [{group_col: g, "Ratio": x, "Fraction": y, "n": int(t.size)}
+                  for x, y in zip(xs, ys)]
+        ticks += [{group_col: g, "Ratio": float(c), "Fraction": reached(float(c))}
+                  for c in t[censored]]
+    return pd.DataFrame(steps, columns=step_cols), pd.DataFrame(ticks, columns=tick_cols)
+
+
+def logrank_p(times_a: Any, observed_a: Any, times_b: Any, observed_b: Any) -> float:
+    """Two-sample log-rank test (chi-square, 1 df) on possibly tied, censored
+    times; ``nan`` when there is no event or no variance to test."""
+    from scipy import stats as sstats
+
+    ta, tb = np.asarray(times_a, dtype=float), np.asarray(times_b, dtype=float)
+    t = np.concatenate([ta, tb])
+    e = np.concatenate([np.asarray(observed_a, dtype=bool),
+                        np.asarray(observed_b, dtype=bool)])
+    in_a = np.concatenate([np.ones(ta.size, dtype=bool), np.zeros(tb.size, dtype=bool)])
+    keep = np.isfinite(t)
+    t, e, in_a = t[keep], e[keep], in_a[keep]
+    observed_minus_expected, variance = 0.0, 0.0
+    for u in np.unique(t[e]):
+        at_risk = t >= u
+        n = float(at_risk.sum())
+        n_a = float((at_risk & in_a).sum())
+        died = (t == u) & e
+        d = float(died.sum())
+        observed_minus_expected += float((died & in_a).sum()) - d * n_a / n
+        if n > 1:
+            variance += d * (n_a / n) * (1.0 - n_a / n) * (n - d) / (n - 1.0)
+    if not variance > 0:
+        return float("nan")
+    return float(sstats.chi2.sf(observed_minus_expected ** 2 / variance, df=1))
+
+
+def breaking_point_comparisons(
+    frame: pd.DataFrame,
+    *,
+    phase: str = "Test",
+    value_col: str = "BreakingPoint",
+    censored_col: str = "Censored",
+    mixed_p: Any = None,
+) -> list[dict]:
+    """Treatment comparisons of the breaking point, one observation per
+    Chamber Group.
+
+    The rows of :func:`treatment_comparisons` (Welch's t or Tukey HSD with a
+    censored count entered as observed, and the mixed model when *mixed_p* is
+    given and the frame spans more than one member) plus ``p_logrank``, the
+    pairwise log-rank test on ratio reached, which treats a censored count as
+    the lower bound it is.  Unadjusted when there are more than two
+    treatments.
+    """
+    rows = treatment_comparisons([(phase, frame)], [value_col], mixed_p=mixed_p)
+    if not rows:
+        return rows
+    data = pd.DataFrame({
+        "Treatment": frame["Treatment"].astype(str).str.strip(),
+        "t": pd.to_numeric(frame[value_col], errors="coerce"),
+        "c": (as_bool(frame[censored_col]) if censored_col in frame.columns
+              else np.zeros(len(frame), dtype=bool)),
+    }).dropna(subset=["t"])
+    for r in rows:
+        a = data[data["Treatment"] == str(r["a"])]
+        b = data[data["Treatment"] == str(r["b"])]
+        p = logrank_p(a["t"], ~a["c"].to_numpy(dtype=bool),
+                      b["t"], ~b["c"].to_numpy(dtype=bool))
+        r["p_logrank"] = p if np.isfinite(p) else None
+    return rows
+
+
+def zero_tests(
+    frames: Sequence[tuple[str, pd.DataFrame]],
+    metrics: Sequence[str],
+    *,
+    mixed_p0: Any = None,
+) -> list[dict]:
+    """Is the Paired-Yoked Difference non-zero?  The paired-versus-yoked
+    question itself, where :func:`treatment_comparisons` asks whether
+    treatments differ in it.
+
+    For every metric in every ``(label, frame)`` and every Treatment: the
+    one-sample t-test of the Chamber Groups' differences against zero (the
+    paired t-test of paired against yoked) with the Wilcoxon signed-rank test
+    beside it.  *mixed_p0* ``(data) -> p | None`` adds the intercept p-value of
+    a linear mixed model when the frames span more than one ``Experiment``;
+    otherwise ``p_mixed`` is ``None``.  A treatment needs two differences that
+    are not all equal.
+
+    Each row: ``metric, phase, treatment, n, mean, sem, p_t, p_wilcoxon,
+    p_mixed, significant`` (``p_t < 0.05``), ``test``.
+    """
+    import warnings
+
+    from scipy import stats as sstats
+
+    n_experiments = max(
+        [int(f["Experiment"].nunique()) for _, f in frames
+         if f is not None and "Experiment" in f.columns] or [1])
+    rows: list[dict] = []
+    for metric in metrics:
+        for label, frame in frames:
+            if frame is None or frame.empty or "Treatment" not in frame.columns \
+                    or metric not in frame.columns:
+                continue
+            data = pd.DataFrame({
+                "Treatment": frame["Treatment"].astype(str).str.strip(),
+                "Experiment": frame["Experiment"] if "Experiment" in frame.columns else "one",
+                "DFM": frame["DFM"] if "DFM" in frame.columns else 0,
+                "Value": pd.to_numeric(frame[metric], errors="coerce"),
+            }).dropna(subset=["Value"])
+            data = data[data["Treatment"] != ""]
+            for treatment, sub in data.groupby("Treatment", sort=False):
+                v = sub["Value"].to_numpy(dtype=float)
+                if v.size < 2 or np.all(v == v[0]):
+                    continue
+                ## Nearly equal differences make scipy warn about precision;
+                ## the p-value it returns is still the one to report.
+                with warnings.catch_warnings(), np.errstate(all="ignore"):
+                    warnings.simplefilter("ignore")
+                    p_t = float(sstats.ttest_1samp(v, 0.0).pvalue)
+                    try:
+                        p_w = float(sstats.wilcoxon(v).pvalue)
+                    except ValueError:
+                        p_w = float("nan")
+                if not np.isfinite(p_t):
+                    continue
+                rows.append({
+                    "metric": metric, "phase": label, "treatment": str(treatment),
+                    "n": int(v.size), "mean": float(v.mean()),
+                    "sem": float(v.std(ddof=1) / np.sqrt(v.size)),
+                    "p_t": p_t,
+                    "p_wilcoxon": p_w if np.isfinite(p_w) else None,
+                    "p_mixed": (mixed_p0(sub) if mixed_p0 is not None
+                                and n_experiments > 1 else None),
+                    "significant": bool(p_t < 0.05),
+                    "test": "paired t (one-sample on the differences)",
+                })
+    return rows
+
+
 def parameter_sensitivity(
     experiment: Experiment,
     *,

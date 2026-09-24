@@ -83,16 +83,18 @@ reproducibility problem that is very hard to notice afterwards. Record the outpu
 
 ## Version control for your data
 
-pyflic writes results into your project directory. If you keep projects in git, exclude the
+pyflic writes results beside your data. If you keep experiments in git, exclude the
 generated folders:
 
 ```gitignore
-*_results/
+analysis/
+qc/
+figures/
 .pyflic_cache/
 ```
 
-Keep `flic_config.yaml` and `remove_chambers.csv` under version control — together they
-define the analysis, and they are small.
+Keep `flic_config.yaml`, `project.yaml`, `plot_specs.yaml` and `remove_chambers.csv` under
+version control — together they define the analysis, and they are small.
 
 ---
 

@@ -4,12 +4,13 @@
 
 ```yaml
 global:
-  experiment_type: ...
+  experiment_type: ...                   # or chamber_layout: for a Custom experiment
   transform_licks: ...                   # optional
   constants: { ... }                     # optional
-  params: { ... }
+  params: { ... }                        # optional
+  facet_cutoffs: [ ... ]                 # optional
   experimental_design_factors: { ... }   # optional
-  well_names: { ... }                    # optional
+  well_names: { ... }                    # required by Hedonic and ProgressiveRatio
 
 dfms:
   1:
@@ -25,17 +26,24 @@ scripts:                                 # optional
       - action: basic_analysis
 ```
 
-Validate at any time with `pyflic lint <project directory>`, which reports errors and
+Validate at any time with `pyflic lint <experiment directory>`, which reports errors and
 warnings with line numbers where it can.
 
+**Inside a Project, `global:` belongs to the design.** A member's `flic_config.yaml`
+normally holds only `dfms:` and its own `scripts:`; every `global:` key comes from the
+`design:` in `project.yaml`, written in the same shape. See
+[Projects and members](concepts-project.md).
+
 > **`data_dir` no longer exists.** Data is always read from
-> `<project directory>/data/`. The linter flags a leftover `data_dir` key so you can
+> `<experiment directory>/data/`. The linter flags a leftover `data_dir` key so you can
 > delete it.
 
 ## `global.experiment_type`
 
 The Experiment Type — `Hedonic` or `ProgressiveRatio`; omit it for a Custom Experiment,
-which states `chamber_layout` instead. A Progressive Ratio config also needs
+which states `chamber_layout: single_well` or `two_well` instead (two-well when omitted).
+A typed config states neither `chamber_layout` nor `params.chamber_size`: the type owns
+them. A Progressive Ratio config also needs
 `paired_chambers` on every DFM (see [DFMs and chambers](config-dfms-chambers.md)). See
 [Experiment types](concepts-experiment-types.md).
 
@@ -53,10 +61,18 @@ global:
 
 ## `global.params`
 
-Detection parameters — thresholds, baseline window, link gap, chamber size. Every entry is
-documented in [Parameter reference](reference-parameters.md).
+Detection parameters — thresholds, baseline window, link gap, dual-feeding correction.
+Every entry is documented in [Parameter reference](reference-parameters.md).
 
-These are defaults for the whole experiment. Any DFM may override any of them for itself.
+These are defaults for the whole experiment. A standalone experiment's DFM may override any
+of them for itself; inside a Project only the physical keys `pi_direction` and
+`chamber_sets` may vary per DFM.
+
+## `global.facet_cutoffs`
+
+Minutes at which the recording is split into named phases, with optional `facet_labels`.
+Progressive Ratio owns its facets (Training and Test, split at each chamber group's
+training end) and must not state them. See [Facets](concepts-facets.md).
 
 ## `global.constants`
 
@@ -64,7 +80,7 @@ Cutoffs used by automatic chamber removal. They are not applied at load: they ta
 when `auto_remove_chambers()` runs, which **basic analysis does once, before it writes the
 summary** — the Hub's *Basic analysis*, *Analyze all*, a Batch Run and
 `execute_basic_analysis()` all apply them, and every output describes the filtered design.
-The QC Viewer's *Auto Filter Chambers* and the Python API run the same removal on demand.
+The QC Viewer's **Auto Filter** and the Python API run the same removal on demand.
 
 | Key | Applies to | Effect |
 |---|---|---|
@@ -88,10 +104,15 @@ A Progressive Ratio experiment adds its own, all with defaults:
 | `pr_trend_min_rho` | `0.3` | Spearman's rho below which a group gets the *no increasing trend* warning |
 | `pr_resting_level_rise` | `15` | Counts the sucrose well's resting level may rise above its first 30 minutes before a warning; also the margin an *elevated* well must clear |
 | `pr_resting_level_ratio` | `3` | Times the DFM's other sucrose wells a paired sucrose well may rest at before the *elevated* warning |
+| `pr_break_gap_min` | `120` | Minutes. A pause longer than this ends a fly's responding: the breaking point counts the paired fly's lick-backed Test light events before its first such pause, and sucrose persistence is the time to either fly's last sucrose feeding event before one |
+| `pr_test_window_min` | unset (off) | Minutes. Caps every chamber group's Test window at this long after its own training end, so a group that trained late is not measured over less time; `0` or unset means no cap |
 
-What the light QC checks, and why, is in
-[Experiment types](concepts-experiment-types.md#progressive-ratio). The Project Design
-dialog shows these as fields for a Progressive Ratio design.
+What the light QC checks, and how the breaking point is defined, is in
+[Progressive Ratio experiments](concepts-progressive-ratio.md). The Project Design
+dialog and the [Config Editor](app-config-editor.md) show these as fields for a
+Progressive Ratio experiment, the type's default in grey. A value of the wrong kind or out
+of range — a switch that is not `true` or `false`, a gap of 0, a rho above 1 — is a
+validation error: `pyflic lint` reports it and the experiment does not load.
 
 One rule applies regardless of configuration: a chamber whose lick value is `NaN` or
 undefined is always removed by `auto_remove_chambers()`, because it produced no usable
@@ -140,14 +161,13 @@ Named pipelines that run from the hub in one click. See
 
 ```yaml
 global:
-  experiment_type: hedonic
+  experiment_type: Hedonic
   transform_licks: true
   constants:
     min_untransformed_licks_cutoff: 20
     max_med_duration_cutoff: 13
     max_events_cutoff: 150000
   params:
-    chamber_size: 2
     pi_direction: left
     baseline_window_minutes: 3
     samples_per_second: 5
@@ -180,3 +200,27 @@ dfms:
       1: Unpaired,Chrim
       2: Paired,Chrim
 ```
+
+## A Progressive Ratio example
+
+```yaml
+global:
+  experiment_type: ProgressiveRatio
+  well_names: {A: Sucrose, B: Yeast}     # well A is always the sucrose well
+  constants:
+    pr_break_gap_min: 120                # the pause that ends a breaking point
+    pr_test_window_min: 720              # optional: the same Test window for every group
+
+dfms:
+  1:
+    params: {pi_direction: left}         # which side well A is on
+    paired_chambers: [1, 4, 5]           # one from each chamber group
+    chambers: {1: Ctrl, 2: Ctrl, 3: Exp, 4: Exp, 5: Exp, 6: Exp}
+  2:
+    params: {pi_direction: right}
+    paired_chambers: [2, 3, 6]
+    chambers: {1: Exp, 2: Exp, 3: Ctrl, 4: Ctrl, 5: Exp, 6: Exp}
+```
+
+No `facet_cutoffs`, no `chamber_layout`: the type owns both. See
+[Progressive Ratio experiments](concepts-progressive-ratio.md).

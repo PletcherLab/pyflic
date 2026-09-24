@@ -23,9 +23,10 @@ from pyflic.help.toc import GUIDES, TOC, all_topic_ids
 # GUI modules that may reference help topics.
 _GUI_ROOT = Path(__file__).resolve().parent.parent / "pyflic"
 
-# HelpButton("ref"), install_help_shortcut(x, "ref"), open_help("ref")
+# HelpButton("ref"), install_help_shortcut(x, "ref"), open_help("ref"),
+# and the editors' _add_help(widget, "ref", ...)
 _CALL_SITE_RE = re.compile(
-    r"""(?:HelpButton|install_help_shortcut|open_help)\(
+    r"""(?:HelpButton|install_help_shortcut|open_help|_add_help)\(
         [^)"']*                       # leading args (widget, self, …)
         ["'](?P<ref>[a-z0-9\-]+(?:\#[^"']+)?)["']
     """,
@@ -185,9 +186,11 @@ def test_hub_tile_help_map_resolves():
 
     mapping = AnalysisHubWindow._TILE_HELP
     assert mapping, "_TILE_HELP is empty — has it moved?"
+    extra = {**AnalysisHubWindow._CARD_HELP, **AnalysisHubWindow._TYPE_GROUP_HELP}
+    assert extra, "_CARD_HELP / _TYPE_GROUP_HELP are empty — have they moved?"
 
     problems: list[str] = []
-    for card_key, ref in mapping.items():
+    for card_key, ref in [*mapping.items(), *extra.items()]:
         topic_id, anchor = _topics.parse_ref(ref)
         topic = _topics.load(topic_id)
         if topic is None:

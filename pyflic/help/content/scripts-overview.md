@@ -97,8 +97,8 @@ scripts:
 ```
 
 Each script needs a `name` and a `steps` list. Each step needs an `action`; everything
-else is optional. Define as many scripts as you like — each appears in the hub's script
-dropdown, and **Run All Scripts** executes every script in the file in sequence.
+else is optional. Define as many scripts as you like — each appears in the Scripts panel's
+dropdown.
 
 You do not have to write this by hand. The [Script Editor](scripts-editor.md) builds it
 visually.
@@ -151,17 +151,22 @@ spinbox, while the parameters you *did* pin stay pinned.
 
 ## Time windows
 
-`start` and `end` are minutes, and `end: 0` means "through the end of the recording". To
-analyse several windows of the same experiment, write one script per window rather than
-trying to express them in a single script — output paths are namespaced by range, so the
-results do not collide.
+`start` and `end` are minutes, and `end: 0` means "through the end of the recording".
+Outputs always go to `analysis/`, whatever the window, so a second run over a different
+window overwrites the first. To compare phases of one recording, declare
+[Facets](concepts-facets.md) instead: every phase lands in one table, side by side.
 
 ## Running them
 
-- **Run Script** — the script selected in the dropdown
-- **Run All Scripts** — every script in the active configuration, in order
-- **Subdir-batch mode** — the script named `batch` in every batch target beneath a chosen
-  folder; see [Running many projects at once](scripts-batch.md)
+- **Run** on the Scripts panel — the selected Experiment Script, on the loaded member
+- **Run script** on the Project panel's Analysis card — the selected Project Script
+- **Run Batch** on the Batch panel — one Project Script in every checked Project; see
+  [Running many projects at once](scripts-batch.md)
+
+Progressive Ratio members have their own actions — the difference table, the light QC,
+the breaking point and their figures; see
+[Script actions](scripts-actions.md#analyse-actions). A step whose action needs a different
+Experiment Type is skipped with a log line, not an error.
 
 ---
 

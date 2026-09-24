@@ -486,7 +486,7 @@ class ReportDocument:
             elif isinstance(block, Cover):
                 self._place_cover(block)
             elif isinstance(block, Heading):
-                self._place_heading(block, blocks[i + 1:i + 4])
+                self._place_heading(block, blocks[i + 1:i + 5])
             elif isinstance(block, Paragraph):
                 self._place_lines(wrap_text(block.text, CONTENT_W, block.size),
                                   block.size, color=block.color, italic=block.italic)
@@ -585,7 +585,12 @@ class ReportDocument:
             if isinstance(block, Paragraph):
                 need += len(wrap_text(block.text, CONTENT_W, block.size))                     * line_height(block.size) + 0.08
                 continue
-            if isinstance(block, (Heading, PageBreak)) or block is None:
+            if isinstance(block, Heading):
+                ## A section heading straight over its first subsection
+                ## keeps that one too.
+                need += self._heading_height(block)
+                continue
+            if isinstance(block, PageBreak) or block is None:
                 break
             need += (self._min_height(block) if isinstance(block, (Plot, PlotRow))
                      else min(self._min_height(block), 3.6))

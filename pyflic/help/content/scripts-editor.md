@@ -4,7 +4,9 @@ A visual editor for the `scripts:` section of your configuration file. It writes
 YAML you could write by hand, but it knows which actions exist and which parameters each
 one takes, so you cannot invent an action that does not exist or misspell a parameter.
 
-Open it from the **Scripts** card in the hub.
+Open it from the Hub: **Open Script Editor** on the Scripts panel edits the loaded
+member's `flic_config.yaml`, and **Edit scripts…** on the Project panel edits the
+Project's `project.yaml`. Press **F1**, or the `?` in its top bar, for this topic.
 
 ## Layout
 
@@ -55,12 +57,24 @@ This is why a script can be re-run over a different time window just by changing
 in the hub: leave `start` and `end` blank on the steps and they follow the hub. Pin them on
 the step when the window is part of the analysis rather than a thing you vary.
 
-## Naming a script `batch`
+## Naming scripts
 
-A script named exactly `batch` is what makes its directory a **batch target** — see
-[Running many projects at once](scripts-batch.md). The name is also the default exclusion
-group for a bare `remove_chambers` step, so pick names deliberately and keep them
-consistent with the groups in your `remove_chambers.csv`.
+A script's name is the default exclusion group for a bare `remove_chambers` step, so pick
+names deliberately and keep them consistent with the groups in your `remove_chambers.csv`.
+
+An Experiment Script named `batch` has no special meaning any more — subdir-batch mode is
+retired, and `pyflic lint` reports such scripts so you can rename them. The Project Script
+named `batch` is different: it is what a Batch Run executes by default. See
+[Running many projects at once](scripts-batch.md).
+
+## Actions for one Experiment Type
+
+The palette offers every action, but some need a particular layout or Experiment Type —
+`plot_well_comparison` a two-well layout, `plot_hedonic` a Hedonic experiment, the
+`pr_*` and breaking-point actions a Progressive Ratio one. The palette dims those that do
+not match the configuration's type, with the reason in the tooltip, and the inspector
+repeats it for a step already on the canvas. At run time a step on the wrong kind of
+experiment is skipped with a log line.
 
 ---
 

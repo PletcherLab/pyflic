@@ -22,8 +22,11 @@ Yoked is the other chamber of the group and is never written.
 
 from __future__ import annotations
 
-from typing import Any
+import math
+from dataclasses import dataclass
+from typing import Any, Mapping
 
+from ..pr_breaking_point import DEFAULT_CONSTANTS as BREAK_CONSTANTS
 from ..pr_light_qc import DEFAULT_CONSTANTS as LIGHT_QC_CONSTANTS
 from .base import ExperimentType
 
@@ -91,6 +94,130 @@ def parse_paired_chambers(raw: Any) -> tuple[list[int], list[str]]:
     return sorted(set(values)), problems
 
 
+@dataclass(frozen=True)
+class ConstantField:
+    """One Progressive Ratio design constant: how the Project Design dialog and
+    the Config Editor show it, and what the type accepts for it.
+
+    *group* is ``"switch"`` (true / false), ``"light_qc"`` or ``"break"``;
+    *short_label* and *choices* are the Config Editor's words for a switch,
+    whose row label must stay short and whose picker names what each value
+    does.  *blank* says what an unset value means when the type has no
+    default for it.
+    """
+
+    key: str
+    label: str
+    tooltip: str
+    group: str
+    integer: bool = False
+    minimum: float | None = None
+    maximum: float | None = None
+    minimum_exclusive: bool = False
+    blank: str | None = None
+    short_label: str | None = None
+    choices: tuple[str, str] = ("yes", "no")
+
+
+#: Every Progressive Ratio constant beyond the three auto-filter cutoffs, in
+#: the order the editors show them.  One list, so the two editors and the
+#: validation cannot disagree about what exists or what is allowed.
+PR_CONSTANT_FIELDS: tuple[ConstantField, ...] = (
+    ConstantField(
+        "require_training_complete", "Exclude groups whose training never completed",
+        "require_training_complete — both chambers of a chamber group whose paired "
+        "fly never finished training leave the analysis.",
+        "switch", short_label="Training never completed",
+        choices=("exclude the group", "keep the group")),
+    ConstantField(
+        "exclude_failed_pr_groups", "Exclude groups that fail the light QC",
+        "exclude_failed_pr_groups — both chambers of a chamber group whose light "
+        "followed the sensor rather than the fly (self-triggered light, "
+        "implausible training) leave the analysis.  Off keeps them; "
+        "pr_light_qc.csv lists them either way.",
+        "switch", short_label="Light QC failed",
+        choices=("exclude the group", "keep the group")),
+    ConstantField(
+        "pr_lick_free_run", "Lick-free run (light events)",
+        "pr_lick_free_run — this many consecutive Test light events with no "
+        "Sucrose Well licks between them make a group's light self-triggered "
+        "(fails the group).",
+        "light_qc", integer=True, minimum=1),
+    ConstantField(
+        "pr_trend_min_events", "Trend needs (light events)",
+        "pr_trend_min_events — Test light events needed before the "
+        "licks-per-event trend is judged; fewer is reported, never flagged.",
+        "light_qc", integer=True, minimum=3),
+    ConstantField(
+        "pr_trend_min_rho", "Trend minimum rho",
+        "pr_trend_min_rho — Spearman's rho of licks per light event against "
+        "event number below which a group gets the 'no increasing trend' "
+        "warning.",
+        "light_qc", minimum=-1, maximum=1),
+    ConstantField(
+        "pr_resting_level_rise", "Resting level rise (counts)",
+        "pr_resting_level_rise — a rise of the paired Sucrose Well's resting "
+        "level above its first 30 minutes by this many counts is a warning; it "
+        "is also the margin an 'elevated' well must clear.",
+        "light_qc", minimum=0),
+    ConstantField(
+        "pr_resting_level_ratio", "Resting level ratio (×)",
+        "pr_resting_level_ratio — a paired Sucrose Well resting at this many "
+        "times the DFM's other Sucrose Wells is 'elevated' (a warning).",
+        "light_qc", minimum=0, minimum_exclusive=True),
+    ConstantField(
+        "pr_break_gap_min", "Break gap (min)",
+        "pr_break_gap_min — a pause longer than this many minutes ends a fly's "
+        "responding.  The breaking point counts the paired fly's lick-backed Test "
+        "light events before its first such pause; Sucrose Persistence is the "
+        "time to either fly's last sucrose feeding event before one.  Default 120.",
+        "break", minimum=0, minimum_exclusive=True),
+    ConstantField(
+        "pr_test_window_min", "Test window cap (min)",
+        "pr_test_window_min — caps every chamber group's Test window at this many "
+        "minutes after its own training end, so a group that trained late is not "
+        "measured over less time than the rest.  Blank (the default) or 0: no cap.",
+        "break", minimum=0, blank="no cap"),
+)
+
+
+def constant_problems(constants: Mapping[str, Any] | None) -> list[str]:
+    """What is wrong with the Progressive Ratio constants a ``constants:`` block
+    states — a switch that is not true or false, a threshold that is not a
+    number or falls outside its range.  Keys it does not state are fine: the
+    type's defaults fill them in.  Never raises."""
+    problems: list[str] = []
+    stated = dict(constants or {})
+    for field in PR_CONSTANT_FIELDS:
+        if field.key not in stated:
+            continue
+        value = stated[field.key]
+        where = f"'constants.{field.key}'"
+        if value is None:
+            if field.blank is None:
+                problems.append(f"{where} is empty; give a value or remove the key "
+                                f"to use the type's default")
+            continue
+        if field.group == "switch":
+            if not isinstance(value, bool):
+                problems.append(f"{where} must be true or false, got {value!r}")
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(float(value)):
+            problems.append(f"{where} must be a number, got {value!r}")
+            continue
+        v = float(value)
+        if field.integer and v != int(v):
+            problems.append(f"{where} must be a whole number, got {value!r}")
+        if field.minimum is not None and (
+                v < field.minimum or (field.minimum_exclusive and v == field.minimum)):
+            bound = "greater than" if field.minimum_exclusive else "at least"
+            problems.append(f"{where} must be {bound} {field.minimum:g}, got {value!r}")
+        if field.maximum is not None and v > field.maximum:
+            problems.append(f"{where} must be at most {field.maximum:g}, got {value!r}")
+    return problems
+
+
 class ProgressiveRatioExperimentType(ExperimentType):
     name = "ProgressiveRatio"
     display_name = "Progressive Ratio"
@@ -118,7 +245,19 @@ class ProgressiveRatioExperimentType(ExperimentType):
         ## followed the sensor rather than the fly leaves the same way, unless
         ## exclude_failed_pr_groups is switched off.  See pr_light_qc.
         **LIGHT_QC_CONSTANTS,
+        ## Breaking point and Sucrose Persistence (ADR-0014): the pause, in
+        ## minutes, that ends a fly's responding.  pr_test_window_min (a cap
+        ## on every group's Test window) has no default: unset means off.
+        **BREAK_CONSTANTS,
     }
+
+    def validate(self, global_cfg: dict | None) -> list[str]:
+        """The base checks plus the Progressive Ratio constants' values
+        (:func:`constant_problems`), so the loader, ``pyflic lint``, the Config
+        Editor and the Project Design dialog refuse the same mistakes."""
+        problems = super().validate(global_cfg)
+        problems += constant_problems((global_cfg or {}).get("constants"))
+        return problems
 
     def validate_dfm(self, dfm_id: int, node: dict | None,
                      chamber_assignments: dict | None) -> list[str]:
@@ -151,66 +290,91 @@ class ProgressiveRatioExperimentType(ExperimentType):
                 "faceted_pi"]
 
     def project_results_blocks(self, project) -> list:
-        """The pooled Paired-Yoked Difference in the Test phase and the pooled
-        breaking point — one point per Chamber Group across every member,
-        with the mixed model beside the pooled test."""
+        """The pooled breaking point (ADR-0014) — the still-responding curve
+        first, then one point per Chamber Group with the mixed model and the
+        log-rank test beside the pooled test — and the pooled Paired-Yoked
+        Difference in the Test phase."""
         from .. import report_content as rc
         from .. import report_layout as rl
-        from ..analytics import treatment_comparisons
+        from ..analytics import as_bool, breaking_point_comparisons
+        from ..pr_breaking_point import BreakSettings
 
         diff = project.combined_diff_frame()
-        if diff is None or diff.empty:
+        bp = project.combined_breaking_point_frame()
+        if (diff is None or diff.empty) and bp is None:
             return []
         names = project.design_global.get("well_names") or {}
+        well_a = names.get("A") or "well A"
         factors = list((project.design_global.get("experimental_design_factors") or {}))
-        test = diff[diff["Facet"].astype(str) == "Test"]
-        if test.empty:
-            return []
+        settings = BreakSettings.from_constants(self.resolve_constants(project.design_global))
+        half = (rl.CONTENT_W - 0.25) / 2
 
         def dot(frame, column, label, hline=None):
             return lambda: rc.dot_plot(frame, column, y_label=label, factors=factors,
                                        hline_at=hline)
 
-        blocks: list = [
-            rl.Heading("Paired − yoked difference, Test phase", level=2),
-            rl.Paragraph("One point per chamber group, pooled across members: the paired "
-                         "fly's value minus its yoked partner's over the Test phase.  "
-                         "Zero is the null; the statistics below test it."),
-            rl.PlotRow([
-                rl.Plot(dot(test, "dLicksA", rc.metric_label("dLicksA", names), 0.0),
-                        title=rc.metric_label("dLicksA", names)),
-                rl.Plot(dot(test, "dPI", rc.metric_label("dPI", names), 0.0),
-                        title=rc.metric_label("dPI", names)),
-            ], height=3.0),
-        ]
-        light = project.combined_light_qc_frame()
-        if light is not None and "TestLightEvents" in light.columns:
-            keys = ["Experiment", "DFM", "Group"]
-            carry = [c for c in ["Treatment", *factors] if c in test.columns]
-            merged = test[keys + carry].merge(
-                light[keys + ["TestLightEvents"]], on=keys, how="left"
-            ).rename(columns={"TestLightEvents": "BreakingPoint"})
-            merged = merged.dropna(subset=["BreakingPoint"])
-            if not merged.empty:
-                rows = treatment_comparisons([("Test", merged)], ["BreakingPoint"],
-                                             mixed_p=project._mixed_p)
-                blocks += [
-                    rl.Heading("Breaking point", level=2),
-                    rl.Paragraph("Test light events each paired fly earned — the last "
-                                 "ratio it completed — for the chamber groups in the "
-                                 "pooled analysis.  Test phases differ in length between "
-                                 "groups; each member's report tabulates them."),
-                    rl.PlotRow([rl.Plot(dot(merged, "BreakingPoint",
-                                            "Test light events earned"),
-                                        title="Breaking point by treatment",
-                                        width=(rl.CONTENT_W - 0.25) / 2)], height=3.0),
-                    *rc.stats_table(rows, caption="Treatment comparisons: breaking point",
-                                    well_names=names, show_phase=False),
-                ]
+        blocks: list = [rl.Heading("Breaking point", level=2)]
+        if bp is None:
+            blocks.append(rl.Callout(
+                "No member has a breaking point table (pr_breaking_point.csv): their "
+                "analyses predate it.  Re-run the members' basic analysis.",
+                tone="warning"))
+        elif bp.empty:
+            blocks.append(rl.Callout("No chamber group in the pooled analysis has a Test "
+                                     "phase.", tone="warning"))
+        else:
+            censored = int(as_bool(bp["Censored"]).sum()) if "Censored" in bp.columns else 0
+            window = ("" if settings.test_window_min is None else
+                      f"  Every Test window was capped at {settings.test_window_min:g} "
+                      f"minutes (pr_test_window_min).")
+            blocks += [
+                rl.Paragraph(
+                    f"The number of lick-backed Test light events a paired fly completed "
+                    f"before its first pause longer than {settings.gap_min:g} minutes "
+                    f"(pr_break_gap_min), pooled across members: one observation per "
+                    f"chamber group.  {censored} of {len(bp)} groups were still responding "
+                    f"when their Test window ended, so their counts are lower bounds "
+                    f"(censored); the curve and the log-rank test treat them as such, the "
+                    f"t-tests and the mixed model enter them as observed.{window}"),
+                rl.Plot(lambda: rc.still_responding_plot(bp, base_font_size=9.5),
+                        height=3.4, title="Still responding"),
+                rl.PlotRow([rl.Plot(lambda: rc.censored_dot_plot(
+                    bp, "BreakingPoint", y_label="Light events earned", factors=factors),
+                    title="Breaking point by treatment", width=half)], height=3.0),
+                *rc.stats_table(breaking_point_comparisons(bp, mixed_p=project._mixed_p),
+                                caption="Treatment comparisons: breaking point",
+                                well_names=names, show_phase=False),
+            ]
+
+        test = (diff[diff["Facet"].astype(str) == "Test"]
+                if diff is not None and not diff.empty else None)
+        if test is not None and not test.empty:
+            blocks += [
+                rl.Heading("Paired − yoked difference, Test phase", level=2),
+                rl.Paragraph("One point per chamber group, pooled across members: the "
+                             "paired fly's value minus its yoked partner's over the Test "
+                             f"phase.  Zero is the null; the statistics below test it, "
+                             f"against zero within each treatment and between treatments.  "
+                             f"Sucrose persistence is the time from training end to a fly's "
+                             f"last {well_a} feeding event before a pause longer than "
+                             f"{settings.gap_min:g} minutes."),
+                rl.PlotRow([
+                    rl.Plot(dot(test, "dLicksA", rc.metric_label("dLicksA", names), 0.0),
+                            title=rc.metric_label("dLicksA", names)),
+                    rl.Plot(dot(test, "dPI", rc.metric_label("dPI", names), 0.0),
+                            title=rc.metric_label("dPI", names)),
+                ], height=3.0),
+            ]
+            if "dPersistA" in test.columns and test["dPersistA"].notna().any():
+                blocks.append(rl.PlotRow([
+                    rl.Plot(dot(test, "dPersistA", rc.metric_label("dPersistA", names), 0.0),
+                            title=rc.metric_label("dPersistA", names), width=half),
+                ], height=3.0))
         return blocks
 
     def output_manifest(self) -> list[str]:
         return ["feeding_summary.csv", "feeding_summary_facet.csv",
                 "paired_yoked_diff.csv", "pr_cumulative_diff.csv",
                 "pr_cumulative_diff.png", "pr_light_qc.csv",
-                "pr_light_events.csv", "summary.txt"]
+                "pr_light_events.csv", "pr_breaking_point.csv",
+                "pr_still_responding.png", "summary.txt"]

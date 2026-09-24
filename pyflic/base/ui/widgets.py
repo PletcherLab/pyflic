@@ -302,6 +302,9 @@ class Card(QFrame):
     def set_title(self, title: str) -> None:
         self._title_lbl.setText(title)
 
+    def title(self) -> str:
+        return self._title_lbl.text()
+
     def add_section_label(self, text: str) -> None:
         lbl = QLabel(text, self)
         lbl.setObjectName("PyflicSectionDivider")
@@ -392,6 +395,28 @@ class CardGroup(QGroupBox):
             self._body.addWidget(widget_or_layout)
         else:
             self._body.addLayout(widget_or_layout)
+
+    def add_title_widget(self, widget: QWidget) -> None:
+        """Put *widget* at the top-right of the group, level with its note.
+
+        The counterpart of :meth:`Card.add_title_widget`, used for the group's
+        help button.  A QGroupBox paints its own title, so nothing can sit in
+        the title itself; the widget goes in a row at the top of the body
+        instead, sharing it with the first note when there is one so the
+        group grows no taller.  Like the Card, the group knows nothing about
+        help — it just offers the slot.
+        """
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        first = self._body.itemAt(0)
+        if self._notes and first is not None and first.widget() is self._notes[0]:
+            self._body.removeWidget(self._notes[0])
+            row.addWidget(self._notes[0], 1)
+        else:
+            row.addStretch(1)
+        row.addWidget(widget, 0, Qt.AlignmentFlag.AlignTop)
+        self._body.insertLayout(0, row)
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +682,16 @@ class PlotDock(QTabWidget):
             btn.setToolTip(tip)
             btn.clicked.connect(slot)
             lay.addWidget(btn)
+        self._corner_layout = lay
         return bar
+
+    def add_corner_widget(self, widget: QWidget) -> None:
+        """Append *widget* to the corner bar, after the clear buttons.
+
+        The Hub puts its general help button here.  The dock knows nothing
+        about help — the dependency runs GUI → help, never ``ui`` → help.
+        """
+        self._corner_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def _on_issue_logged(self, _text: str) -> None:
         idx = self.indexOf(self._error_log)

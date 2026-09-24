@@ -59,6 +59,15 @@ which is the normal way to present a two-factor design.
   before you write the configuration, or use the [Config Editor](app-config-editor.md),
   which regenerates the assignments for you.
 
+## Progressive Ratio: roles are not factors
+
+In a Progressive Ratio experiment, paired and yoked are **roles** named by
+`paired_chambers:`, not treatment levels — both chambers of a chamber group carry the same
+treatment, and the analysis compares them within the group. Declaring a `paired` factor
+would give the two chambers different treatments, which the type refuses. Use factors for
+what varies *between* chamber groups, such as genotype or dose. See
+[Progressive Ratio experiments](concepts-progressive-ratio.md#chamber-groups-paired-and-yoked).
+
 ## Without factors
 
 If you declare no factors, chamber assignments are plain treatment names:

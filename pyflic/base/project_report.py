@@ -363,6 +363,10 @@ def _results_blocks(project, summary: pd.DataFrame, facet) -> list[Any]:
         blocks += rc.stats_table(diff_rows, caption="Primary: paired − yoked difference "
                                                     "(one observation per chamber group)",
                                  well_names=names, show_phase=True)
+        blocks += rc.zero_test_table(project.diff_zero_rows(diff),
+                                     caption="Paired − yoked difference against zero, "
+                                             "per treatment",
+                                     well_names=names, show_phase=True)
     rows = project.comparison_rows(summary, facet)
     caption = ("Per-chamber metrics (secondary)" if diff is not None
                else "Treatment comparisons, per chamber")

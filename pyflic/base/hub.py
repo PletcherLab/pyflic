@@ -294,32 +294,63 @@ class AnalysisHubWindow(QMainWindow):
     #: ``tests/test_help_refs.py`` asserts every value resolves.
     _TILE_HELP: dict[str, str] = {
         "batch": "scripts-batch#the-review-window",
-        "project": "concepts-project#blocked-members",
+        "project": "app-hub#getting-a-project-open-four-buttons-three-cases",
         "analyze": "app-hub#analyze-panel",
-        "qc": "app-qc-viewer",
+        "qc": "app-hub#qc-panel",
         "plots": "plots-catalog",
         "scripts": "scripts-overview",
         "ai": "concepts-ai-summary",
         "tools": "app-hub#tools-panel",
     }
 
+    #: (tile key, card title) → help topic, for a panel's cards after its
+    #: first, which takes the tile's entry above.
+    _CARD_HELP: dict[tuple[str, str], str] = {
+        ("project", "Experiments"): "concepts-project#blocked-members",
+        ("project", "Analysis"): "app-hub#the-analysis-card",
+    }
+
+    #: (tile key, Experiment Type key) → help topic, for the type-specific
+    #: groups of the Analyze, QC and Plots cards.
+    _TYPE_GROUP_HELP: dict[tuple[str, str], str] = {
+        ("analyze", "progressive_ratio"): "concepts-progressive-ratio#outputs",
+        ("qc", "progressive_ratio"): "concepts-progressive-ratio#light-qc",
+        ("plots", "progressive_ratio"): "plots-catalog#progressive-ratio-plots",
+        ("plots", "hedonic"): "plots-catalog#hedonic-plots",
+    }
+
+    def _type_groups(self, key: str) -> dict[str, CardGroup]:
+        """The Experiment-Type groups on the *key* tile's card."""
+        return {"analyze": self._type_analyze_groups, "qc": self._type_qc_groups,
+                "plots": self._type_plot_groups}[key]
+
     def _install_panel_help(self) -> None:
-        """Put a ``?`` in each panel's card title row.
+        """Put a ``?`` in each panel's card title rows and type groups, one
+        after the dock's clear buttons, and bind F1.
 
         Imported here rather than at module scope so a failure in the help
         package degrades to a Hub without help buttons instead of no Hub.
         """
         try:
-            from pyflic.help.button import HelpButton
+            from pyflic.help.button import HelpButton, install_help_shortcut
         except Exception:  # noqa: BLE001
             return
         for key, ref in self._TILE_HELP.items():
             panel = self.panels.get(key)
             if panel is None:
                 continue
-            for card in panel.findChildren(Card):
-                card.add_title_widget(HelpButton(ref, card))
-                break
+            for i, card in enumerate(panel.findChildren(Card)):
+                card_ref = ref if i == 0 else self._CARD_HELP.get((key, card.title()))
+                if card_ref:
+                    card.add_title_widget(HelpButton(card_ref, card))
+        for (key, requires), ref in self._TYPE_GROUP_HELP.items():
+            self._type_groups(key)[requires].add_title_widget(HelpButton(ref))
+        ## General help, for when no panel is open: the dock's corner, after
+        ## Clear Errors.  The first topic in reading order is the way in.
+        self.dock.add_corner_widget(HelpButton(
+            "getting-started", self.dock,
+            tooltip="Open pyflic help — the start page, the topic list and search"))
+        install_help_shortcut(self, "app-hub")
 
     def _build_panels(self) -> None:
         self._build_batch_panel()
@@ -761,7 +792,8 @@ class AnalysisHubWindow(QMainWindow):
         self._type_analyze_groups: dict[str, CardGroup] = {}
         for requires, title, buttons in (
             ("progressive_ratio", "Progressive Ratio only",
-             (("Paired − yoked difference CSV", "csv", "paired_yoked_diff"),)),
+             (("Paired − yoked difference CSV", "csv", "paired_yoked_diff"),
+              ("Breaking point CSV", "csv", "breaking_point"))),
         ):
             group = CardGroup(title)
             for label, icon_name, action in buttons:
@@ -915,6 +947,7 @@ class AnalysisHubWindow(QMainWindow):
                "plot_pr_cumulative_diff"),
               ("Training-aligned traces (QC)", "plot",
                "plot_pr_cumulative_licks"),
+              ("Still-responding curve", "plot", "plot_pr_still_responding"),
               ("Breaking-point plots", "plot", "plot_breaking_point"))),
             ("hedonic", "Hedonic only",
              (("Hedonic feeding plot", "feeding", "plot_hedonic"),)),

@@ -29,16 +29,21 @@ median bout duration at each well). A single-well experiment gets Consumption on
 Hedonic experiment adds its duration plot and the event-weighted duration table. A
 Progressive Ratio experiment replaces the per-chamber figures, which would pool each paired
 fly with its own yoked control, with the **cumulative difference curve**, the **paired −
-yoked difference** in the Test phase, and the **breaking point** — the number of Test light
-events each paired fly earned, the last ratio it completed — with its per-group table and the
-per-DFM licks-per-light-period plots. Its Quality control section adds the training table
-and the [light QC](concepts-experiment-types.md#progressive-ratio) with its three figures
-per DFM.
+yoked difference** in the Test phase, tested between treatments and against zero within each
+treatment, and the **breaking point**: the lick-backed Test light events each paired fly
+completed before its first pause longer than `pr_break_gap_min`, with the still-responding
+curve, its per-group table and the per-DFM licks-per-light-period plots. Its Quality control
+section adds the training table and the
+[light QC](concepts-progressive-ratio.md#light-qc) with its three figures per DFM.
 
 **Statistics.** Under each figure: two treatments, Welch's t-test; more, Tukey HSD on every
 pair; p < 0.05 highlighted. One observation per chamber (per chamber group for a
-Progressive Ratio difference). *Mean* and *n* read as the first treatment named / the
-second, and *Difference* is the first minus the second.
+Progressive Ratio difference or breaking point). *Mean* and *n* read as the first treatment
+named / the second, and *Difference* is the first minus the second. The breaking point adds
+**p (log-rank)**, which treats a censored count as the lower bound it is. The paired −
+yoked difference adds a table testing it against zero in each treatment: the paired t-test,
+which is a one-sample t-test on the differences, with the Wilcoxon signed-rank test beside
+it.
 
 ## The Project Report
 
@@ -51,7 +56,7 @@ builds the Combined Analysis first when there is none.
 | **Cover** | The Project, its members, pooled chambers and treatments, factors and Facets; **At a glance** — missing members, exclusions, the type's QC flags; the contents |
 | **1 Members** | One row per member: DFMs, chambers analysed and excluded, whether its analysis is current, whether it has a report |
 | **2 Quality control** | Every excluded chamber across members with its reason; for Progressive Ratio, every chamber group the light QC flagged and whether the pooled numbers include it |
-| **3 Results** | The type's pooled figures (the Plot Editor's styles), the type's own pooled figures (Progressive Ratio: paired − yoked difference and breaking point), and the statistics as tables — pooled test and linear mixed model (DFM nested within experiment) side by side |
+| **3 Results** | The type's pooled figures (the Plot Editor's styles), the type's own pooled figures (Progressive Ratio: the breaking point, led by its still-responding curve, and the paired − yoked difference), and the statistics as tables — pooled test and linear mixed model (DFM nested within experiment) side by side, with the log-rank test for the breaking point and the paired − yoked difference tested against zero |
 | **Appendix** | The Design's detection parameters and constants |
 
 An optional AI summary follows the results when one has been written; it is marked as

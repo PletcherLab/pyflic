@@ -473,6 +473,20 @@ ACTIONS: list[Action] = [
               "Progressive Ratio statistics.",
     ),
     Action(
+        action="breaking_point",
+        label="Breaking point table",
+        blurb="Per chamber group: the paired fly's breaking point (progressive ratio).",
+        icon="csv", category=Category.ANALYZE, produces="csv",
+        requires="progressive_ratio",
+        params=[],
+        notes="Writes analysis/pr_breaking_point.csv — one row per chamber group: "
+              "the lick-backed Test light events the paired fly completed before "
+              "its first pause longer than pr_break_gap_min, the minute of the "
+              "last one, whether the count is censored (still responding when the "
+              "Test window ended) and the Test minutes it saw — and logs the table "
+              "with its sensitivity to the gap.",
+    ),
+    Action(
         action="pr_light_qc",
         label="Light QC table",
         blurb="Per chamber group: did the paired fly earn its light? (progressive ratio)",
@@ -551,9 +565,23 @@ ACTIONS: list[Action] = [
         icon="plot", category=Category.PLOTS, produces="figure",
         requires="progressive_ratio",
         params=[],
-        notes="One panel per chamber. The training end and roles come from the "
-              "config's paired_chambers and the data's training flag; there is "
-              "no configuration index any more.",
+        notes="One panel per chamber, the group's breaking point in the paired "
+              "strip.  A dashed line marks the break (the last light event the "
+              "breaking point counts), onsets past it are grey and lick-free "
+              "light events hollow red.  Writes "
+              "analysis/breaking_point_dfm<id>.png.",
+    ),
+    Action(
+        action="plot_pr_still_responding",
+        label="Still-responding curve",
+        blurb="Fraction of paired flies reaching each ratio, by treatment.",
+        icon="plot", category=Category.PLOTS, produces="figure",
+        requires="progressive_ratio",
+        params=[],
+        notes="Kaplan-Meier: per treatment, the fraction of paired flies whose "
+              "breaking point reached each ratio, a censored fly (still "
+              "responding when its Test window ended) as a tick.  Writes "
+              "analysis/pr_still_responding.png.",
     ),
 ]
 

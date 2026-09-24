@@ -249,7 +249,7 @@ def test_progressive_ratio_light_qc_lives_on_the_qc_card(hub):
         "Sucrose Well resting level (QC)"}
     analyze = hub._type_analyze_groups["progressive_ratio"]
     assert {b.text() for b in analyze.findChildren(ActionButton)} == {
-        "Paired − yoked difference CSV"}
+        "Paired − yoked difference CSV", "Breaking point CSV"}
     plots = {b.text() for b in _group_titled(hub, "Progressive Ratio")
              .findChildren(ActionButton)}
     assert plots.isdisjoint({"Light QC table", "Licks per light event (QC)",
@@ -259,6 +259,22 @@ def test_progressive_ratio_light_qc_lives_on_the_qc_card(hub):
     assert not qc.isHidden() and not analyze.isHidden()
     _load_fake_of_type(hub, "Hedonic")
     assert qc.isHidden() and analyze.isHidden()
+
+
+def test_the_breaking_point_buttons_run_their_actions(hub, monkeypatch):
+    """The breaking point table sits with the difference table on Analyze;
+    its still-responding curve sits with the other result figures (ADR-0014)."""
+    sent: list[dict] = []
+    monkeypatch.setattr(hub, "_run_experiment_action", sent.append)
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    analyze = {b.text(): b for b in
+               hub._type_analyze_groups["progressive_ratio"].findChildren(ActionButton)}
+    analyze["Breaking point CSV"].click()
+    plots = {b.text(): b for b in
+             hub._type_plot_groups["progressive_ratio"].findChildren(ActionButton)}
+    plots["Still-responding curve"].click()
+    assert [step["action"] for step in sent] == ["breaking_point",
+                                                 "plot_pr_still_responding"]
 
 
 def test_the_qc_card_buttons_run_their_actions(hub, monkeypatch):
@@ -302,3 +318,36 @@ def test_the_subtile_panels_do_not_repeat_the_loaded_member(hub):
     assert not hasattr(hub, "plots_hint")
     assert "Rep1" not in hub.qc_hint.text()
     assert "QC reports" in hub.qc_hint.text()
+
+
+def _help_refs(widget) -> list[str]:
+    from pyflic.help.button import HelpButton
+
+    return [b.ref for b in widget.findChildren(HelpButton)]
+
+
+def test_general_help_sits_after_clear_errors(hub):
+    """The dock's corner ends with a help button opening the start page, so
+    help is reachable without opening a panel first."""
+    corner = hub.dock.cornerWidget()
+    lay = corner.layout()
+    last = lay.itemAt(lay.count() - 1).widget()
+    before = lay.itemAt(lay.count() - 2).widget()
+    assert _help_refs(corner) == ["getting-started"]
+    assert last.ref == "getting-started"
+    assert before.text() == "Clear Errors"
+
+
+def test_every_project_panel_card_has_help(hub):
+    from pyflic.base.ui.widgets import Card
+
+    cards = hub.panels["project"].findChildren(Card)
+    assert [c.title() for c in cards][:3] == ["Create/Load", "Experiments", "Analysis"]
+    for card in cards[:3]:
+        assert _help_refs(card), f"no help button on the {card.title()} card"
+
+
+def test_type_groups_carry_their_own_help(hub):
+    for key, requires in AnalysisHubWindow._TYPE_GROUP_HELP:
+        group = hub._type_groups(key)[requires]
+        assert _help_refs(group) == [AnalysisHubWindow._TYPE_GROUP_HELP[(key, requires)]]

@@ -19,8 +19,9 @@ from typing import Any, Callable
 #: Experiment Type (ADR-0007).  ``requires_layout`` on the Action carries the
 #: same information for the editor; this is the runtime half.
 _LAYOUT_GATED = {"plot_well_comparison", "transition_matrix"}
-_PR_GATED = {"plot_breaking_point", "paired_yoked_diff",
+_PR_GATED = {"plot_breaking_point", "paired_yoked_diff", "breaking_point",
              "plot_pr_cumulative_diff", "plot_pr_cumulative_licks",
+             "plot_pr_still_responding",
              "pr_light_qc", "plot_pr_light_events", "plot_pr_resting_level"}
 
 
@@ -247,6 +248,15 @@ def run_experiment_script(
 
         elif action == "paired_yoked_diff":
             ctx.log(f"Wrote: {exp.write_paired_yoked_diff()}")
+
+        elif action == "breaking_point":
+            ctx.log(f"Wrote: {exp.write_breaking_point()}")
+            ctx.log("\n".join(exp.breaking_point_lines()))
+
+        elif action == "plot_pr_still_responding":
+            fig = exp.plot_still_responding()
+            _save_figure(fig, analysis_dir / "pr_still_responding.png", ctx.log)
+            figures.append(("Still responding", fig))
 
         elif action == "plot_pr_cumulative_diff":
             bs = float(step.get("binsize", 1.0))

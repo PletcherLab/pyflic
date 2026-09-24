@@ -1,7 +1,7 @@
 # Python API
 
 Everything the GUI does is available from Python, which is where to go when you need
-something the interface does not offer — a custom figure, a analysis of your own, or a
+something the interface does not offer — a custom figure, an analysis of your own, or a
 pipeline driven from a notebook.
 
 ## Loading an experiment
@@ -10,8 +10,7 @@ pipeline driven from a notebook.
 from pyflic import load_experiment_yaml
 
 exp = load_experiment_yaml(
-    "/path/to/project_dir",
-    config_name="flic_config.yaml",  # which YAML in the project directory
+    "/path/to/experiment_dir",       # the folder holding flic_config.yaml
     range_minutes=(0, 0),            # (start, end); (0, 0) = whole recording
     parallel=True,                   # load DFMs concurrently
     eager=True,                      # pre-compute the feeding summary now
@@ -27,6 +26,26 @@ Note `exclusion_group`: it defaults to applying the `general` group. Pass `None`
 want the unfiltered design, and be deliberate about which you want, because the two give
 different numbers. See [exclusions](config-dfms-chambers.md#excluding-chambers).
 
+## Loading a Project's members
+
+A member of a Project inherits the design's `global:` block, so load it through its
+Project rather than on its own — the Project supplies the design and the design's
+exclusion group:
+
+```python
+from pyflic import Project
+
+project = Project("/path/to/project")
+project.member_names                  # the members, in folder order
+exp = project.load_member("rep1")     # a loaded Experiment, design applied
+project.build_combined_analysis()     # stack the members' saved summaries
+```
+
+```python
+from pyflic import write_project_report
+write_project_report(project)         # builds the Combined Analysis if missing
+```
+
 ## Class hierarchy
 
 ```
@@ -37,8 +56,8 @@ Experiment (base)
     └── ProgressiveRatioExperiment
 ```
 
-All subclasses share the same core API; the specialised methods — breakpoint analysis,
-weighted durations — live on the subclasses. See
+All subclasses share the same core API; the specialised methods — weighted durations,
+the Progressive Ratio tables below — live on the subclasses. See
 [Experiment types](concepts-experiment-types.md).
 
 ## Working with an experiment
@@ -77,6 +96,38 @@ with `fig.savefig(...)` and the latter with `p.save(...)`.
 from pyflic import write_experiment_report
 write_experiment_report(exp)
 ```
+
+## Progressive Ratio experiments
+
+A `ProgressiveRatioExperiment` adds the chamber-group tables and figures. Every method
+works on the loaded design, so run `exp.auto_remove_chambers()` first — as basic analysis
+does — when you want the numbers the pipeline reports.
+
+```python
+exp.roles_table()                 # DFM, Chamber, Group, Role, Partner
+exp.training_table()              # per chamber group: training end, complete or not
+exp.paired_yoked_diff()           # paired − yoked, per group per Facet
+exp.light_qc_table()              # the light QC verdict per group
+exp.light_events_ledger()         # every Test light event, with Counted
+
+exp.breaking_point_summary()      # BreakingPoint, BreakMin, Censored, TestMinutes, ...
+exp.breaking_point_sensitivity(gaps=[60, 120, 240])
+exp.group_break(dfm_id=1, group=2)            # the first-gap rule's verdict for one group
+exp.chamber_persistence(dfm_id=1, chamber=3)  # (minutes, censored)
+
+exp.write_paired_yoked_diff()
+exp.write_light_qc()
+exp.write_breaking_point()        # analysis/pr_breaking_point.csv
+
+p = exp.plot_cumulative_diff()
+p = exp.plot_still_responding()
+p = exp.plot_breaking_point_dfm(1)
+p = exp.plot_light_events_dfm(1)
+```
+
+The rule's settings come from the design's `constants:` (`pr_break_gap_min`,
+`pr_test_window_min`); `exp.break_settings()` shows them. See
+[Progressive Ratio experiments](concepts-progressive-ratio.md).
 
 ## DFM objects
 
@@ -171,6 +222,9 @@ A set of tutorial notebooks exists in the repository under `doc/ToBeDepricated/`
 They are **deprecated** and will be removed in a future release. They exist for
 continuity with the original R workflow, and they are not updated alongside the code — if
 one disagrees with this help, the help is right.
+
+`ProgressiveRatio.ipynb` in particular predates chamber groups, the light QC and the
+breaking point, and uses the retired "configuration 1–4" argument.
 
 They are also not installed: they live in the repository, not in the package. Everything
 they demonstrate is covered by the hub, the [scripting system](scripts-overview.md), and

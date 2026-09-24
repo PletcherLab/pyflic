@@ -67,6 +67,27 @@ Two-well chambers report per-well values, suffixed `A` and `B` according to
 | `MeanIntA/B`, `MedianIntA/B`, `MinIntA/B`, `MaxIntA/B` | Intensities per well |
 | `OptoOn_sec_A`, `OptoOn_sec_B` | Light-on seconds per well |
 
+## Additional columns for Progressive Ratio experiments
+
+Every per-chamber row also says where the chamber sits in its chamber group and how the
+group fared. See [Progressive Ratio experiments](concepts-progressive-ratio.md).
+
+| Column | Meaning |
+|---|---|
+| `Group` | The chamber group, 1–3 (chambers 1+2, 3+4, 5+6) |
+| `Role` | `paired` or `yoked` |
+| `TrainingMinutes` | The group's training end, in minutes — the same on both chambers; blank if training never completed |
+| `TrainingComplete` | Whether the paired fly finished training |
+| `LightOn_sec` | Seconds the group's light was on |
+| `LightQC` | The group's light QC flags; empty when clean |
+| `LickFreeLightEvents` | Test light events the group's paired fly was credited no sucrose lick for |
+| `PersistA` | Sucrose persistence: minutes from training end to the chamber's last sucrose feeding event before a pause longer than `pr_break_gap_min`; blank on Training rows |
+| `PersistACensored` | `PersistA` is a lower bound: the fly was still feeding when its Test window ended |
+
+The paired − yoked difference of each metric is in `paired_yoked_diff.csv` as `d<metric>`
+(`dLicksA`, `dPI`, `dPersistA`, …). The breaking point is a property of the group, not of a
+chamber, so it has its own table, `pr_breaking_point.csv`.
+
 ## Metrics over time
 
 `feeding_summary` collapses the whole recording into one number per chamber. When you care

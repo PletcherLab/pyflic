@@ -387,6 +387,8 @@ one Facet, written to `paired_yoked_diff.csv` with one row per Chamber Group
 per Facet. Never a difference of group means: a group missing either chamber
 (excluded, or unassigned) contributes no row. Pooled by the Combined Analysis
 like any other summary, so statistics can be run on the difference directly.
+Two questions are asked of it: whether it is non-zero within a treatment
+(are paired and yoked flies different?) and whether treatments differ in it.
 _Avoid_: delta (used for per-period lick differences in the breaking-point
 table), effect, contrast (the model term, not the table).
 
@@ -413,7 +415,8 @@ signal, so the two can disagree, and the **light QC** exists to measure that.
 A Light Event is credited with the Sucrose Well licks from the end of the
 previous Light Event to the end of its own — the licks that earned it. The
 per-event table is the Paired chamber's breaking-point table, the **Light
-Event Ledger** (`pr_light_events.csv`).
+Event Ledger** (`pr_light_events.csv`), whose `Counted` column marks the
+events the **Breaking Point** holds.
 _Avoid_: light period (that is the lit interval, not its onset), trigger
 (which names the cause the light QC is testing, not the event).
 
@@ -443,6 +446,49 @@ Well Resting Level figure does, against the median of the DFM's other Sucrose
 Wells (never its yeast wells, which drift by hundreds of counts over a day).
 _Avoid_: baseline (that is the running median the baseline subtraction
 removes, over a 3-minute window), offset, DC level.
+
+**Breaking Point**:
+The number of lick-backed Test Light Events a Chamber Group's Paired fly
+completed before its first pause longer than `pr_break_gap_min` (Δt, default
+120 minutes) — the ordinal of the last ratio it met. The pauses run from the
+group's training end to the first event, between events, and from the last
+event to the end of the **Test window**; a Lick-free Light Event neither
+counts nor ends a pause, and a pause of exactly Δt does not end the count.
+`BreakMin` is the minute, since training end, of the last event counted. A
+property of the group, read from the Paired chamber: the Yoked fly has none,
+because its light is its partner's. One row per group in
+`pr_breaking_point.csv` (ADR-0014).
+_Avoid_: breakpoint, final ratio, Test light events (that raw count is
+`TestLightEvents` in the light QC, which ignores pauses and lick-free
+events), yoked breaking point.
+
+**Censored**:
+Said of a Breaking Point or a Sucrose Persistence when the Test window ended
+before any pause longer than Δt: the fly was still responding when the
+recording stopped, so the value is a lower bound, not a measurement. Written
+`n+` in text tables, drawn as an open symbol or a tick. The still-responding
+curve and the log-rank test treat it as a lower bound; the t-tests and the
+mixed model enter it as observed.
+_Avoid_: truncated (the Test window cap truncates; censoring is what that can
+cause), incomplete, missing.
+
+**Test window**:
+The span a Chamber Group's Breaking Point and Sucrose Persistence are judged
+over: from the group's training end to the end of the recording, capped at
+`pr_test_window_min` when that design constant is set (it is off by
+default). It differs between groups because training end does, which is what
+the cap is for.
+_Avoid_: Test phase (the Facet, which is never capped), session.
+
+**Sucrose Persistence**:
+For either fly of a Chamber Group, the minutes since training end of its last
+Sucrose Well feeding event before its first pause longer than Δt — the
+Breaking Point's rule applied to feeding events (the ones `EventsA` counts)
+over the same Test window, and so the one persistence measure the Yoked fly
+has too. `PersistA` on every per-chamber summary row (none on a Training
+row); `dPersistA`, Paired minus Yoked, in the Paired-Yoked Difference, with
+`dPersistCensored` when either fly is censored.
+_Avoid_: persistence (alone), latency, time to stop.
 
 ### Cross-app
 
@@ -524,6 +570,12 @@ _Avoid_: manual, documentation, the docs, USAGE.
   never finished Training, so every result table and the **Combined Analysis**
   stand on groups whose light followed the fly; the QC figures and
   `pr_light_qc.csv` keep it in view.
+- A **Breaking Point** belongs to a **Chamber Group** and is read from its
+  **Paired** chamber's **Light Events**; **Sucrose Persistence** belongs to
+  each chamber. One rule judges both over the group's **Test window**, and
+  either can be **Censored** (ADR-0014). Paired and yoked are compared on
+  Sucrose Persistence and the other feeding metrics, never on the Breaking
+  Point.
 - Many **Help buttons** across the apps open the one **Help window**; each
   names a single **Help topic**. A tooltip may summarise a topic but never
   restates it — the topic is the only copy of the text.
@@ -618,6 +670,12 @@ _Avoid_: manual, documentation, the docs, USAGE.
   lick-per-pairing ratio, because pyflic's feeding threshold misses brief
   touches the firmware counts (a healthy group trained on 5 lick samples over
   8 pairings).
+- "the breaking point" was described as "where `DeltaLicks` falls away",
+  read by eye, and then computed as every Test Light Event to the end of the
+  recording. Resolved (ADR-0014): the first pause longer than
+  `pr_break_gap_min` ends the count, lick-free events are ignored, and a group
+  still responding at the end of its Test window is **Censored**. The Yoked
+  fly has no breaking point.
 
 ## Migration
 

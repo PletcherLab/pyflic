@@ -80,6 +80,15 @@ def _readable_on(colour: str) -> str:
     return "#000000" if luminance > 0.6 else "#ffffff"
 
 
+def _add_help(group: CardGroup, ref: str, tooltip: str) -> None:
+    """Put a ``?`` opening *ref* at the top of *group*, if help is available."""
+    try:
+        from ..help import HelpButton
+    except Exception:  # noqa: BLE001 - help is optional, the editor is not
+        return
+    group.add_title_widget(HelpButton(ref, group, tooltip=tooltip))
+
+
 class PlotEditorWindow(QMainWindow):
     """The Plot Editor window."""
 
@@ -133,6 +142,7 @@ class PlotEditorWindow(QMainWindow):
                                        primary=True)
         self.render_btn.clicked.connect(self._render)
         top.addWidget(self.render_btn)
+        self._install_help(top)
         root.addLayout(top)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -147,6 +157,17 @@ class PlotEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
+
+    def _install_help(self, toolbar: QHBoxLayout) -> None:
+        """A ``?`` at the end of the toolbar, and F1, both opening this
+        editor's topic.  Guarded: the editor must start without help."""
+        try:
+            from ..help import HelpButton, install_help_shortcut
+        except Exception:  # noqa: BLE001 - help is optional, the editor is not
+            return
+        toolbar.addWidget(HelpButton("app-plot-editor", self,
+                                     tooltip="Help for the Plot Editor  (F1)"))
+        install_help_shortcut(self, "app-plot-editor")
 
     def _build_left(self) -> QWidget:
         """One scrolling column of groups, not a tab stack.
@@ -187,6 +208,7 @@ class PlotEditorWindow(QMainWindow):
 
     def _build_plot_group(self) -> CardGroup:
         group = CardGroup("This plot")
+        _add_help(group, "app-plot-editor#two-figure-families", "The two figure families")
         page = QWidget()
         form = QFormLayout(page)
         form.setContentsMargins(0, 0, 0, 0)
@@ -249,6 +271,7 @@ class PlotEditorWindow(QMainWindow):
     def _build_facets_group(self) -> CardGroup:
         """The Facets box, hidden whole for a time course — which has none."""
         self.facets_group = CardGroup("Facets")
+        _add_help(self.facets_group, "concepts-facets", "What a facet is")
         self.facet_list = QListWidget()
         self.facet_list.setMaximumHeight(110)
         self.facet_list.itemChanged.connect(self._apply_content)
@@ -264,6 +287,7 @@ class PlotEditorWindow(QMainWindow):
         marked as shared where it is edited.
         """
         group = CardGroup("Treatments")
+        _add_help(group, "app-plot-editor#one-panel-four-groups", "Labels, colours and which treatments are drawn")
         self.treatment_table = QTableWidget(0, 3)
         self.treatment_table.setHorizontalHeaderLabels(
             ["Treatment", "Label", "Colour"])
@@ -280,6 +304,7 @@ class PlotEditorWindow(QMainWindow):
 
     def _build_style_group(self) -> CardGroup:
         group = CardGroup("Style (shared across plots)")
+        _add_help(group, "app-plot-editor#spec-and-style", "Spec and Style: content versus a shared look")
         page = QWidget()
         form = QFormLayout(page)
         form.setContentsMargins(0, 0, 0, 0)

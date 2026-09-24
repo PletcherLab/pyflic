@@ -82,6 +82,20 @@ time course needs saved binned summaries — run a binned CSV in each member fir
 Preference-index plots are offered only for two-well projects; they have no meaning with a
 single well.
 
+## Progressive Ratio projects
+
+A Progressive Ratio Project adds **Paired − yoked cumulative licks since training**
+(`timecourse_pr_diff`), the type's headline figure, drawn from each member's
+`pr_cumulative_diff.csv` rather than the binned summary — run basic analysis in each member
+first. Its x axis is minutes since each chamber group's training end, zero is drawn as the
+reference line, and the mean is shown only over the range every group covers.
+
+The faceted figures (`faceted_licks`, `faceted_pi`, …) still pool the paired and yoked
+flies of each treatment. For a paired-versus-yoked statement use the Project Report, whose
+Progressive Ratio section plots and tests the within-group differences and the breaking
+point. See [Progressive Ratio experiments](concepts-progressive-ratio.md) and
+[Reports](reports.md).
+
 ## Marking members
 
 **Mark members by point shape** gives each member its own marker in a pooled figure,
@@ -96,3 +110,5 @@ lands in `figures/`.
 
 **Render figures** writes SVG (or PDF). SVG uses `svg.fonttype='none'`, so labels arrive in
 Illustrator as live, editable text rather than outlined paths.
+
+Press **F1**, or the `?` at the end of the toolbar, to open this topic.

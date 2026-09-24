@@ -4,14 +4,16 @@ What each figure shows, when it is produced, and what to look for in it.
 
 ## QC plots
 
-Written to `<config>_results/qc/` for every DFM whenever QC runs — including as part of
-basic analysis. These are diagnostics, not figures for a paper.
+Written to the member's `qc/` folder for every DFM whenever QC runs — the Hub's **QC
+reports** button, the `run_qc` script action, or `execute_basic_analysis()` from Python.
+The Hub's **Basic analysis** skips them; QC is the QC panel's job. These are diagnostics,
+not figures for a paper.
 
 | Plot | Saved as | Shows |
 |---|---|---|
-| Raw signal | `qc*/raw_signal/DFM{n}_raw.png` | Every well's unprocessed signal |
-| Baselined signal | `qc*/baselined/DFM{n}_baselined.png` | Every well after baseline subtraction, with thresholds drawn |
-| Cumulative licks | `qc*/cumulative_licks/DFM{n}_cumulative_licks.png` | Running lick total per well over time |
+| Raw signal | `qc/raw_signal/DFM{n}_raw.png` | Every well's unprocessed signal |
+| Baselined signal | `qc/baselined/DFM{n}_baselined.png` | Every well after baseline subtraction, with thresholds drawn |
+| Cumulative licks | `qc/cumulative_licks/DFM{n}_cumulative_licks.png` | Running lick total per well over time |
 
 The **baselined signal with thresholds** is the most useful one in the set. It puts your
 `feeding_threshold` and `feeding_minimum` lines directly on the trace, so whether they sit
@@ -26,7 +28,7 @@ inactive and should be excluded.
 ### Feeding summary
 
 Box-and-jitter panels grouped by treatment — or by factor combination when
-[factors](config-factors.md) are declared. Written to `analysis*/feeding_summary.png` by
+[factors](config-factors.md) are declared. Written to `analysis/feeding_summary.png` by
 basic analysis.
 
 Which metrics are panelled depends on the experiment type:
@@ -122,7 +124,8 @@ window is a different question rather than a filter on the same one.
 
 The Project-level publication figures (`faceted_pi` and friends in the
 [Plot Editor](app-plot-editor.md)) still pool the two roles; use the pooled
-`proj_PairedYokedDiff.csv` for a paired-vs-yoked statement across members.
+`<project>_PairedYokedDiff.csv` for a paired-vs-yoked statement across members, or the
+Project Report, which tests it.
 
 ### The type's own figures
 
@@ -138,9 +141,18 @@ group: paired and yoked cumulative sucrose-well licks since training end, with t
 which the group's light was on drawn as points and lick-free light events as black rings on
 the paired trace. A QC figure, not a result.
 
+**Still-responding curve** (`plot_pr_still_responding`, and the first figure of the Project
+Report's breaking point section) — per treatment, the fraction of paired flies whose
+[breaking point](concepts-progressive-ratio.md#breaking-point) reached each ratio. It is a
+Kaplan-Meier curve: a fly still responding when its Test window ended is censored, a lower
+bound, and is drawn as a tick where it leaves the curve rather than counted as having
+stopped.
+
 **Breaking-point plots** (`plot_breaking_point`) — per DFM, one panel per chamber:
-`DeltaLicks` per light-on period against minutes since training end. Provisional; the
-per-period table is the classic breaking-point readout and is kept in that spirit.
+`DeltaLicks` per light-on period against minutes since training end, the paired panel's
+strip giving the group's breaking point (`n+` when censored). A dashed line marks the break,
+the last light event the breaking point counts, on both chambers of the group; onsets past
+it are grey, and lick-free light events, which never count, are hollow red rings.
 
 All of these require light data (`OptoCol1`).
 
@@ -172,19 +184,15 @@ QC table**.
 Every panel's strip carries the group's light QC verdict. A group that failed — and so left
 the analysis — stays in these three figures, its strip saying why; the result figures
 (the cumulative difference curve, the dot plot) no longer contain it. See
-[Experiment types](concepts-experiment-types.md) for the checks behind the verdict.
-
-## Interactive or static
-
-The hub's **Interactive plots** checkbox controls how figures are embedded. Interactive
-gives pan, zoom and hover tooltips; static renders a PNG, which paints faster and uses less
-memory. Turn it off when generating many figures at once.
+[Light QC](concepts-progressive-ratio.md#light-qc) for the checks behind the verdict.
 
 ## Where plots are saved
 
-QC plots and the feeding summary are written automatically by basic analysis. Plots drawn
-from the hub's Plots card open as tabs; save them from the toolbar or produce them through
-a [script](scripts-actions.md) to write them to disk as part of a pipeline.
+Every figure the Hub's Plots panel draws is also written to the member's `analysis/` folder
+(the file names are in [Script actions](scripts-actions.md#plot-actions)), and opens as a tab
+in the output area. The Hub shows figures as static images, which paint fast and hold no live
+canvas in memory. Publication figures are the [Plot Editor](app-plot-editor.md)'s, written
+to the Project's `figures/`.
 
 ---
 

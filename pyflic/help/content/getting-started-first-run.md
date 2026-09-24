@@ -1,65 +1,67 @@
 # Running your first analysis
 
-With a project directory and a configuration file in place, you are ready to produce
-results. Start with the graphical hub — it is the fastest way to see whether your data
+With an experiment directory and a configuration file in place, you are ready to produce
+results. Start with the graphical Hub — it is the fastest way to see whether your data
 loaded correctly.
 
-## Open the hub
+## Open the Hub
 
 ```bash
 pyflic hub my_experiment/
 ```
 
-You can also run `pyflic hub` with no argument and choose the folder from the **Project**
-card.
+Pointed at an Experiment Directory, the Hub loads it straight away; the Output tab reports
+each DFM as it finishes. This is the slow step, and every later step reuses the result.
 
-## Load, then analyse
+Inside a Project, open the Project instead (`pyflic hub my_project/`, or **Open Project**
+in the Project panel) and **double-click a member's row** in the Experiments table to load
+it. Either way, once a member is loaded the Experiment tile unfolds its tools — **QC ·
+Analyze · Plots · Scripts · AI**. See [Analysis Hub](app-hub.md).
 
-1. **Load.** In the **Load** card, click **Load**. pyflic reads every CSV in `data/`,
-   subtracts the baseline, and runs bout detection. The output panel reports each DFM as
-   it finishes. This is the slow step; later steps reuse the result.
-2. **Analyze.** In the **Analyze** card, click **Basic analysis**. This runs the standard
-   pipeline in one go — quality-control reports, a text summary, a feeding-summary table,
-   and the feeding-summary plot.
+If loading fails, the message in the Output and Errors tabs usually names the problem
+directly: a DFM in the configuration with no matching CSV, or a chamber number outside the
+range the chamber layout allows. [Troubleshooting](troubleshooting.md) covers the common
+ones.
 
-If loading fails, the message in the output panel usually names the problem directly: a
-DFM in the configuration with no matching CSV, or a chamber number outside the range your
-`chamber_size` allows. [Troubleshooting](troubleshooting.md) covers the common ones.
+## Analyse
 
-## Where the results go
-
-Basic analysis writes four things into your project directory:
+Open **Analyze** and click **Basic analysis**. It applies the design's automatic chamber
+removal once, then writes the standard outputs into the member's folder:
 
 | Output | Path | What it is |
 |---|---|---|
-| QC reports | `<config>_results/qc/` | Per-DFM signal plots and integrity checks |
-| Text summary | `<config>_results/analysis/summary.txt` | Human-readable overview of the run |
-| Feeding summary | `<config>_results/analysis/feeding_summary.csv` | One row per chamber: licks, events, durations, intervals |
-| Summary plot | `<config>_results/analysis/feeding_summary.png` | The same data by treatment |
+| Removed chambers | `analysis/removed_chambers.csv` | What auto-removal took out, and why |
+| Text summary | `analysis/summary.txt` | Human-readable overview of the run |
+| Feeding summary | `analysis/feeding_summary.csv` | One row per chamber: licks, events, durations, intervals |
+| Faceted summary | `analysis/feeding_summary_facet.csv` | The same per [Facet](concepts-facets.md), when the experiment has them |
+| Summary plot | `analysis/feeding_summary.png` | The same data by treatment |
 
-`<config>` is the stem of your configuration file, so `flic_config.yaml` gives you
-`flic_config_results/`.
+An Experiment Type adds its own — a Progressive Ratio experiment writes its difference
+table, light QC, breaking point and figures too
+([Progressive Ratio experiments](concepts-progressive-ratio.md#outputs)).
+
+**PDF report** on the same panel writes `analysis/experiment_report.pdf`: quality control,
+the type's results with statistics, and the parameters used. See [Reports](reports.md).
 
 ## Look at the QC output before you believe anything
 
-This is the step that is easiest to skip and most expensive to skip. Open the QC viewer:
+This is the step that is easiest to skip and most expensive to skip. Basic analysis does
+not write QC; open **QC** and click **QC reports** to write the per-DFM integrity checks and
+signal plots into `qc/`, then **Open QC Viewer**.
 
-```bash
-pyflic qc my_experiment/
-```
-
-It shows you the raw and baselined signal per well, with detected events marked. What you
-are checking is whether the events pyflic found are the events *you* would have called by
-eye. If detection looks too eager or too conservative, that is a parameter question, not
-a data question — see [How feeding is detected](concepts-licks-events.md) and
-[Parameter reference](reference-parameters.md).
+The viewer shows you the raw and baselined signal per well, with detected events marked.
+What you are checking is whether the events pyflic found are the events *you* would have
+called by eye. If detection looks too eager or too conservative, that is a parameter
+question, not a data question — see [How feeding is detected](concepts-licks-events.md)
+and [Parameter reference](reference-parameters.md).
 
 The QC viewer can recompute with different parameters live, so you can try a value before
 committing it to your configuration file. See [QC Viewer](app-qc-viewer.md).
 
 ## From here
 
-- Draw more figures from the **Plots** card — [Plot catalogue](plots-catalog.md).
+- Draw more figures from the **Plots** panel — [Plot catalogue](plots-catalog.md).
 - Stop clicking the same buttons every time by defining a script —
   [What a script is](scripts-overview.md).
 - Understand the numbers you just produced — [Summary metrics](concepts-metrics.md).
+- Pool several recordings — [Projects and members](concepts-project.md).

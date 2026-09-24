@@ -729,3 +729,115 @@ def test_progressive_ratio_paired_chambers_round_trip(app, tmp_path):
         assert out["dfms"][0]["params"]["pi_direction"] == "right"
     finally:
         win.close()
+
+
+# ---------------------------------------------------------------------------
+# Progressive Ratio: the type's own constants (light QC, breaking point)
+# ---------------------------------------------------------------------------
+
+def _pr_cfg(constants: dict | None = None) -> dict:
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent))
+    from pr_fixtures import pr_config
+
+    return pr_config([{"id": 1, "pi_direction": "left", "paired_chambers": [1, 3, 5],
+                       "chambers": {1: "A", 2: "A", 3: "B", 4: "B", 5: "A", 6: "A"}}],
+                     constants=constants)
+
+
+def test_progressive_ratio_constants_show_for_that_type_only(editor):
+    _select_type(editor, "ProgressiveRatio")
+    form, w = editor._exp_form, editor._pr_constant_widgets
+    assert form.isRowVisible(editor._pr_header_row)
+    assert set(w) == {"require_training_complete", "exclude_failed_pr_groups",
+                      "pr_lick_free_run", "pr_trend_min_events", "pr_trend_min_rho",
+                      "pr_resting_level_rise", "pr_resting_level_ratio",
+                      "pr_break_gap_min", "pr_test_window_min"}
+    ## The type's defaults are placeholders, never values (ADR-0011).
+    assert "120" in w["pr_break_gap_min"].placeholderText()
+    assert "no cap" in w["pr_test_window_min"].placeholderText()
+    assert w["exclude_failed_pr_groups"].itemText(0) == "default: exclude the group"
+    assert "pr_break_gap_min" in w["pr_break_gap_min"].toolTip()
+    assert "constants" not in editor._collect_yaml()["global"]
+
+    _select_type(editor, "Hedonic")
+    assert not form.isRowVisible(editor._pr_header_row)
+    assert not form.isRowVisible(editor._pr_constant_rows["pr_break_gap_min"])
+
+
+def test_progressive_ratio_constants_are_written_only_when_set(editor):
+    _select_type(editor, "ProgressiveRatio")
+    w = editor._pr_constant_widgets
+    w["pr_break_gap_min"].setText("90")
+    w["pr_trend_min_rho"].setText("0.25")
+    w["exclude_failed_pr_groups"].setCurrentIndex(2)          # keep the group
+    assert editor._collect_yaml()["global"]["constants"] == {
+        "exclude_failed_pr_groups": False, "pr_trend_min_rho": 0.25,
+        "pr_break_gap_min": 90}
+    ## Another type drops them: they mean nothing to a Hedonic experiment.
+    _select_type(editor, "Hedonic")
+    assert "constants" not in editor._collect_yaml()["global"]
+
+
+def test_a_bad_progressive_ratio_value_is_reported_not_dropped(editor):
+    _select_type(editor, "ProgressiveRatio")
+    editor._pr_constant_widgets["pr_break_gap_min"].setText("soon")
+    editor._pr_constant_widgets["pr_trend_min_rho"].setText("2")
+    assert editor._collect_yaml()["global"]["constants"]["pr_break_gap_min"] == "soon"
+    experiment, _dfms = editor._problems()
+    assert any("pr_break_gap_min" in p and "number" in p for p in experiment)
+    assert any("pr_trend_min_rho" in p and "at most 1" in p for p in experiment)
+
+
+def test_progressive_ratio_constants_round_trip(app, tmp_path):
+    win = _open(app, tmp_path, _pr_cfg({"pr_break_gap_min": 180,
+                                        "pr_test_window_min": 600,
+                                        "require_training_complete": False,
+                                        "my_own_note": 3}))
+    try:
+        w = win._pr_constant_widgets
+        assert w["pr_break_gap_min"].text() == "180"
+        assert w["pr_test_window_min"].text() == "600"
+        assert w["require_training_complete"].currentData() is False
+        assert w["exclude_failed_pr_groups"].currentData() is None
+        assert w["pr_lick_free_run"].text() == ""
+        assert win._collect_yaml()["global"]["constants"] == {
+            "require_training_complete": False, "pr_break_gap_min": 180,
+            "pr_test_window_min": 600, "my_own_note": 3}
+        ## A cleared row goes back to the type's default: its key leaves.
+        w["pr_test_window_min"].clear()
+        assert "pr_test_window_min" not in win._collect_yaml()["global"]["constants"]
+    finally:
+        win.close()
+
+
+def test_a_member_shows_the_designs_progressive_ratio_constants_locked(app, tmp_path):
+    member = _project_with_member(
+        tmp_path,
+        {"experiment_type": "ProgressiveRatio",
+         "well_names": {"A": "Sucrose", "B": "Yeast"},
+         "constants": {"pr_break_gap_min": 240, "exclude_failed_pr_groups": False}},
+        {"dfms": [{"id": 1, "paired_chambers": [1, 3, 5],
+                   "chambers": {1: "Ctrl", 2: "Ctrl"}}]})
+    win = FLICConfigEditor(initial_path=member)
+    try:
+        w = win._pr_constant_widgets
+        assert w["pr_break_gap_min"].text() == "240"
+        assert w["exclude_failed_pr_groups"].currentData() is False
+        assert not w["pr_break_gap_min"].isEnabled()
+        assert "Project design" in w["pr_break_gap_min"].toolTip()
+        assert "global" not in win._collect_yaml()
+    finally:
+        win.close()
+
+
+def test_new_clears_the_progressive_ratio_constants(app, tmp_path):
+    win = _open(app, tmp_path, _pr_cfg({"pr_break_gap_min": 180,
+                                        "require_training_complete": False}))
+    try:
+        win._new()
+        w = win._pr_constant_widgets
+        assert w["pr_break_gap_min"].text() == ""
+        assert w["require_training_complete"].currentData() is None
+    finally:
+        win.close()
