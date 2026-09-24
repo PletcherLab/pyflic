@@ -186,6 +186,17 @@ def _parse_chamber_factor_assignments(
     return assignments, factor_levels
 
 
+def _safe_setting(value) -> str:
+    """An ``optogenetics:`` value as auto / yes / no, an invalid one as auto
+    (the type's validation has already reported it)."""
+    from . import opto_program as _opto
+
+    try:
+        return _opto.normalize_setting(value)
+    except ValueError:
+        return _opto.SETTING_AUTO
+
+
 def _load_dfm_for_config(
     dfm_id: int, params: Parameters, data_dir: str | Path, range_minutes: Sequence[float]
 ) -> DFM:
@@ -332,6 +343,37 @@ def load_experiment_yaml(
     elif not isinstance(dfm_nodes, list):
         raise ValueError("`dfms` must be either a list or a mapping keyed by DFM id.")
 
+    ## The Opto Program (data/Program.txt): read unless every DFM is
+    ## `optogenetics: no`.  More than one such file stops the load — which one
+    ## describes this recording is not a guess to make — and one that cannot be
+    ## read is reported and set aside, since the program is optional.
+    from . import opto_program as _opto
+
+    opto_setting = _safe_setting(global_cfg.get(_opto.SETTING_KEY))
+    dfm_opto_settings = [
+        _safe_setting(n.get(_opto.SETTING_KEY)) for n in dfm_nodes
+        if isinstance(n, Mapping) and n.get(_opto.SETTING_KEY) is not None]
+    opto_program = None
+    opto_program_error: str | None = None
+    if opto_setting != _opto.SETTING_NO or any(
+            v != _opto.SETTING_NO for v in dfm_opto_settings):
+        program_path = _opto.find_program(data_dir)
+        if program_path is not None:
+            try:
+                opto_program = _opto.read_program(program_path)
+            except _opto.ProgramError as err:
+                opto_program_error = str(err)
+                print(f"  WARNING: {program_path.name} not used: {err}", flush=True)
+            else:
+                print(f"Read {program_path.name}: DFM section(s) "
+                      f"{sorted(opto_program.dfms)}", flush=True)
+                if opto_program.warnings:
+                    print(f"  NOTE: {program_path.name}: {len(opto_program.warnings)} "
+                          f"line(s) skipped or sections dropped (see summary.txt)",
+                          flush=True)
+    program_notes: list[str] = []
+    resolved_nodes: list[dict] = []
+
     design = ExperimentDesign(experiment_type=experiment_type)
 
     # Read file-based exclusions once before the DFM loop.
@@ -376,6 +418,13 @@ def load_experiment_yaml(
                     f"{sorted(PHYSICAL_DFM_KEYS)} may vary per DFM."
                 )
 
+        problem = _opto.setting_problem(node.get(_opto.SETTING_KEY),
+                                        where=f"dfms[{dfm_id}].{_opto.SETTING_KEY}")
+        if problem and strict_type:
+            raise ValueError(f"{path.name}: {problem}")
+        if problem:
+            print(f"  WARNING: {problem}", flush=True)
+
         # Precedence: defaults < global < dfm
         overrides = {**global_overrides, **dfm_overrides}
 
@@ -395,6 +444,18 @@ def load_experiment_yaml(
         else:
             chamber_assignments = _parse_chamber_assignments(chambers_raw)
             chamber_factor_levels = {}
+
+        ## What the Opto Program says and the entry leaves out (Progressive
+        ## Ratio's paired chambers, from its trigger wells), filled in before
+        ## the type's per-DFM checks run on the result.
+        node, completion_notes = exp_type.complete_dfm_node(
+            dfm_id, dict(node), params=params,
+            dfm_program=(opto_program.section(dfm_id)
+                         if opto_program is not None else None))
+        for note in completion_notes:
+            print(f"  NOTE: {note}", flush=True)
+        program_notes.extend(completion_notes)
+        resolved_nodes.append(dict(node))
 
         ## Per-DFM constraints the type imposes (Progressive Ratio's paired
         ## chambers and same-treatment chamber groups).  Checked against the
@@ -541,6 +602,10 @@ def load_experiment_yaml(
     ## brings analysis of its own, from the type.
     _CLS = _resolve_experiment_class(exp_type, chamber_layout)
 
+    ## The resolved dfms: entries — what the Opto Program filled in included —
+    ## are what a type reads back (Progressive Ratio's paired chambers).
+    resolved_cfg = {k: v for k, v in cfg.items() if k not in ("global", "DFMs")}
+    resolved_cfg["dfms"] = resolved_nodes
     exp = _CLS(
         dfms=design.dfms,
         design=design,
@@ -551,7 +616,7 @@ def load_experiment_yaml(
         chamber_factors=chamber_factors_map or None,
         config_path=path,
         experiment_dir=resolved_experiment_dir,
-        config={"global": global_cfg, **{k: v for k, v in cfg.items() if k != "global"}},
+        config={"global": global_cfg, **resolved_cfg},
         experiment_type=exp_type,
         chamber_layout=chamber_layout,
         facet_cutoffs=exp_type.resolve_facet_cutoffs(global_cfg),
@@ -560,6 +625,10 @@ def load_experiment_yaml(
         parallel=bool(parallel),
         executor=executor,
         max_workers=max_workers,
+        optogenetics=opto_setting,
+        opto_program=opto_program,
+        opto_program_error=opto_program_error,
+        program_notes=program_notes,
     )
 
     if excluded_by_dfm:

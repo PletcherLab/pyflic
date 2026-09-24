@@ -112,6 +112,21 @@ lick-free light events) and **implausible training** fail a group, and with
 resting-level figures on the QC panel show why. See
 [Light QC](concepts-progressive-ratio.md#light-qc).
 
+### The optogenetic light QC failed a group I trust
+
+Open `qc/opto/opto_light_qc.csv` and the **Light explained by licks (QC)** figure. Red light
+over an orange band is a trigger well the firmware read as touched while pyflic saw nothing:
+a drifting or leaking well, whose light is not evidence of feeding. Red light with no orange
+is light the firmware had no reason to switch on — check the lid and the linkage. A failed
+group is flagged, not excluded, unless `exclude_failed_opto_chambers` is on. Without
+`data/Program.txt` the check cannot tell an open-loop schedule from a stuck light, so it
+only warns. See [Optogenetic experiments](concepts-optogenetics.md).
+
+### "holds more than one Program.txt"
+
+`data/` may hold one `Program.txt`, the one the MCU exported for this recording. Remove the
+others; which one describes the run is not a guess pyflic will make.
+
 ### Most breaking points are censored
 
 `n+` means the group never paused longer than `pr_break_gap_min` before its Test window

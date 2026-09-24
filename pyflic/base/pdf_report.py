@@ -230,6 +230,8 @@ def _cover(experiment: Experiment, qc: dict, name: str) -> list[Any]:
     blocks.append(rl.Heading("At a glance", level=2, numbered=False))
     blocks.append(_integrity_callout(experiment, qc))
     blocks.append(_exclusion_callout(experiment))
+    ## The optogenetic light QC is every type's, not a type's own.
+    blocks.extend(experiment.opto.report_glance_blocks())
     blocks.extend(experiment.report_glance_blocks())
     blocks.append(rl.Contents())
     return blocks
@@ -411,6 +413,7 @@ def _qc_blocks(experiment: Experiment, qc: dict) -> list[Any]:
             "Automatic: the design's constants: cutoffs, applied once before any result "
             "was computed."))
         blocks.append(rl.Table(exclusions, caption="Chambers left out of the results"))
+    blocks.extend(experiment.opto.report_qc_blocks())
     blocks.extend(experiment.report_qc_blocks())
     return blocks
 

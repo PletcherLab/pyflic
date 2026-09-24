@@ -23,6 +23,9 @@ _PR_GATED = {"plot_breaking_point", "paired_yoked_diff", "breaking_point",
              "plot_pr_cumulative_diff", "plot_pr_cumulative_licks",
              "plot_pr_still_responding",
              "pr_light_qc", "plot_pr_light_events", "plot_pr_resting_level"}
+#: Steps that need an optogenetic experiment, of any type (optogenetics: yes,
+#: or auto with a Program.txt or light data).
+_OPTO_GATED = {"opto_light_qc", "plot_opto_light"}
 
 
 class ScriptContext:
@@ -112,6 +115,10 @@ def run_experiment_script(
             continue
         if action in _PR_GATED and not isinstance(exp, ProgressiveRatioExperiment):
             ctx.log(f"[Skip] {action} requires a Progressive Ratio experiment.")
+            continue
+        if action in _OPTO_GATED and not getattr(exp, "is_optogenetic", False):
+            ctx.log(f"[Skip] {action} needs an optogenetic experiment (optogenetics: "
+                    f"yes, or a data/Program.txt or light data).")
             continue
 
         analysis_dir = exp.analysis_dir
@@ -278,6 +285,21 @@ def run_experiment_script(
                 ctx.log(f"Wrote: {path}")
             lines = exp.light_qc_lines()
             ctx.log("\n".join(lines) if lines else "Light QC: every chamber group is ok.")
+
+        elif action == "opto_light_qc":
+            for path in exp.opto.write().values():
+                ctx.log(f"Wrote: {path}")
+            lines = exp.opto.lines()
+            ctx.log("\n".join(lines) if lines
+                    else "Opto light QC: every linkage group is ok.")
+
+        elif action == "plot_opto_light":
+            bs = float(step.get("binsize", 10.0))
+            out_dir = Path(exp.qc_dir) / "opto"
+            for dfm_id in exp.opto.dfm_ids():
+                fig = exp.opto.plot_dfm(dfm_id, binsize_min=bs)
+                _save_figure(fig, out_dir / f"opto_light_dfm{dfm_id}.png", ctx.log)
+                figures.append((f"Light explained by licks — DFM {dfm_id}", fig))
 
         elif action in ("plot_pr_light_events", "plot_pr_resting_level"):
             light_events = action == "plot_pr_light_events"

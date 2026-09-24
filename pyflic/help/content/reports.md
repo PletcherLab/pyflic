@@ -18,7 +18,7 @@ control section stands on the chambers that remain.
 | Section | What is in it |
 |---|---|
 | **Cover** | What was recorded (DFMs, dates, hours), the treatments with their chamber counts, design factors, wells, Facets, whether licks are transformed; **At a glance** — data integrity, exclusions and the type's own QC verdicts as coloured callouts; the contents |
-| **1 Quality control** | Data integrity per DFM (samples, hours, data breaks, firmware error flags, a continuous sample index); for two-well layouts, simultaneous feeding per chamber and the largest bleeding response between wells; every excluded chamber and why; then the Experiment Type's own checks |
+| **1 Quality control** | Data integrity per DFM (samples, hours, data breaks, firmware error flags, a continuous sample index); for two-well layouts, simultaneous feeding per chamber and the largest bleeding response between wells; every excluded chamber and why; for an optogenetic experiment, the optogenetic light QC — the program as read, the verdict per linkage group and the figure per DFM; then the Experiment Type's own checks |
 | **2 Results** | The figures the assay is read by, each with its treatment statistics |
 | **Appendix A** | Every feeding-summary metric by treatment, for reference |
 | **Appendix B** | The detection parameters and the `constants:` block the analysis used |
@@ -55,7 +55,7 @@ builds the Combined Analysis first when there is none.
 |---|---|
 | **Cover** | The Project, its members, pooled chambers and treatments, factors and Facets; **At a glance** — missing members, exclusions, the type's QC flags; the contents |
 | **1 Members** | One row per member: DFMs, chambers analysed and excluded, whether its analysis is current, whether it has a report |
-| **2 Quality control** | Every excluded chamber across members with its reason; for Progressive Ratio, every chamber group the light QC flagged and whether the pooled numbers include it |
+| **2 Quality control** | Every excluded chamber across members with its reason; every group a light QC flagged — Progressive Ratio chamber groups and optogenetic linkage groups, marked by source — and whether the pooled numbers include it |
 | **3 Results** | The type's pooled figures (the Plot Editor's styles), the type's own pooled figures (Progressive Ratio: the breaking point, led by its still-responding curve, and the paired − yoked difference), and the statistics as tables — pooled test and linear mixed model (DFM nested within experiment) side by side, with the log-rank test for the breaking point and the paired − yoked difference tested against zero |
 | **Appendix** | The Design's detection parameters and constants |
 

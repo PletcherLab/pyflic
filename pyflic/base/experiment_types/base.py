@@ -168,6 +168,20 @@ class ExperimentType:
         """
         return []
 
+    def complete_dfm_node(self, dfm_id: int, node: dict, *, params=None,
+                          dfm_program=None) -> tuple[dict, list[str]]:
+        """``(node, notes)``: one ``dfms:`` entry with what the Opto Program
+        implies and the entry leaves out filled in, and one note per thing
+        taken from the program or contradicting it.
+
+        *params* is the DFM's resolved :class:`~pyflic.base.parameters.Parameters`
+        and *dfm_program* its :class:`~pyflic.base.opto_program.DFMProgram`, or
+        ``None`` without a ``Program.txt`` section.  The base type takes
+        nothing from the program; Progressive Ratio derives ``paired_chambers``
+        from its trigger wells.  Never raises.
+        """
+        return node, []
+
     def report_facets(self) -> list[str] | None:
         """Facet labels the type's report figures show by default, or ``None``
         for every Facet.  A default, not a gate — the Plot Editor can still
@@ -206,6 +220,15 @@ class ExperimentType:
                     f"experiment_type '{self.name}' requires well_names for "
                     f"{', '.join(missing)}"
                 )
+        ## The optogenetic light QC applies to every type, so its setting and
+        ## its constants are checked here, once, for all of them.
+        from ..opto_program import SETTING_KEY, setting_problem
+        from ..opto_qc import opto_constant_problems
+
+        problem = setting_problem(g.get(SETTING_KEY), where=f"global.{SETTING_KEY}")
+        if problem:
+            problems.append(problem)
+        problems += opto_constant_problems(g.get("constants"))
         return problems
 
     # ---- outputs ------------------------------------------------------

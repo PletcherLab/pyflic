@@ -67,8 +67,8 @@ _FLAG_TOLERANCE_MIN = 0.1
 BREAKING_POINT_COLUMNS: tuple[str, ...] = ("Minutes", "CumLicks", "DeltaMinutes",
                                            "DeltaLicks")
 #: The Light Event Ledger columns a Paired chamber's table adds (light QC).
-LEDGER_COLUMNS: tuple[str, ...] = ("MinutesSincePrev", "LicksSincePrev", "LickFree",
-                                   "RestingLevel")
+LEDGER_COLUMNS: tuple[str, ...] = ("MinutesSincePrev", "LicksSincePrev", "Explained",
+                                   "LickFree", "RestingLevel")
 #: One row per Chamber Group — ``analysis/pr_light_qc.csv``.
 LIGHT_QC_COLUMNS: tuple[str, ...] = (
     "DFM", "Group", "PairedChamber", "YokedChamber", "SucroseWell", "Treatment",
@@ -430,7 +430,12 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         * ``LicksSincePrev`` — Sucrose Well licks from the end of the previous
           event to the end of this one (:func:`pr_light_qc.licks_between_events`),
           so the first Test event counts from the last Training one;
-        * ``LickFree`` — ``LicksSincePrev == 0``;
+        * ``Explained`` — Sucrose Well activity, a feeding lick or a tasting
+          touch, within the light's decay plus the tolerance before the event
+          to the tolerance after it (the Opto Program's decay; without one,
+          ``opto_default_decay_ms``) — Explained Light, as the optogenetic
+          light QC defines it;
+        * ``LickFree`` — ``LicksSincePrev == 0`` and not ``Explained``;
         * ``RestingLevel`` — the Sucrose Well's Resting Level in the onset's
           minute.
         """
@@ -448,6 +453,16 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         end = float(gt.training_end) if gt.complete else np.inf
         cum = np.cumsum(licks & (mins > end))
         counts = lqc.licks_between_events(licks, ends)
+        ## Decay-aware: the firmware keeps the light on for the program's decay
+        ## after the lick that earned it, and a brief touch it counts may sit
+        ## under pyflic's feeding threshold.  Activity at the Sucrose Well
+        ## within that window explains the event, as it explains light for the
+        ## optogenetic light QC; only an event with neither is lick-free.
+        column = f"W{gt.sucrose_well}"
+        tasting = (dfm.tasting_df[column].to_numpy(dtype=bool)
+                   if dfm.tasting_df is not None and column in dfm.tasting_df.columns
+                   else np.zeros(licks.size, dtype=bool))
+        explained = self._events_explained(dfm_id, licks | tasting, onsets, ends)
         levels = self.resting_levels(dfm_id)
         column = f"W{gt.sucrose_well}"
         if column in levels.columns and onsets.size:
@@ -461,11 +476,28 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             "CumLicks": cum[onsets].astype(float),
             "MinutesSincePrev": np.diff(on_min, prepend=np.nan),
             "LicksSincePrev": counts,
-            "LickFree": counts == 0,
+            "Explained": explained,
+            "LickFree": (counts == 0) & ~explained,
             "RestingLevel": rest,
         })
         cache[key] = table
         return table
+
+    def _events_explained(self, dfm_id: int, activity: np.ndarray,
+                          onsets: np.ndarray, ends: np.ndarray) -> np.ndarray:
+        """Whether *activity* falls from each event's onset less the decay and
+        tolerance to its end plus the tolerance."""
+        onsets = np.asarray(onsets, dtype=int)
+        if onsets.size == 0:
+            return np.zeros(0, dtype=bool)
+        n = int(np.asarray(activity).size)
+        decay = self.opto.decay_samples(dfm_id)
+        tol = int(self.opto.settings().tolerance_samples)
+        cum = np.concatenate([[0], np.cumsum(np.asarray(activity, dtype=bool),
+                                             dtype=np.int64)])
+        lo = np.clip(onsets - decay[onsets] - tol, 0, n)
+        hi = np.clip(np.asarray(ends, dtype=int) + tol, 0, n)
+        return (cum[hi] - cum[lo]) > 0
 
     def _light_qc_row(self, dfm_id: int, group: int,
                       settings: lqc.LightQCSettings) -> dict:
@@ -497,6 +529,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             resting=resting,
             reference_level=reference_level,
             any_light=len(events) > 0,
+            lick_free=test["LickFree"].to_numpy(dtype=bool),
         )
         run_start = (float(test["Minutes"].iloc[verdict.lick_free_run_start])
                      if verdict.lick_free_run_start is not None else np.nan)
@@ -673,7 +706,8 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                "--------------------------",
                "Did the paired fly earn its light?  The firmware lights a group from",
                "its own reading of the paired Sucrose Well; a lick-free light event",
-               "has no Sucrose Well licks since the previous light event ended.",
+               "has no Sucrose Well licks since the previous light event ended, and",
+               "no Sucrose Well lick or touch within the light's decay around it.",
                "Computed over the whole recording, whatever window a table uses.",
                f"Settings: {settings.describe()}", ""]
         if table.empty:
@@ -738,7 +772,8 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             return df
         if "Role" not in df.columns:
             df = self._augment_role_rows(df)
-        return self._with_persistence_columns(self._with_light_qc_columns(df))
+        df = self._with_persistence_columns(self._with_light_qc_columns(df))
+        return self.opto.with_columns(df)
 
     def _with_persistence_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """``PersistA`` and ``PersistACensored`` on every row: the chamber's

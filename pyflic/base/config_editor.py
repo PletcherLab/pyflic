@@ -492,6 +492,32 @@ def _number_or_text(text: str) -> Any:
     return int(value) if value.is_integer() else value
 
 
+#: The ``optogenetics:`` choices: (label, the value written to the yaml).
+#: ``auto`` is the default and is written as nothing.
+_OPTO_CHOICES: tuple[tuple[str, Any], ...] = (
+    ("auto — Program.txt or light data", "auto"),
+    ("yes — every DFM", True),
+    ("no — none", False),
+)
+
+
+def _opto_index(value: Any, *, inherit: bool = False) -> int:
+    """The combo index for an ``optogenetics:`` value; with *inherit* the first
+    entry is "inherit" and an unset value selects it."""
+    from .opto_program import SETTING_AUTO, SETTING_YES, normalize_setting
+
+    offset = 1 if inherit else 0
+    if value is None:
+        return 0
+    try:
+        setting = normalize_setting(value)
+    except ValueError:
+        return 0
+    if setting == SETTING_AUTO:
+        return offset
+    return offset + (1 if setting == SETTING_YES else 2)
+
+
 def _switch_value(value: Any) -> bool | None:
     """A yaml switch as True / False, or None when unset or unreadable."""
     if isinstance(value, bool):
@@ -653,6 +679,20 @@ class DFMWidget(QWidget):
         self._id_spin.setValue(dfm_id)
         self._id_spin.setMaximumWidth(80)
         id_inner.addWidget(self._id_spin)
+        id_inner.addSpacing(18)
+        ## Per-DFM optogenetics: a physical fact about this DFM (was its lid
+        ## lit?), so it stays free inside a Project, like the rest of dfms:.
+        id_inner.addWidget(QLabel("Optogenetics:"))
+        self._opto_combo = QComboBox()
+        self._opto_combo.addItem("inherit", None)
+        for label, value in _OPTO_CHOICES:
+            self._opto_combo.addItem(label.split(" —")[0], value)
+        self._opto_combo.setToolTip(
+            "optogenetics for this DFM alone — inherit takes the experiment's "
+            "setting; auto runs the light QC when data/Program.txt has a section "
+            "for this DFM or its LEDs were ever lit; yes always; no never.")
+        self._opto_combo.setMaximumWidth(110)
+        id_inner.addWidget(self._opto_combo)
         id_inner.addStretch()
         id_card.add_body(id_inner)
         outer.addWidget(id_card)
@@ -997,8 +1037,15 @@ class DFMWidget(QWidget):
 
         self.revalidate_chambers()
 
+    def optogenetics(self) -> Any:
+        """This DFM's ``optogenetics:`` value, or ``None`` to inherit."""
+        return self._opto_combo.currentData()
+
     def get_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {"id": self._id_spin.value()}
+        opto = self.optogenetics()
+        if opto is not None:
+            result["optogenetics"] = opto
 
         overrides = self._params_form.get_values()
         if overrides:
@@ -1033,6 +1080,8 @@ class DFMWidget(QWidget):
 
     def load_dict(self, data: dict[str, Any], chamber_size: int) -> None:
         self._id_spin.setValue(int(data.get("id", self._id_spin.value())))
+        self._opto_combo.setCurrentIndex(_opto_index(data.get("optogenetics"),
+                                                     inherit=True))
         if data.get("paired_chambers") is not None:
             self.set_paired_chambers(data.get("paired_chambers"))
 
@@ -1314,6 +1363,21 @@ class FLICConfigEditor(QMainWindow):
         self._transform_licks_check.setChecked(True)
         self._exp_form.addRow("Transform Licks:", self._transform_licks_check)
 
+        ## Whether the optogenetic light QC runs (auto | yes | no); a DFM tab
+        ## can override it for that DFM.
+        self._opto_combo = QComboBox()
+        for label, value in _OPTO_CHOICES:
+            self._opto_combo.addItem(label, value)
+        self._opto_combo.setMaximumWidth(260)
+        self._opto_combo.setToolTip(
+            "optogenetics — auto (the default) runs the optogenetic light QC on "
+            "every DFM with a section in data/Program.txt or a lit LED in its "
+            "data; yes on every DFM, and a DFM with no light at all fails; no "
+            "never.  Any experiment type.")
+        self._opto_combo.currentIndexChanged.connect(self._refresh_opto_rows)
+        self._opto_combo.currentIndexChanged.connect(self._refresh_badges)
+        self._exp_form.addRow("Optogenetics:", self._opto_combo)
+
         # Auto-filter thresholds (used by auto_remove_chambers)
         filter_header = QLabel("Auto-filter Thresholds  (used by auto_remove_chambers)")
         filter_header.setObjectName("PyflicSectionDivider")
@@ -1371,6 +1435,39 @@ class FLICConfigEditor(QMainWindow):
             self._pr_constant_rows[field.key] = self._exp_form.rowCount()
             self._exp_form.addRow(f"{label}:", widget)
             self._pr_constant_widgets[field.key] = widget
+
+        ## The optogenetic light QC's constants, every type's: shown when the
+        ## experiment is optogenetic (optogenetics yes, or a Program.txt in
+        ## data/, or a run that already found light), with the same contract
+        ## as the rows above — defaults as placeholders, typed values saved.
+        from .opto_qc import DEFAULT_CONSTANTS as _OPTO_DEFAULTS
+        from .opto_qc import OPTO_CONSTANT_FIELDS
+
+        opto_header = QLabel("Optogenetic light QC  (every experiment type)")
+        opto_header.setObjectName("PyflicSectionDivider")
+        self._opto_header_row = self._exp_form.rowCount()
+        self._exp_form.addRow(opto_header)
+        self._opto_constant_widgets: dict[str, QWidget] = {}
+        self._opto_constant_rows: dict[str, int] = {}
+        for field in OPTO_CONSTANT_FIELDS:
+            default = _OPTO_DEFAULTS.get(field.key)
+            if field.group == "switch":
+                widget = QComboBox()
+                widget.addItem("default: " + field.choices[0 if default else 1], None)
+                widget.addItem(field.choices[0], True)
+                widget.addItem(field.choices[1], False)
+                widget.currentIndexChanged.connect(self._refresh_badges)
+                label = field.short_label or field.label
+            else:
+                widget = QLineEdit()
+                widget.setPlaceholderText(f"{_fmt_number(default)}  (default)")
+                widget.textChanged.connect(self._refresh_badges)
+                label = field.label
+            widget.setMaximumWidth(260)
+            widget.setToolTip(field.tooltip)
+            self._opto_constant_rows[field.key] = self._exp_form.rowCount()
+            self._exp_form.addRow(f"{label}:", widget)
+            self._opto_constant_widgets[field.key] = widget
 
         exp_card.add_body(self._exp_form)
         ## Top-aligned: in a plain hbox the shorter of the two cards is
@@ -1649,6 +1746,50 @@ class FLICConfigEditor(QMainWindow):
             else:
                 widget.setPlaceholderText(
                     f"{_fmt_number(default)}  (default for {item.display_name})")
+        self._refresh_opto_rows()
+
+    def _opto_rows_apply(self) -> bool:
+        """Whether the optogenetic light QC's rows are shown: optogenetics is
+        yes, or it is auto and the experiment has shown itself to be
+        optogenetic — a Program.txt in data/, or light QC files from a run."""
+        value = self._opto_combo.currentData() if hasattr(self, "_opto_combo") else "auto"
+        if value is False:
+            return False
+        if value is True:
+            return True
+        if self._current_path is None:
+            return False
+        from .opto_program import find_program
+
+        directory = self._current_path.parent
+        try:
+            if find_program(directory / "data") is not None:
+                return True
+        except ValueError:
+            return True             # more than one Program.txt: still optogenetic
+        return (directory / "qc" / "opto" / "opto_light_qc.csv").is_file()
+
+    def _refresh_opto_rows(self, *_args) -> None:
+        if not hasattr(self, "_opto_constant_widgets"):
+            return
+        shown = self._opto_rows_apply()
+        self._exp_form.setRowVisible(self._opto_header_row, shown)
+        for row in self._opto_constant_rows.values():
+            self._exp_form.setRowVisible(row, shown)
+
+    def _load_opto_constants(self, constants: dict[str, Any]) -> None:
+        from .opto_qc import OPTO_CONSTANT_FIELDS
+
+        for field in OPTO_CONSTANT_FIELDS:
+            widget = self._opto_constant_widgets[field.key]
+            value = constants.get(field.key)
+            if field.group == "switch":
+                state = _switch_value(value)
+                widget.blockSignals(True)
+                widget.setCurrentIndex(0 if state is None else (1 if state else 2))
+                widget.blockSignals(False)
+            else:
+                widget.setText("" if value is None else _fmt_number(value))
 
     def _load_pr_constants(self, constants: dict[str, Any]) -> None:
         """Fill the Progressive Ratio rows from a ``constants:`` block: what it
@@ -1927,6 +2068,11 @@ class FLICConfigEditor(QMainWindow):
         if not self._transform_licks_check.isChecked():
             global_section["transform_licks"] = False
 
+        ## optogenetics: only yes / no are written; auto is the default.
+        opto = self._opto_combo.currentData()
+        if isinstance(opto, bool):
+            global_section["optogenetics"] = opto
+
         # Well names
         if self._chamber_size() == 2:
             wa = self._well_a_edit.text().strip()
@@ -1964,11 +2110,28 @@ class FLICConfigEditor(QMainWindow):
                 text = widget.text().strip()
                 if text:
                     constants[field.key] = _number_or_text(text)
+        from .opto_qc import OPTO_CONSTANT_FIELDS
+
+        opto_managed: set[str] = set()
+        if self._opto_rows_apply():
+            opto_managed = {field.key for field in OPTO_CONSTANT_FIELDS}
+            for field in OPTO_CONSTANT_FIELDS:
+                widget = self._opto_constant_widgets[field.key]
+                if field.group == "switch":
+                    value = widget.currentData()
+                    if value is not None:
+                        constants[field.key] = bool(value)
+                    continue
+                text = widget.text().strip()
+                if text:
+                    constants[field.key] = _number_or_text(text)
         ## A constant this form has no field for was typed into the yaml by
         ## hand; keep it on save.  The Progressive Ratio rows are managed like
-        ## the cutoffs: a cleared row, or another type, drops its key.
+        ## the cutoffs: a cleared row, or another type, drops its key.  The
+        ## optogenetic rows are managed only while they are shown, so a hidden
+        ## section keeps what the file says.
         managed = ({key for _widget, key in self._threshold_fields()}
-                   | {field.key for field in PR_CONSTANT_FIELDS})
+                   | {field.key for field in PR_CONSTANT_FIELDS} | opto_managed)
         loaded = (self._loaded_raw.get("global") or {}).get("constants") or {}
         for key, value in loaded.items():
             if key not in managed:
@@ -2079,6 +2242,16 @@ class FLICConfigEditor(QMainWindow):
             widget = self._pr_constant_widgets[field.key]
             widget.setEnabled(not governed)
             widget.setToolTip(reason or field.tooltip)
+        from .opto_qc import OPTO_CONSTANT_FIELDS
+
+        for field in OPTO_CONSTANT_FIELDS:
+            widget = self._opto_constant_widgets[field.key]
+            widget.setEnabled(not governed)
+            widget.setToolTip(reason or field.tooltip)
+        self._opto_combo.setEnabled(not governed)
+        if governed:
+            self._opto_combo.setToolTip(
+                reason + " — a DFM tab can still override optogenetics for its DFM")
         self._global_params.set_read_only(governed, reason=reason)
         self._factors_widget.set_read_only(governed, reason=reason)
         ## Re-assert the Experiment Type's claim on the layout: the loop above
@@ -2176,6 +2349,9 @@ class FLICConfigEditor(QMainWindow):
 
         # Lick transformation toggle
         self._transform_licks_check.setChecked(bool(global_cfg.get("transform_licks", True)))
+        self._opto_combo.blockSignals(True)
+        self._opto_combo.setCurrentIndex(_opto_index(global_cfg.get("optogenetics")))
+        self._opto_combo.blockSignals(False)
 
         # Filter thresholds
         constants = global_cfg.get("constants") or {}
@@ -2188,6 +2364,8 @@ class FLICConfigEditor(QMainWindow):
             val = constants.get(key)
             getattr(self, attr).setText("" if val is None else str(val))
         self._load_pr_constants(constants)
+        self._load_opto_constants(constants)
+        self._refresh_opto_rows()
 
         # Experimental design factors
         factors_node = global_cfg.get("experimental_design_factors") or {}
@@ -2261,6 +2439,8 @@ class FLICConfigEditor(QMainWindow):
         self._max_dur_edit.clear()
         self._max_events_edit.clear()
         self._load_pr_constants({})
+        self._load_opto_constants({})
+        self._opto_combo.setCurrentIndex(0)
         self._transform_licks_check.setChecked(True)
 
         self._experiment_type_combo.blockSignals(True)

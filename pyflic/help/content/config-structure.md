@@ -6,6 +6,7 @@
 global:
   experiment_type: ...                   # or chamber_layout: for a Custom experiment
   transform_licks: ...                   # optional
+  optogenetics: ...                      # optional: auto (default), true or false
   constants: { ... }                     # optional
   params: { ... }                        # optional
   facet_cutoffs: [ ... ]                 # optional
@@ -46,6 +47,18 @@ A typed config states neither `chamber_layout` nor `params.chamber_size`: the ty
 them. A Progressive Ratio config also needs
 `paired_chambers` on every DFM (see [DFMs and chambers](config-dfms-chambers.md)). See
 [Experiment types](concepts-experiment-types.md).
+
+## `global.optogenetics`
+
+Whether the optogenetic light QC runs: `auto` (the default) on every DFM with a section in
+`data/Program.txt` or a lit LED, `true` on every DFM, `false` on none. A DFM entry may
+override it for that DFM. Its thresholds are more `constants:`, shared by every type. See
+[Optogenetic experiments](concepts-optogenetics.md).
+
+```yaml
+global:
+  optogenetics: true
+```
 
 ## `global.transform_licks`
 
@@ -108,7 +121,12 @@ A Progressive Ratio experiment adds its own, all with defaults:
 | `pr_test_window_min` | unset (off) | Minutes. Caps every chamber group's Test window at this long after its own training end, so a group that trained late is not measured over less time; `0` or unset means no cap |
 
 What the light QC checks, and how the breaking point is defined, is in
-[Progressive Ratio experiments](concepts-progressive-ratio.md). The Project Design
+[Progressive Ratio experiments](concepts-progressive-ratio.md).
+
+Every optogenetic experiment, of any type, reads the optogenetic light QC's constants too —
+`exclude_failed_opto_chambers` (off by default: failed linkage groups are flagged, not
+excluded) and seven thresholds whose names start `opto_`. They are listed in
+[Optogenetic experiments](concepts-optogenetics.md#thresholds). The Project Design
 dialog and the [Config Editor](app-config-editor.md) show these as fields for a
 Progressive Ratio experiment, the type's default in grey. A value of the wrong kind or out
 of range — a switch that is not `true` or `false`, a gap of 0, a rho above 1 — is a

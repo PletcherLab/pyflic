@@ -41,8 +41,10 @@ from PyQt6.QtWidgets import (
 )
 
 from . import experiment_types, project as project_mod
-from .config_editor import FactorsWidget, ParamsForm
+from .config_editor import _OPTO_CHOICES, FactorsWidget, ParamsForm, _opto_index
 from .experiment_types.progressive_ratio import PR_CONSTANT_FIELDS
+from .opto_qc import DEFAULT_CONSTANTS as OPTO_DEFAULTS
+from .opto_qc import OPTO_CONSTANT_FIELDS
 from .ui import Category, icon
 from .ui.widgets import Card, CardGroup
 
@@ -69,6 +71,9 @@ _PR_BREAK_ROWS: tuple[tuple[str, str, str], ...] = tuple(
     (f.key, f.label, f.tooltip) for f in PR_CONSTANT_FIELDS if f.group == "break")
 _PR_KEYS = {key for key, _l, _t in (*_PR_SWITCH_ROWS, *_PR_NUMBER_ROWS, *_PR_BREAK_ROWS)}
 _MANAGED_KEYS = {key for key, _l, _p in _CONSTANT_ROWS} | _PR_KEYS
+#: The optogenetic light QC's constants (``opto_qc.OPTO_CONSTANT_FIELDS``),
+#: every type's; managed only while their group is shown.
+_OPTO_KEYS = {f.key for f in OPTO_CONSTANT_FIELDS}
 
 
 def _add_help(target: Card | CardGroup, ref: str, tooltip: str) -> None:
@@ -252,6 +257,17 @@ class ProjectDesignDialog(QDialog):
         self.transform_check.setChecked(True)
         form.addRow("Transform licks:", self.transform_check)
 
+        self.opto_combo = QComboBox()
+        for label, value in _OPTO_CHOICES:
+            self.opto_combo.addItem(label, value)
+        self.opto_combo.setToolTip(
+            "optogenetics — auto (the default) runs the optogenetic light QC on "
+            "every member DFM with a section in its data/Program.txt or a lit LED; "
+            "yes on every DFM; no never.  A member's DFM entry may override it for "
+            "that DFM, because whether a lid was lit is a fact about the recording.")
+        self.opto_combo.currentIndexChanged.connect(self._on_opto_changed)
+        form.addRow("Optogenetics:", self.opto_combo)
+
         self.cutoffs_edit = QLineEdit()
         self.cutoffs_edit.setPlaceholderText("e.g. 10, 70  (minutes)")
         form.addRow("Facet cutoffs:", self.cutoffs_edit)
@@ -356,7 +372,41 @@ class ProjectDesignDialog(QDialog):
                   "How the breaking point and sucrose persistence are measured")
         self.pr_break_group.setVisible(False)
         card.add_body(self.pr_break_group)
+
+        ## The optogenetic light QC's thresholds, for every type; hidden when
+        ## optogenetics is "no", and then it writes nothing of its own.
+        self.opto_group = CardGroup(
+            "Optogenetic light QC",
+            note="Was the light where the licks were?  Every experiment type; "
+                 "blank takes the default.  Hover a field for what it does.")
+        oform = QFormLayout()
+        oform.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.opto_switch_checks: dict[str, QCheckBox] = {}
+        self.opto_number_edits: dict[str, QLineEdit] = {}
+        for field in OPTO_CONSTANT_FIELDS:
+            default = OPTO_DEFAULTS.get(field.key)
+            if field.group == "switch":
+                check = QCheckBox(field.label)
+                check.setChecked(bool(default))
+                check.setToolTip(field.tooltip)
+                self.opto_switch_checks[field.key] = check
+                oform.addRow("", check)
+            else:
+                edit = QLineEdit()
+                edit.setMaximumWidth(240)
+                edit.setToolTip(field.tooltip)
+                edit.setPlaceholderText(f"{default:g}  (default)")
+                self.opto_number_edits[field.key] = edit
+                oform.addRow(f"{field.label}:", edit)
+        self.opto_group.add(oform)
+        _add_help(self.opto_group, "concepts-optogenetics",
+                  "What the optogenetic light QC checks, and what its thresholds do")
+        card.add_body(self.opto_group)
         return card
+
+    def _on_opto_changed(self) -> None:
+        self.opto_group.setVisible(self.opto_combo.currentData() is not False)
 
     # ------------------------------------------------------------------
     # Reacting to choices
@@ -582,6 +632,16 @@ class ProjectDesignDialog(QDialog):
                           else str(value)))
         for key, check in self.pr_switch_checks.items():
             check.setChecked(_truthy(constants.get(key, True)))
+        for key, edit in self.opto_number_edits.items():
+            value = constants.get(key)
+            edit.setText("" if value is None else
+                         (f"{value:g}" if isinstance(value, float) else str(value)))
+        for key, check in self.opto_switch_checks.items():
+            check.setChecked(_truthy(constants.get(key, OPTO_DEFAULTS.get(key, False))))
+        self.opto_combo.blockSignals(True)
+        self.opto_combo.setCurrentIndex(_opto_index(g.get("optogenetics")))
+        self.opto_combo.blockSignals(False)
+        self._on_opto_changed()
         self._on_type_changed()
 
     # ------------------------------------------------------------------
@@ -626,9 +686,28 @@ class ProjectDesignDialog(QDialog):
                 except ValueError:
                     self._warn(f"{label} must be a number.")
                     return None
+        opto_on = self.opto_combo.currentData() is not False
+        if opto_on:
+            for key, check in self.opto_switch_checks.items():
+                ## Written only when it differs from the default, so the
+                ## design states a choice rather than today's default.
+                if check.isChecked() != bool(OPTO_DEFAULTS.get(key, False)):
+                    constants[key] = check.isChecked()
+            for field in OPTO_CONSTANT_FIELDS:
+                if field.group == "switch":
+                    continue
+                text = self.opto_number_edits[field.key].text().strip()
+                if not text:
+                    continue
+                try:
+                    constants[field.key] = _number(text)
+                except ValueError:
+                    self._warn(f"{field.label} must be a number.")
+                    return None
         ## A constant this form has no field for was written by hand; keep it.
+        managed = _MANAGED_KEYS | (_OPTO_KEYS if opto_on else set())
         for key, value in getattr(self, "_loaded_constants", {}).items():
-            if key not in _MANAGED_KEYS:
+            if key not in managed:
                 constants.setdefault(key, value)
 
         wells = {}
@@ -666,6 +745,9 @@ class ProjectDesignDialog(QDialog):
         group = self.exclusion_edit.text().strip()
         if group:
             g["exclusion_group"] = group
+        opto = self.opto_combo.currentData()
+        if isinstance(opto, bool):
+            g["optogenetics"] = opto
 
         problems = item.validate(g)
         if problems:

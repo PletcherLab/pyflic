@@ -38,7 +38,7 @@ the fix — it goes inert as well as dimmed, and its hint names where the fix is
 would be pointing away from the only way forward.
 
 **Help is on every panel.** Each panel's cards carry a `?` beside their title, and the
-type-specific groups (*Progressive Ratio only*, *Hedonic only*) carry their own, opening
+type-specific groups (*Progressive Ratio only*, *Hedonic only*, *Optogenetics*) carry their own, opening
 this window at the topic for that area. The `?` at the right-hand end of the output area,
 beside **Clear Errors**, opens help at the start whatever is open, and **F1** opens this
 topic.
@@ -203,7 +203,13 @@ exclusions saved to `remove_chambers.csv` (see [QC Viewer](app-qc-viewer.md)).
 **View QC plots** opens the saved signal plots as output-area tabs, one per DFM and
 kind, reusing tabs on a second look. **Open qc folder** shows the files themselves.
 
-A **Progressive Ratio only** group appears while such a member is loaded — did the paired
+An **Optogenetics** group appears while the loaded member is optogenetic — whatever its
+type — or a Progressive Ratio member. Was the light where the licks were? **Opto light QC
+table** writes `qc/opto/` and logs every linkage group that failed or warned; **Light
+explained by licks (QC)** draws the per-DFM figure behind the verdict. See
+[Optogenetic experiments](concepts-optogenetics.md).
+
+For a Progressive Ratio member the same group holds that type's own check — did the paired
 fly earn its light? **Light QC table** writes `pr_light_qc.csv` and `pr_light_events.csv`
 and logs every chamber group that failed or warned; **Licks per light event (QC)** and
 **Sucrose Well resting level (QC)** draw the two per-DFM figures behind the verdict. See

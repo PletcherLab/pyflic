@@ -22,10 +22,10 @@ Yoked is the other chamber of the group and is never written.
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
 from typing import Any, Mapping
 
+from ..constant_fields import ConstantField
+from ..constant_fields import constant_problems as _constant_problems
 from ..pr_breaking_point import DEFAULT_CONSTANTS as BREAK_CONSTANTS
 from ..pr_light_qc import DEFAULT_CONSTANTS as LIGHT_QC_CONSTANTS
 from .base import ExperimentType
@@ -94,29 +94,55 @@ def parse_paired_chambers(raw: Any) -> tuple[list[int], list[str]]:
     return sorted(set(values)), problems
 
 
-@dataclass(frozen=True)
-class ConstantField:
-    """One Progressive Ratio design constant: how the Project Design dialog and
-    the Config Editor show it, and what the type accepts for it.
+#: The two-well chamber_sets default: chamber c is wells (2c-1, 2c).
+_DEFAULT_CHAMBER_SETS: tuple[tuple[int, int], ...] = tuple(
+    (2 * c - 1, 2 * c) for c in range(1, 7))
 
-    *group* is ``"switch"`` (true / false), ``"light_qc"`` or ``"break"``;
-    *short_label* and *choices* are the Config Editor's words for a switch,
-    whose row label must stay short and whose picker names what each value
-    does.  *blank* says what an unset value means when the type has no
-    default for it.
+
+def paired_from_program(dfm_program, chamber_sets=None, pi_direction: str = "left"
+                        ) -> tuple[list[int] | None, list[str], list[str]]:
+    """``(paired_chambers, problems, notes)`` read from one DFM section of the
+    Opto Program: in each Chamber Group, the chamber holding the program's
+    Trigger Well is the Paired one.
+
+    *chamber_sets* and *pi_direction* are the DFM's (its wells per chamber,
+    left first, and the side of well A).  *problems* say why no answer could be
+    given — a group with no trigger well, or one in both chambers; *notes* flag
+    a trigger well that is well B, since the Sucrose Well is always well A.
     """
+    from ..opto_program import wells_label
 
-    key: str
-    label: str
-    tooltip: str
-    group: str
-    integer: bool = False
-    minimum: float | None = None
-    maximum: float | None = None
-    minimum_exclusive: bool = False
-    blank: str | None = None
-    short_label: str | None = None
-    choices: tuple[str, str] = ("yes", "no")
+    sets = [tuple(int(w) for w in row)
+            for row in (chamber_sets if chamber_sets is not None else _DEFAULT_CHAMBER_SETS)]
+    chamber_of = {w: i + 1 for i, row in enumerate(sets) for w in row}
+    triggers = set(dfm_program.trigger_wells())
+    paired: list[int] = []
+    problems: list[str] = []
+    notes: list[str] = []
+    for g, (a, b) in CHAMBER_GROUPS.items():
+        hit = sorted({chamber_of[w] for w in triggers if chamber_of.get(w) in (a, b)})
+        if len(hit) == 1:
+            paired.append(hit[0])
+        elif not hit:
+            problems.append(f"Program.txt has no trigger well in chamber group {g} "
+                            f"(chambers {a}-{b})")
+        else:
+            own = sorted(w for w in triggers if chamber_of.get(w) in (a, b))
+            problems.append(f"Program.txt has trigger wells in both chambers of group {g} "
+                            f"({wells_label(own)})")
+    if problems:
+        return None, problems, notes
+    for chamber in paired:
+        if chamber > len(sets):
+            continue
+        left, right = sets[chamber - 1]
+        well_a = left if str(pi_direction).lower() == "left" else right
+        own = sorted(w for w in triggers if chamber_of.get(w) == chamber)
+        if well_a not in own:
+            notes.append(f"the trigger well of paired chamber {chamber} is "
+                         f"{wells_label(own)}, which is well B under pi_direction "
+                         f"{pi_direction}; the Sucrose Well is well A")
+    return paired, problems, notes
 
 
 #: Every Progressive Ratio constant beyond the three auto-filter cutoffs, in
@@ -186,36 +212,8 @@ def constant_problems(constants: Mapping[str, Any] | None) -> list[str]:
     states — a switch that is not true or false, a threshold that is not a
     number or falls outside its range.  Keys it does not state are fine: the
     type's defaults fill them in.  Never raises."""
-    problems: list[str] = []
-    stated = dict(constants or {})
-    for field in PR_CONSTANT_FIELDS:
-        if field.key not in stated:
-            continue
-        value = stated[field.key]
-        where = f"'constants.{field.key}'"
-        if value is None:
-            if field.blank is None:
-                problems.append(f"{where} is empty; give a value or remove the key "
-                                f"to use the type's default")
-            continue
-        if field.group == "switch":
-            if not isinstance(value, bool):
-                problems.append(f"{where} must be true or false, got {value!r}")
-            continue
-        if isinstance(value, bool) or not isinstance(value, (int, float)) \
-                or not math.isfinite(float(value)):
-            problems.append(f"{where} must be a number, got {value!r}")
-            continue
-        v = float(value)
-        if field.integer and v != int(v):
-            problems.append(f"{where} must be a whole number, got {value!r}")
-        if field.minimum is not None and (
-                v < field.minimum or (field.minimum_exclusive and v == field.minimum)):
-            bound = "greater than" if field.minimum_exclusive else "at least"
-            problems.append(f"{where} must be {bound} {field.minimum:g}, got {value!r}")
-        if field.maximum is not None and v > field.maximum:
-            problems.append(f"{where} must be at most {field.maximum:g}, got {value!r}")
-    return problems
+    return _constant_problems(PR_CONSTANT_FIELDS, constants,
+                              default="the type's default")
 
 
 class ProgressiveRatioExperimentType(ExperimentType):
@@ -258,6 +256,37 @@ class ProgressiveRatioExperimentType(ExperimentType):
         problems = super().validate(global_cfg)
         problems += constant_problems((global_cfg or {}).get("constants"))
         return problems
+
+    def complete_dfm_node(self, dfm_id: int, node: dict, *, params=None,
+                          dfm_program=None) -> tuple[dict, list[str]]:
+        """Derive ``paired_chambers`` from the Opto Program when the entry
+        leaves it out; when both exist and disagree, say so and keep the
+        config's (:func:`paired_from_program`)."""
+        if dfm_program is None:
+            return node, []
+        from ..opto_program import wells_label
+
+        derived, problems, notes = paired_from_program(
+            dfm_program, getattr(params, "chamber_sets", None),
+            getattr(params, "pi_direction", "left"))
+        out = [f"DFM {dfm_id}: {note}" for note in notes]
+        stated = node.get(PAIRED_KEY)
+        if stated is None:
+            if derived is not None:
+                node = {**node, PAIRED_KEY: list(derived)}
+                out.insert(0, f"DFM {dfm_id}: paired_chambers {derived} taken from "
+                              f"Program.txt (trigger wells "
+                              f"{wells_label(dfm_program.trigger_wells())})")
+            else:
+                out.extend(f"DFM {dfm_id}: paired_chambers cannot be taken from "
+                           f"Program.txt: {p}" for p in problems)
+        else:
+            given, given_problems = parse_paired_chambers(stated)
+            if derived is not None and not given_problems and sorted(given) != sorted(derived):
+                out.append(f"DFM {dfm_id}: paired_chambers {sorted(given)} disagrees with "
+                           f"Program.txt, whose trigger wells make chambers {derived} "
+                           f"paired; the config's are used")
+        return node, out
 
     def validate_dfm(self, dfm_id: int, node: dict | None,
                      chamber_assignments: dict | None) -> list[str]:

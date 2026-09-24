@@ -314,7 +314,7 @@ class AnalysisHubWindow(QMainWindow):
     #: groups of the Analyze, QC and Plots cards.
     _TYPE_GROUP_HELP: dict[tuple[str, str], str] = {
         ("analyze", "progressive_ratio"): "concepts-progressive-ratio#outputs",
-        ("qc", "progressive_ratio"): "concepts-progressive-ratio#light-qc",
+        ("qc", "optogenetics"): "concepts-optogenetics",
         ("plots", "progressive_ratio"): "plots-catalog#progressive-ratio-plots",
         ("plots", "hedonic"): "plots-catalog#hedonic-plots",
     }
@@ -860,11 +860,33 @@ class AnalysisHubWindow(QMainWindow):
         folder_btn.clicked.connect(self._open_qc_folder)
         card.add_body(folder_btn)
 
-        ## Experiment-Type-specific QC, gated like the Analyze and Plots
-        ## cards' type groups.  Progressive Ratio: did the paired fly earn its
-        ## light?
+        ## The light QC, in one group: every optogenetic member's (was the light
+        ## where the licks were?), shown whenever the member is optogenetic,
+        ## and Progressive Ratio's own (did the paired fly earn its light?),
+        ## shown for that type.
         self._type_qc_groups: dict[str, CardGroup] = {}
-        pr = CardGroup("Progressive Ratio only")
+        opto = CardGroup("Optogenetics")
+        self._opto_qc_buttons: list[ActionButton] = []
+        for label, icon_name, run, tip in (
+            ("Opto light QC table", "qc",
+             lambda: self._run_experiment_action({"action": "opto_light_qc"}),
+             "Per linkage group: was the light where the licks were?  Writes "
+             "qc/opto/ (the verdicts, the intervals, every light event and the "
+             "Program.txt as read) and logs every flagged group.  Any "
+             "Experiment Type; a failed group's chambers leave the analysis only "
+             "when exclude_failed_opto_chambers is on."),
+            ("Light explained by licks (QC)", "plot",
+             lambda: self._run_plot_action("plot_opto_light"),
+             "Per DFM: each linkage group's lit time, explained by a trigger-well "
+             "lick or touch and unexplained, and the time the emulated firmware "
+             "trigger saw contact that pyflic did not."),
+        ):
+            button = ActionButton(label, Category.QC, icon_name)
+            button.setToolTip(tip)
+            button.clicked.connect(lambda _c=False, r=run: r())
+            opto.add(button)
+            self._opto_qc_buttons.append(button)
+        self._pr_qc_buttons: list[ActionButton] = []
         for label, icon_name, run, tip in (
             ("Light QC table", "qc",
              lambda: self._run_experiment_action({"action": "pr_light_qc"}),
@@ -885,10 +907,11 @@ class AnalysisHubWindow(QMainWindow):
             button = ActionButton(label, Category.QC, icon_name)
             button.setToolTip(tip)
             button.clicked.connect(lambda _c=False, r=run: r())
-            pr.add(button)
-        pr.setVisible(False)
-        card.add_body(pr)
-        self._type_qc_groups["progressive_ratio"] = pr
+            opto.add(button)
+            self._pr_qc_buttons.append(button)
+        opto.setVisible(False)
+        card.add_body(opto)
+        self._type_qc_groups["optogenetics"] = opto
         self.panels["qc"].add_card(card)
 
     def _build_plots_panel(self) -> None:
@@ -1806,9 +1829,10 @@ class AnalysisHubWindow(QMainWindow):
             metric = self.plot_metric.currentData()
             if metric:
                 step["metric"] = metric
-        if action in ("plot_pr_cumulative_diff", "plot_pr_cumulative_licks"):
+        if action in ("plot_pr_cumulative_diff", "plot_pr_cumulative_licks",
+                      "plot_opto_light"):
             ## These read the bin from the step, not the context, so a script
-            ## keeps its own 1-minute default; from the Hub the spinbox rules.
+            ## keeps its own default; from the Hub the spinbox rules.
             step["binsize"] = self.spin_binsize.value()
         self._run_experiment_action(step)
 
@@ -2501,8 +2525,12 @@ class AnalysisHubWindow(QMainWindow):
         qc_dir = self._member_qc_dir()
         shown = 0
         for dfm_id in sorted(self.experiment.dfms):
-            for subdir, suffix, label in self._QC_PLOT_KINDS:
-                png = qc_dir / subdir / f"DFM{dfm_id}_{suffix}.png"
+            pngs = [(qc_dir / subdir / f"DFM{dfm_id}_{suffix}.png", label)
+                    for subdir, suffix, label in self._QC_PLOT_KINDS]
+            ## The optogenetic light QC's figure, when a run wrote one.
+            pngs.append((qc_dir / "opto" / f"opto_light_dfm{dfm_id}.png",
+                         "Light explained"))
+            for png, label in pngs:
                 if not png.is_file():
                     continue
                 self.dock.add_widget(f"DFM{dfm_id} {label}",
@@ -3063,6 +3091,21 @@ class AnalysisHubWindow(QMainWindow):
                            *getattr(self, "_type_analyze_groups", {}).items(),
                            *getattr(self, "_type_qc_groups", {}).items()):
             group.setVisible(key == active)
+        ## The Optogenetics QC group follows the member, not the type: the
+        ## light QC is every optogenetic experiment's, and Progressive Ratio's
+        ## own light checks sit in it for that type.
+        opto_group = getattr(self, "_type_qc_groups", {}).get("optogenetics")
+        if opto_group is not None:
+            try:
+                optogenetic = bool(getattr(exp, "is_optogenetic", False))
+            except Exception:  # noqa: BLE001 - a status display must not fail
+                optogenetic = False
+            is_pr = active == "progressive_ratio"
+            opto_group.setVisible(optogenetic or is_pr)
+            for button in getattr(self, "_opto_qc_buttons", []):
+                button.setVisible(optogenetic)
+            for button in getattr(self, "_pr_qc_buttons", []):
+                button.setVisible(is_pr)
         for button in getattr(self, "_two_well_plot_buttons", []):
             button.setVisible(layout != "single_well")
 

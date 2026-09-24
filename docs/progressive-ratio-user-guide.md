@@ -59,6 +59,12 @@ Two rules run through everything:
   and the light state both live there. Without them no group ever finishes
   training, and every group is removed.
 - **Both wells named:** well A is the sucrose well, well B the yeast well.
+- **The MCU's `Program.txt` (recommended).** The MCU writes the program it
+  ran back out as `Program.txt`; copy it into the member's `data/` folder,
+  beside the DFM files. It tells pyflic each well's threshold, the linkage
+  and the light decay, which the light QC needs to judge the light
+  properly, and it can name the paired chambers for you. Without it the
+  analysis still runs, with a more limited light QC.
 
 ### Setting up the experiment
 
@@ -81,6 +87,10 @@ dfms:
   treatment or design factor; pyflic adds a `Role` column itself.
 - In the **Config Editor**, the paired chambers are three pickers on each
   DFM tab.
+- **With `Program.txt` in `data/`, `paired_chambers` may be left out.** In
+  each group the chamber holding the program's trigger well is the paired
+  one. If you give both and they disagree, your config wins and
+  `summary.txt` says so; a trigger well that is well B is flagged too.
 
 ### Setting up the Project
 
@@ -192,6 +202,21 @@ them for the whole Project, never for one member.
 | `pr_resting_level_rise` | 15 | a rise in the sucrose well's resting signal of this many counts is a warning |
 | `pr_resting_level_ratio` | 3 | a sucrose well resting this many times higher than the DFM's other sucrose wells is a warning |
 
+### Optogenetic light QC thresholds
+
+Every optogenetic experiment, PR or not, also gets the general light QC of
+section 5.2. Its settings, with their defaults:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `optogenetics` | `auto` | run it when `Program.txt` or light data exist; `true` always, `false` never (a design key, and a per-DFM one) |
+| `exclude_failed_opto_chambers` | false | remove the chambers of a failed linkage group; off, they are flagged and kept |
+| `opto_unexplained_warn_fraction` | 0.10 | a group whose lit time is this fraction unexplained by licks gets a warning |
+| `opto_unexplained_fail_fraction` | 0.30 | this fraction fails the group |
+| `opto_unexplained_min_sec` | 30 | seconds of unexplained light needed before either is judged |
+| `opto_default_decay_ms` | 1000 | the light decay assumed without `Program.txt` |
+| `opto_decay_tolerance_samples` | 2 | slack, in samples, around the decay |
+
 ### Breaking point
 
 | Setting | Default | Meaning |
@@ -292,6 +317,28 @@ began. Two ways to use it:
 
 Whichever you choose, apply the same rule to every group, whatever its
 treatment.
+
+**Lick-free is decay-aware.** The firmware keeps the light on for its
+*decay* after the lick that earned it, and a brief touch it counts may read
+below pyflic's feeding threshold. A light event is therefore lick-free only
+when it has no sucrose lick since the previous one *and* no sucrose lick or
+touch within its decay — the decay `Program.txt` states, or
+`opto_default_decay_ms` without it. A light the fly touched for is never
+counted against it, and the breaking point counts it.
+
+**The general optogenetic light QC runs beside this one.** It asks a
+simpler question of every linkage group — here, every chamber group — from
+lit *time* rather than light events: how much of the light had no lick or
+touch behind it? With `Program.txt` it also re-runs the firmware's own
+trigger on the raw signal, so a well the firmware read as touched while
+pyflic saw nothing is named as a drifting baseline. The two checks can
+disagree. On the first real dataset, a group lit for four hours during
+training passes this check, because one long light event is not a run of
+lick-free events, and fails the general one, because 93% of those four
+hours had no lick. A group the general check fails is flagged, not removed,
+unless you switch on `exclude_failed_opto_chambers`. Its results are in
+`qc/opto/`, an *Optogenetic light QC* section of `summary.txt` and of the
+report, and the **Light explained by licks (QC)** figure.
 
 ### 5.3 Exclusions
 
@@ -585,3 +632,6 @@ the same device, or in the same recording, as independent.
 | The Project Report says a member has no breaking point table | that member was analysed with an older pyflic | re-run its basic analysis |
 | Loading fails on `paired_chambers` | missing, two chambers from one group, or a group left out | name exactly one chamber from each of 1–2, 3–4, 5–6 |
 | Loading fails on treatments | the two chambers of a group have different treatments | give both chambers the same treatment |
+| A linkage group failed for **unexplained light** | most of its lit time had no lick or touch behind it | open *Light explained by licks*: orange under the red is a drifting well, no orange is a light the firmware had no reason to switch on |
+| "holds more than one Program.txt" | two program files in `data/` | keep only the one the MCU exported for this recording |
+| `summary.txt` says `paired_chambers` disagrees with `Program.txt` | the config names a different paired chamber than the program's trigger well | check which chamber the program lit for; fix the config or the program |

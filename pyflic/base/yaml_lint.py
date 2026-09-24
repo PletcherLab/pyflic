@@ -24,6 +24,8 @@ _KNOWN_GLOBAL_KEYS = {
     # Post-overhaul keys (ADR-0007 / ADR-0008).
     "chamber_layout", "facet_cutoffs", "facet_labels", "transform_licks",
     "exclusion_group",
+    # The optogenetic light QC's switch (auto | yes | no).
+    "optogenetics",
 }
 _KNOWN_PARAM_KEYS = {
     "baseline_window_minutes", "baseline_window_min", "baseline_window",
@@ -37,7 +39,7 @@ _KNOWN_PARAM_KEYS = {
 }
 _KNOWN_DFM_KEYS = {
     "id", "ID", "params", "parameters", "chambers", "Chambers",
-    "excluded_chambers", "well_names", "paired_chambers",
+    "excluded_chambers", "well_names", "paired_chambers", "optogenetics",
 }
 
 
@@ -147,6 +149,34 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
                   f"global.params.pi_direction must be 'left' or 'right', got {pi!r}",
                   path="global.params.pi_direction")
 
+    ## The optogenetic light QC: its switch, its constants, and the Opto
+    ## Program in data/ — which the loader reads, so its problems are this
+    ## config's problems too.
+    from . import opto_program as _opto
+    from .opto_qc import opto_constant_problems
+
+    problem = _opto.setting_problem(g.get(_opto.SETTING_KEY),
+                                    where=f"global.{_opto.SETTING_KEY}")
+    if problem:
+        _emit(issues, "error", problem, path=f"global.{_opto.SETTING_KEY}")
+    for problem in opto_constant_problems(g.get("constants")):
+        _emit(issues, "error", problem, path="global.constants")
+    program = None
+    try:
+        program_path = _opto.find_program(path.parent / "data")
+    except _opto.ProgramError as err:
+        _emit(issues, "error", str(err))
+        program_path = None
+    if program_path is not None:
+        try:
+            program = _opto.read_program(program_path)
+        except _opto.ProgramError as err:
+            _emit(issues, "warning", f"{program_path.name} will not be used: {err}")
+        else:
+            for dfm_id, reason in sorted(program.rejected.items()):
+                _emit(issues, "warning", f"{program_path.name}: DFM {dfm_id} section "
+                                         f"dropped — {reason}")
+
     factors = g.get("experimental_design_factors") or {}
     factor_names = list(factors.keys()) if isinstance(factors, dict) else []
     factor_levels: dict[str, list[str]] = {}
@@ -215,9 +245,15 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
                   f"DFM {dfm_id}: chamber_size must be set in global.params or this DFM's params",
                   path=f"dfms.{dfm_id}.params.chamber_size")
 
+        problem = _opto.setting_problem(dfm.get(_opto.SETTING_KEY),
+                                        where=f"dfms.{dfm_id}.{_opto.SETTING_KEY}")
+        if problem:
+            _emit(issues, "error", problem, path=f"dfms.{dfm_id}.{_opto.SETTING_KEY}")
+
         chambers = dfm.get("chambers") or dfm.get("Chambers")
         ## Per-DFM constraints the Experiment Type imposes (Progressive
-        ## Ratio's paired_chambers and same-treatment chamber groups).
+        ## Ratio's paired_chambers and same-treatment chamber groups), after
+        ## what the Opto Program fills in, exactly as the loader does it.
         try:
             from . import experiment_types as _et
             _type = _et.get_experiment_type(g.get("experiment_type"))
@@ -226,6 +262,20 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
         if _type is not None:
             _assign = ({int(k): str(v) for k, v in chambers.items()}
                        if isinstance(chambers, dict) else {})
+            section = program.section(dfm_id) if program is not None else None
+            if section is not None:
+                from types import SimpleNamespace
+
+                p_all = {**(g_params if isinstance(g_params, dict) else {}),
+                         **(d_params if isinstance(d_params, dict) else {})}
+                physical = SimpleNamespace(
+                    chamber_sets=p_all.get("chamber_sets"),
+                    pi_direction=str(p_all.get("pi_direction") or "left").lower())
+                dfm, notes = _type.complete_dfm_node(dfm_id, dict(dfm), params=physical,
+                                                     dfm_program=section)
+                for note in notes:
+                    if "disagrees" in note or "well B" in note:
+                        _emit(issues, "warning", note, path=f"dfms.{dfm_id}")
             for problem in _type.validate_dfm(dfm_id, dfm, _assign):
                 _emit(issues, "error", problem, path=f"dfms.{dfm_id}")
         if chambers is None:

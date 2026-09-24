@@ -39,6 +39,11 @@ dfms:
 In the [Config Editor](app-config-editor.md) the paired chambers are three pickers on each
 DFM tab, shown only for this type.
 
+With the MCU's `Program.txt` in `data/`, `paired_chambers` may be left out: in each chamber
+group the chamber holding the program's trigger well is the paired one. When both are given
+and disagree, the config wins and `summary.txt` says so. See
+[Optogenetic experiments](concepts-optogenetics.md#progressive-ratio).
+
 ## Training
 
 The recording opens with a closed-loop **training** phase in which every sucrose-well
@@ -83,7 +88,10 @@ recording whatever window a table uses:
 
 A few **lick-free light events** are normal — pyflic's feeding threshold misses brief
 touches the firmware counts — which is why a *run* of them, not a single one, fails a group,
-and why training fails only on zero licks rather than on fewer licks than pairings. A group
+and why training fails only on zero licks rather than on fewer licks than pairings. A light
+event is lick-free only when it is credited with no sucrose licks *and* has no sucrose lick
+or touch within its light decay (the decay `Program.txt` states, or
+`opto_default_decay_ms`): a light the fly touched for is never counted against it. A group
 with no Test light events at all has simply stopped before its first Test requirement: a
 breaking point of 0, reported, never flagged.
 
@@ -94,8 +102,15 @@ keep them. `pr_light_qc.csv` lists every group's verdict either way, with
 for deciding a cutoff by hand. The QC figures keep a failed group in view, its panel strip
 saying why; the result figures and tables no longer contain it.
 
-The Hub's QC panel has the **Light QC table** and the two figures behind the verdict; see
+The Hub's QC panel has the **Light QC table** and the two figures behind the verdict, in its
+*Optogenetics* group; see
 [Plot catalogue](plots-catalog.md#did-the-paired-fly-earn-its-light-qc).
+
+This check asks whether the paired fly *earned* each light event. Every optogenetic
+experiment, of any type, also gets the general light QC, which asks whether the light was
+*explained* by licks at all, from lit time rather than events, and uses the program's
+thresholds to re-run the firmware's own trigger: see
+[Optogenetic experiments](concepts-optogenetics.md).
 
 ## Breaking point
 
@@ -162,7 +177,7 @@ Basic analysis writes, into the member's `analysis/`:
 | `paired_yoked_diff.csv` | chamber group × Facet | paired − yoked `dLicksA/B`, `dEventsA/B`, `dPI`, `dEventPI`, `dMedDurationA/B`, `dPersistA`, `dPersistCensored`, with `PairedChamber`, `YokedChamber`, `TrainingMinutes` |
 | `pr_breaking_point.csv` | chamber group | `BreakingPoint`, `BreakMin`, `Censored`, `TestMinutes`, `LargestRequirement`, `LickFreeLightEvents`, `LightQC` |
 | `pr_light_qc.csv` | chamber group | the light QC's counts, trend, resting level, `Flags`, `Verdict`, `Excluded` |
-| `pr_light_events.csv` | Test light event | the paired chamber's light event ledger: `MinutesSincePrev`, `LicksSincePrev`, `LickFree`, `RestingLevel`, `Counted` (whether the breaking point holds it) |
+| `pr_light_events.csv` | Test light event | the paired chamber's light event ledger: `MinutesSincePrev`, `LicksSincePrev`, `Explained` (a sucrose lick or touch within the light's decay), `LickFree`, `RestingLevel`, `Counted` (whether the breaking point holds it) |
 | `pr_cumulative_diff.csv` / `.png` | time bin | the cumulative difference curve |
 | `pr_still_responding.png` | — | the still-responding curve |
 | `pr_*_dfm<id>.png` | DFM | QC figures: training-aligned traces, licks per light event, sucrose well resting level |

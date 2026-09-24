@@ -51,6 +51,7 @@ DESIGN_KEYS: tuple[str, ...] = (
     "facet_cutoffs",
     "facet_labels",
     "exclusion_group",
+    "optogenetics",
 )
 
 
@@ -248,28 +249,54 @@ def adopt_design(project_dir, names=None) -> list[str]:
     return changed
 
 
-def flagged_light_qc_groups(light_qc: pd.DataFrame) -> pd.DataFrame:
-    """The Chamber Groups a stacked light QC table (``pr_light_qc.csv`` with an
-    ``Experiment`` column) flagged, one row each.
+#: The light QC tables a Member writes, stacked into ``<project>_LightQC.csv``
+#: with a ``Source`` column: the Progressive Ratio light QC (one row per
+#: Chamber Group) and the optogenetic light QC every type has (one row per
+#: Linkage Group, ``qc/opto/``).
+LIGHT_QC_SOURCES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("PR", ("analysis", "pr_light_qc.csv")),
+    ("Opto", ("qc", "opto", "opto_light_qc.csv")),
+)
+#: The switch that decides whether a Source's failed groups leave.
+_EXCLUDE_SWITCH = {"PR": "exclude_failed_pr_groups", "Opto": "exclude_failed_opto_chambers"}
 
-    ``Status`` says what the pooled numbers did with the group: *excluded* (its
-    Member's auto-removal took both chambers out), *retained* (it failed, but
-    ``exclude_failed_pr_groups`` was off, so it IS in the pooled numbers) or
-    *kept — warning only*.  ``LickFreeRunStartMin`` is minutes since the
-    group's training end.
+
+def flagged_light_qc_groups(light_qc: pd.DataFrame) -> pd.DataFrame:
+    """The groups a stacked light QC table (``<project>_LightQC.csv``: an
+    ``Experiment`` and a ``Source`` column over each Member's tables) flagged,
+    one row each.
+
+    ``Source`` is ``PR`` (a Progressive Ratio Chamber Group) or ``Opto`` (an
+    optogenetic Linkage Group, ``Wells`` naming its wells); a table without the
+    column is all ``PR``.  ``Status`` says what the pooled numbers did with the
+    group: *excluded* (its Member's auto-removal took its chambers out),
+    *retained* (it failed, but the Source's exclusion switch was off, so it IS
+    in the pooled numbers) or *kept — warning only*.  ``LickFreeRunStartMin``
+    is minutes since the PR group's training end; ``UnexplainedOnsetMin`` the
+    recording minute an Opto group's unexplained light began.
     """
-    columns = ["Experiment", "DFM", "Group", "Treatment", "Verdict", "Status",
-               "Flags", "LickFreeRunStartMin"]
-    flags = light_qc["Flags"].fillna("").astype(str)
-    flagged = light_qc[flags.str.strip() != ""].copy()
+    columns = ["Experiment", "Source", "DFM", "Group", "Wells", "Treatment", "Verdict",
+               "Status", "Flags", "LickFreeRunStartMin", "UnexplainedOnsetMin"]
+    frame = light_qc.copy()
+    if "Source" not in frame.columns:
+        frame["Source"] = "PR"
+    for column in ("Wells", "LickFreeRunStartMin", "UnexplainedOnsetMin"):
+        if column not in frame.columns:
+            frame[column] = pd.NA if column == "Wells" else float("nan")
+    flags = frame["Flags"].fillna("").astype(str)
+    flagged = frame[flags.str.strip() != ""].copy()
     if flagged.empty:
         return pd.DataFrame(columns=columns)
     excluded = flagged["Excluded"].astype(str).str.lower().isin(("true", "1"))
     failed = flagged["Verdict"].astype(str) == "failed"
+    flagged["Source"] = flagged["Source"].fillna("PR").astype(str)
     flagged["Status"] = "kept — warning only"
-    flagged.loc[failed, "Status"] = "retained (exclude_failed_pr_groups: false)"
+    retained = [f"retained ({_EXCLUDE_SWITCH.get(src, 'exclusion')}: false)"
+                for src in flagged["Source"]]
+    flagged.loc[failed, "Status"] = [r for r, f in zip(retained, failed) if f]
     flagged.loc[excluded, "Status"] = "excluded"
     flagged["Treatment"] = flagged["Treatment"].fillna("")
+    flagged["Wells"] = flagged["Wells"].fillna("")
     return flagged[columns].reset_index(drop=True)
 
 
@@ -824,16 +851,20 @@ class Project:
         return pd.concat(frames, ignore_index=True) if frames else None
 
     def combined_light_qc_frame(self):
-        """The stacked Members' ``pr_light_qc.csv`` (Progressive Ratio only),
-        with an ``Experiment`` first column, or ``None`` when no Member has
+        """The stacked Members' light QC tables — each Progressive Ratio
+        Member's ``analysis/pr_light_qc.csv`` and every optogenetic Member's
+        ``qc/opto/opto_light_qc.csv`` (:data:`LIGHT_QC_SOURCES`) — with
+        ``Experiment`` and ``Source`` first, or ``None`` when no Member has
         one."""
         frames = []
         for name in self.member_names:
-            path = os.path.join(self.member_dir(name), "analysis", "pr_light_qc.csv")
-            if os.path.isfile(path):
-                df = pd.read_csv(path)
-                df.insert(0, "Experiment", name)
-                frames.append(df)
+            for source, parts in LIGHT_QC_SOURCES:
+                path = os.path.join(self.member_dir(name), *parts)
+                if os.path.isfile(path):
+                    df = pd.read_csv(path)
+                    df.insert(0, "Source", source)
+                    df.insert(0, "Experiment", name)
+                    frames.append(df)
         return pd.concat(frames, ignore_index=True) if frames else None
 
     def combined_breaking_point_frame(self):
@@ -1134,23 +1165,31 @@ class Project:
             return None
 
     def _flagged_groups_lines(self) -> list[str]:
-        """The Stats text's "Flagged Chamber Groups" block — Progressive Ratio
-        light QC — or nothing when no Member has a light QC table."""
+        """The Stats text's "Flagged Chamber Groups" block — the Progressive
+        Ratio light QC and the optogenetic light QC — or nothing when no Member
+        has a light QC table."""
         flagged = self.flagged_groups()
         if flagged is None:
             return []
-        out = ["Flagged Chamber Groups (progressive ratio light QC)"]
+        out = ["Flagged Chamber Groups (light QC: progressive ratio and optogenetic)"]
         if flagged.empty:
-            out += ["  (none — every chamber group's light followed its paired fly)", ""]
+            out += ["  (none — every group's light was earned by its licks)", ""]
             return out
         for row in flagged.itertuples(index=False):
-            where = f"{row.Experiment} DFM {int(row.DFM)} group {int(row.Group)}"
+            if row.Source == "Opto":
+                where = (f"{row.Experiment} DFM {int(row.DFM)} linkage group "
+                         f"{row.Group}" + (f" [{row.Wells}]" if row.Wells else ""))
+            else:
+                where = f"{row.Experiment} DFM {int(row.DFM)} group {int(row.Group)}"
             if row.Treatment:
                 where += f" ({row.Treatment})"
-            onset = ("" if pd.isna(row.LickFreeRunStartMin) else
-                     f"; lick-free from {float(row.LickFreeRunStartMin):.1f} min "
-                     f"after training end")
-            out.append(f"  {where}: {row.Status} — {row.Flags}{onset}")
+            onset = ""
+            if pd.notna(row.LickFreeRunStartMin):
+                onset = (f"; lick-free from {float(row.LickFreeRunStartMin):.1f} min "
+                         f"after training end")
+            elif pd.notna(row.UnexplainedOnsetMin):
+                onset = f"; unexplained from minute {float(row.UnexplainedOnsetMin):.0f}"
+            out.append(f"  {where} [{row.Source}]: {row.Status} — {row.Flags}{onset}")
         retained = int((flagged["Status"].str.startswith("retained")).sum())
         if retained:
             out.append(f"  {retained} failed group(s) retained by member setting ARE "

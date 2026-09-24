@@ -48,6 +48,17 @@ there is no separate side key: `pi_direction` places it, as in any two-well expe
 The Config Editor shows the three pickers on each DFM tab. See
 [Progressive Ratio experiments](concepts-progressive-ratio.md#chamber-groups-paired-and-yoked).
 
+With the MCU's `Program.txt` in `data/`, `paired_chambers` may be left out: the chamber
+holding each group's trigger well is the paired one. Given both, the config wins and a
+disagreement is reported.
+
+## Optogenetics per DFM
+
+`optogenetics:` on a DFM entry overrides the experiment's setting for that DFM alone — a
+DFM that ran without an Optolid, say. It takes `auto`, `true` or `false`; left out, the DFM
+inherits. It is a fact about the recording, so it stays free inside a Project. See
+[Optogenetic experiments](concepts-optogenetics.md#turning-it-on).
+
 ## How chambers map to wells
 
 Chamber numbering depends on the chamber layout, which the Experiment Type fixes (or a

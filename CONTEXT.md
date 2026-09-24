@@ -421,9 +421,11 @@ _Avoid_: light period (that is the lit interval, not its onset), trigger
 (which names the cause the light QC is testing, not the event).
 
 **Lick-free Light Event**:
-A Light Event credited with no Sucrose Well licks at all. A few occur in
-healthy data (pyflic's feeding threshold misses brief touches the firmware
-counts); a run of them does not.
+A Light Event credited with no Sucrose Well licks at all, and with no Sucrose
+Well lick or touch within its light's decay — the **Opto Program**'s decay, or
+`opto_default_decay_ms` without one — so a light the fly touched for is never
+lick-free (ADR-0015). A few occur in healthy data (pyflic's feeding threshold
+misses brief touches the firmware counts); a run of them does not.
 _Avoid_: unearned light, false trigger (both presume the cause).
 
 **Self-triggered light**:
@@ -489,6 +491,56 @@ has too. `PersistA` on every per-chamber summary row (none on a Training
 row); `dPersistA`, Paired minus Yoked, in the Paired-Yoked Difference, with
 `dPersistCensored` when either fly is censored.
 _Avoid_: persistence (alone), latency, time to stop.
+
+### Optogenetics
+
+**Opto Program**:
+The program the stand-alone MCU ran, read from the `Program.txt` it exports
+and the experimenter copies into `data/` (ADR-0015): per DFM, a threshold per
+well, the linkage, and per interval the frequency, pulse width, decay, delay
+and max-time-on, laid out over the run by its program type. The export is a
+record of what ran; the authored `[General]` / `[DFM]` file is the MCU's
+input and is not read. Optional — without it the light QC runs with less
+knowledge — and one per recording.
+_Avoid_: protocol, schedule (the schedule is one part of it), light program.
+
+**Linkage Group**:
+The wells of one DFM that share a linkage number in the Opto Program, lit
+together whenever any member is triggered — one light circuit, and so the
+unit the optogenetic light QC judges, its verdict passed to every chamber it
+touches. Without a program, the wells whose light is identical over the whole
+recording. In a Progressive Ratio experiment a Linkage Group is a Chamber
+Group's four wells.
+_Avoid_: light group, circuit (informal), chamber group (a PR structure,
+which a Linkage Group need not match).
+
+**Trigger Well**:
+A well whose threshold is positive in some interval of the Opto Program, so
+its own signal can switch its Linkage Group's light on. A threshold of 0 keeps
+the group lit regardless (open loop); -1 never triggers. In a Progressive
+Ratio experiment the Trigger Well is the Paired chamber's Sucrose Well, which
+is how `paired_chambers` can be read from the program.
+_Avoid_: active well, stimulated well (the whole group is lit).
+
+**Explained Light**:
+A lit sample of a Linkage Group with activity — a feeding lick or a tasting
+sample — in one of its Trigger Wells from the interval's decay plus
+`opto_decay_tolerance_samples` before it to that tolerance after it. What
+the optogenetic light QC measures is the share of lit time that is *not*
+explained: a warning at `opto_unexplained_warn_fraction`, a failure at
+`opto_unexplained_fail_fraction`. Judged only under a paradigm the fly's
+feeding drives; open loop and non-feeding activation are not.
+_Avoid_: earned light (the PR question, asked of Light Events), justified
+light.
+
+**Emulated Trigger**:
+The firmware's own test re-run on the recorded raw signal: raw minus the mean
+of the run's first ten seconds (its baseline, captured once) against the
+interval's threshold. Contact the Emulated Trigger sees and pyflic does not —
+a well the firmware read as touched while the baselined signal was flat — is
+the drifting-baseline signature, and it names the likely cause of
+unexplained light. Approximate when the data begin after the baseline window.
+_Avoid_: simulated firmware, firmware replay.
 
 ### Cross-app
 
@@ -576,6 +628,16 @@ _Avoid_: manual, documentation, the docs, USAGE.
   either can be **Censored** (ADR-0014). Paired and yoked are compared on
   Sucrose Persistence and the other feeding metrics, never on the Breaking
   Point.
+- An optogenetic **Experiment Directory** may carry one **Opto Program**,
+  whose sections are per **DFM**. A DFM's **Linkage Groups** partition its
+  wells; each group's **Trigger Wells** decide its light, and its lit time is
+  judged as **Explained Light** or not, whatever the **Experiment Type**
+  (ADR-0015). `optogenetics:` is a **Design** key; its per-DFM override lives
+  in `dfms:`, which stays free inside a **Project**.
+- In a **Progressive Ratio** experiment a **Chamber Group** is a **Linkage
+  Group**, its **Paired** chamber's **Sucrose Well** is the **Trigger Well**,
+  and two light QCs run: the type's, on **Light Events**, and the general one,
+  on lit time. A group can pass one and fail the other.
 - Many **Help buttons** across the apps open the one **Help window**; each
   names a single **Help topic**. A tooltip may summarise a topic but never
   restates it — the topic is the only copy of the text.
@@ -676,6 +738,16 @@ _Avoid_: manual, documentation, the docs, USAGE.
   `pr_break_gap_min` ends the count, lick-free events are ignored, and a group
   still responding at the end of its Test window is **Censored**. The Yoked
   fly has no breaking point.
+
+- "Lights on" was read as "the light answered the fly", with the firmware's
+  own settings nowhere in pyflic. The first real dataset showed a group lit for
+  four hours of training while pyflic saw no lick, which the Progressive Ratio
+  light QC passes (one long event is not a run of lick-free events).
+  Resolved (ADR-0015): pyflic reads the MCU's exported **Opto Program** when
+  it is in `data/`, and every optogenetic experiment's light is judged by lit
+  time, per **Linkage Group**, as **Explained Light** — with the
+  **Emulated Trigger** to tell a drifting sensor from a light the firmware had
+  no reason to switch on.
 
 ## Migration
 

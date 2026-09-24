@@ -1,0 +1,91 @@
+Start Time: 07/28/2025 12:01:00
+End Time: 07/29/2025 12:01:00
+Duration: 1440.0 min
+Default Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Default Opto Frequency: 40Hz
+Default Opto Pulsewidth: 8ms
+Default Opto Delay: 0ms
+Default Opto Decay: 0ms
+Default Max Time On: 0ms
+Default Program Type: Linear
+Baseline: Yes
+
+***DFM 1***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,20,-1,-1,-1,20,-1,-1,-1,20,-1,-1,-1,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
+
+***DFM 2***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,-1,-1,20,-1,-1,-1,20,-1,-1,-1,20,-1,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
+
+***DFM 3***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,-1,20,-1,-1,-1,20,-1,-1,-1,20,-1,-1,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
+
+***DFM 4***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,-1,-1,-1,20,-1,-1,-1,20,-1,-1,-1,20,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
+
+***DFM 5***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,20,-1,-1,-1,20,-1,-1,-1,20,-1,-1,-1,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
+
+***DFM 6***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,-1,-1,20,-1,-1,-1,20,-1,-1,-1,20,-1,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
+
+***DFM 7***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,-1,20,-1,-1,-1,20,-1,-1,-1,20,-1,-1,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
+
+***DFM 8***
+Linkage: 1,1,1,1,2,2,2,2,3,3,3,3
+Opto Frequency: 40Hz
+Opto Pulsewidth: 8ms
+Opto Delay: 0ms
+Opto Decay: 0ms
+Max Time On: 0ms
+Program Type: Repeating
+(07/28/2025 12:01:00) Dark Off,-1,-1,-1,20,-1,-1,-1,20,-1,-1,-1,20,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.

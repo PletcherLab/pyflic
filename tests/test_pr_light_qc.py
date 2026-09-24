@@ -163,7 +163,12 @@ def test_the_light_qc_table_finds_each_failure(fexp):
     assert sensor.Verdict == "failed" and bool(sensor.Excluded)
     assert "self-triggered light" in sensor.Flags
     assert "resting level rise" in sensor.Flags
-    assert sensor.LongestLickFreeRun == sensor.TestLightEvents
+    ## Nearly every Test event is lick-free.  Lick-free is decay-aware — a
+    ## touch at the Sucrose Well within the light's decay explains an event —
+    ## so a stray noise-level touch on the drifting well can explain one, but
+    ## never enough to break the failing run, which starts at the first event.
+    assert sensor.LickFreeEvents >= sensor.TestLightEvents - 3
+    assert sensor.LongestLickFreeRun >= 5 * 4
     assert sensor.LickFreeRunStartMin == pytest.approx(0.34, abs=0.05)
     training = _row(t, 1, 3)
     assert training.TrainingLicks == 0 and training.TrainingLightEvents == 9
@@ -178,7 +183,12 @@ def test_the_ledger_is_the_paired_breaking_point_table(fexp):
     bp = fexp.breaking_point_table(1, 1)
     assert bp["LicksSincePrev"].tolist()[:4] == [8, 12, 16, 20]
     assert not bp["LickFree"].any()
-    assert fexp.breaking_point_table(1, 3)["LickFree"].all()
+    ## The drifting sensor's events are lick-free but for the odd one a
+    ## noise-level touch within the light's decay explains (decay-aware).
+    sensor = fexp.breaking_point_table(1, 3)
+    assert sensor["LickFree"].sum() >= len(sensor) - 3
+    assert (sensor["LickFree"] == ((sensor["LicksSincePrev"] == 0)
+                                   & ~sensor["Explained"])).all()
     ledger = fexp.light_events_ledger()
     assert list(ledger.columns[:4]) == ["DFM", "Group", "PairedChamber", "Event"]
     assert len(ledger) == 12 + 69 + 71 + 3 + 12 + 12
@@ -308,8 +318,10 @@ def test_the_breaking_point_counts_lick_backed_light_events(fexp):
     got = {(int(r.DFM), int(r.Group)): int(r.BreakingPoint) for r in summary.itertuples()}
     assert got[(1, 1)] == 12 and got[(2, 1)] == 3
     assert summary["Censored"].all()
-    ## The self-triggered group's light events are all lick-free: none counts.
-    assert got[(1, 2)] == 0
+    ## The self-triggered group's light events are lick-free, but for the odd
+    ## one a touch within the decay explains: only those count.
+    sensor = fexp.breaking_point_table(1, 3)
+    assert got[(1, 2)] == int((~sensor["LickFree"]).sum()) <= 3
     row = summary[(summary.DFM == 1) & (summary.Group == 1)].iloc[0]
     assert row.LargestRequirement == 12 * 4 + 4
     assert row.TestMinutes == pytest.approx(54.0, abs=0.1)

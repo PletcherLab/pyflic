@@ -44,6 +44,12 @@ If you drive a channelrhodopsin with the FLIC's light output, the light-phase sp
 becomes a stimulation-on versus stimulation-off comparison, and everything above applies
 unchanged.
 
+An experiment with light in these columns also gets the **optogenetic light QC**, which
+checks that the light was where the licks were and reads the MCU's `Program.txt` for the
+thresholds, linkage and decay behind it. See
+[Optogenetic experiments and the light QC](concepts-optogenetics.md).
+
 ---
 
-Related: [Summary metrics](concepts-metrics.md) · [Plot catalogue](plots-catalog.md)
+Related: [Summary metrics](concepts-metrics.md) · [Plot catalogue](plots-catalog.md) ·
+[Optogenetic experiments](concepts-optogenetics.md)

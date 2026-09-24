@@ -59,6 +59,47 @@ class Experiment:
     filter_criteria_summary: str = field(default="")
     excluded_chambers: dict[int, list[int]] = field(default_factory=dict)
     exclusion_group: str | None = None
+    #: The ``optogenetics:`` setting (auto | yes | no) and the Opto Program read
+    #: from ``data/Program.txt`` (:mod:`pyflic.base.opto_program`), or why that
+    #: file could not be used.  ``program_notes`` records what the loader took
+    #: from it (a Progressive Ratio's derived ``paired_chambers``).
+    optogenetics: str = "auto"
+    opto_program: Any = None
+    opto_program_error: str | None = None
+    program_notes: list[str] = field(default_factory=list)
+    _opto: Any = None
+    _opto_snapshot: dict | None = None
+
+    # ---- the optogenetic light QC (pyflic.base.opto_light) -------------
+
+    @property
+    def opto(self):
+        """The optogenetic light QC of this experiment
+        (:class:`~pyflic.base.opto_light.OptoLightQC`).  Every Experiment Type
+        has one; :attr:`is_optogenetic` says whether it covers any DFM."""
+        from .opto_light import OptoLightQC
+
+        if self._opto is None or self._opto.experiment is not self:
+            self._opto = OptoLightQC(self)
+        return self._opto
+
+    @property
+    def is_optogenetic(self) -> bool:
+        """Whether the optogenetic light QC covers any DFM: ``optogenetics:
+        yes``, or ``auto`` with a ``Program.txt`` section or a lit LED."""
+        return self.opto.active
+
+    def _opto_design_snapshot(self) -> dict[tuple[int, int], str]:
+        """``{(dfm, chamber): treatment}`` as the design stood before
+        auto-removal first thinned it, so the light QC keeps the treatment of a
+        removed chamber in view."""
+        if self._opto_snapshot is None:
+            self._opto_snapshot = {
+                (int(tc.dfm_id), int(tc.chamber_index)): name
+                for name, treatment in self.design.treatments.items()
+                for tc in treatment.chambers
+            }
+        return self._opto_snapshot
 
     def get_dfm(self, dfm_id: int) -> DFM | None:
         """Return the DFM with the given id, or None if it does not exist."""
@@ -68,6 +109,7 @@ class Experiment:
         """Remove (DFM,Chamber) pairs from all treatments and clear caches."""
         if not remove_set:
             return
+        self._opto_design_snapshot()
         for treatment in self.design.treatments.values():
             treatment.chambers = [
                 tc
@@ -155,6 +197,10 @@ class Experiment:
 
         removed_rows: list[dict[str, object]] = []
         remove_set: set[tuple[int, int]] = set()
+        ## The optogenetic light QC reads the design as loaded, so its verdicts
+        ## are taken before anything below thins it.
+        opto_on = self.is_optogenetic
+        opto_failed = self.opto.failed_chambers() if opto_on else {}
 
         for _, row in fs.iterrows():
             dfm_id = int(row["DFM"])
@@ -182,6 +228,10 @@ class Experiment:
                     reasons.append("LicksB is NaN/undefined")
                 elif cutoff is not None and float(vb) < cutoff:
                     reasons.append(f"LicksB={float(vb):.6g} < min_untransformed_licks_cutoff={cutoff:.6g}")
+            failing = opto_failed.get(key)
+            if failing:
+                reasons.append(f"opto light QC failed: {', '.join(failing)} "
+                               f"(exclude_failed_opto_chambers)")
 
             if reasons:
                 remove_set.add(key)
@@ -221,6 +271,13 @@ class Experiment:
             )
         else:
             lines.append("  • No lick-count cutoff configured — only NaN check applied.")
+        if opto_on:
+            lines.append("  • exclude_failed_opto_chambers = true: every chamber of a linkage "
+                         "group that fails the opto light QC is excluded — see "
+                         "qc/opto/opto_light_qc.csv"
+                         if self.opto.settings().exclude else
+                         "  • exclude_failed_opto_chambers = false: chambers whose linkage "
+                         "group fails the opto light QC are kept and flagged.")
         self.filter_criteria_summary = "\n".join(lines)
         self.write_removed_chambers()
 
@@ -470,6 +527,14 @@ class Experiment:
             fig.savefig(dir_cumulative / f"DFM{dfm_id}_cumulative_licks.png", dpi=200, bbox_inches="tight")
             plt.close(fig)
 
+        if self.is_optogenetic:
+            print("  Optogenetic light QC...", flush=True)
+            opto_dir = out / "opto"
+            self.opto.write(opto_dir)
+            self.opto.write_figures(opto_dir)
+            for line in self.opto.lines():
+                print(f"    {line}", flush=True)
+
         print(f"  QC complete — {n_total} DFM(s) processed.", flush=True)
         self.qc_report_dir = out
         return out
@@ -653,6 +718,10 @@ class Experiment:
                         buf.write(f"  {line}\n")
 
                 buf.write("\n")
+
+        if self.is_optogenetic:
+            buf.write("\n".join(self.opto.summary_lines()))
+            buf.write("\n")
 
         return buf.getvalue()
 
@@ -1948,7 +2017,7 @@ class Experiment:
             transform_licks = self.transform_licks
         key = (float(range_minutes[0]), float(range_minutes[1])), bool(transform_licks)
         if key in self._feeding_summary_cache:
-            return self._feeding_summary_cache[key]
+            return self.opto.with_columns(self._feeding_summary_cache[key])
 
         if self.parallel:
             from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -1980,7 +2049,7 @@ class Experiment:
             )
 
         self._feeding_summary_cache[key] = result
-        return result
+        return self.opto.with_columns(result)
 
     def binned_feeding_summary(
         self,
@@ -2539,7 +2608,8 @@ class Experiment:
         ``"feeding_summary_plot"`` pointing to the written paths.
         """
         n_dfms = len(self.dfms)
-        n_steps = 5 if skip_qc else 6
+        optogenetic = self.is_optogenetic
+        n_steps = (5 if skip_qc else 6) + (1 if optogenetic else 0)
         print("=" * 50, flush=True)
         print("FLIC Basic Analysis", flush=True)
         print(f"  Project : {self.experiment_dir}", flush=True)
@@ -2578,6 +2648,17 @@ class Experiment:
         else:
             print("  Already applied to this experiment — kept its record.", flush=True)
         removed_path = self.write_removed_chambers()
+
+        opto_paths: dict[str, Path] = {}
+        if optogenetic:
+            step += 1
+            print(f"\n[{step}/{n_steps}] Optogenetic light QC...", flush=True)
+            if self.qc_dir is not None:
+                opto_paths = self.opto.write()
+                opto_paths.update(self.opto.write_figures())
+                print(f"  Done → {opto_paths['opto_light_qc'].parent}", flush=True)
+            for line in self.opto.lines():
+                print(f"  {line}", flush=True)
 
         step += 1
         print(f"\n[{step}/{n_steps}] Experiment summary...", flush=True)
@@ -2627,5 +2708,6 @@ class Experiment:
             "feeding_summary": feeding_csv_path,
             "feeding_summary_facet": facet_csv_path,
             "feeding_summary_plot": plot_path,
+            **opto_paths,
         }
 

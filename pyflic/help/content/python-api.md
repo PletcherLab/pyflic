@@ -129,6 +129,31 @@ The rule's settings come from the design's `constants:` (`pr_break_gap_min`,
 `pr_test_window_min`); `exp.break_settings()` shows them. See
 [Progressive Ratio experiments](concepts-progressive-ratio.md).
 
+## Optogenetic experiments
+
+Every experiment, of any type, has `exp.opto`, its optogenetic light QC. It covers the DFMs
+the `optogenetics:` setting names, and `exp.is_optogenetic` says whether there are any.
+`exp.opto_program` is the parsed `data/Program.txt`, or `None`.
+
+```python
+exp.is_optogenetic                # any DFM covered?
+exp.opto.dfm_ids()                # which
+exp.opto.qc_table()               # the verdict per linkage group
+exp.opto.interval_table()         # per group per scheduled interval
+exp.opto.events_table()           # every light event: UnexplainedSec, OverrunSec
+exp.opto.program_table()          # the program as read
+exp.opto.lines()                  # the flagged groups, in words
+exp.opto.write()                  # qc/opto/*.csv
+p = exp.opto.plot_dfm(1, binsize_min=10)
+
+from pyflic.base.opto_program import read_program
+program = read_program("data/Program.txt")
+program.section(1).linkage_groups()          # {1: (1, 2, 3, 4), ...}
+program.section(1).intervals[0].params.paradigm
+```
+
+See [Optogenetic experiments](concepts-optogenetics.md).
+
 ## DFM objects
 
 A `DFM` exposes every intermediate stage of the pipeline, which makes it the right level

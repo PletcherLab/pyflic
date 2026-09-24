@@ -55,6 +55,7 @@ TOC: tuple[Section, ...] = (
             "concepts-two-well-pi",
             "concepts-metrics",
             "concepts-light-phase",
+            "concepts-optogenetics",
             "concepts-experiment-types",
             "concepts-progressive-ratio",
             "concepts-project",
@@ -146,6 +147,7 @@ GUIDES: tuple[Guide, ...] = (
         (
             "concepts-experiment-types",
             "concepts-progressive-ratio",
+            "concepts-optogenetics",
             "config-dfms-chambers",
             "config-structure",
             "plots-catalog",

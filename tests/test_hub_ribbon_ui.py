@@ -235,18 +235,26 @@ def test_unloading_hides_every_type_specific_group(hub):
     hub.refresh()
     assert _group_titled(hub, "Progressive Ratio").isHidden()
     assert hub._type_analyze_groups["progressive_ratio"].isHidden()
-    assert hub._type_qc_groups["progressive_ratio"].isHidden()
+    assert hub._type_qc_groups["optogenetics"].isHidden()
+
+
+_PR_QC = {"Light QC table", "Licks per light event (QC)",
+          "Sucrose Well resting level (QC)"}
+_OPTO_QC = {"Opto light QC table", "Light explained by licks (QC)"}
+
+
+def _shown(group) -> set[str]:
+    return {b.text() for b in group.findChildren(ActionButton) if not b.isHidden()}
 
 
 def test_progressive_ratio_light_qc_lives_on_the_qc_card(hub):
     """The light QC table and its two figures are QC, so they sit in the QC
-    card's type group; Analyze keeps the result table, Plots the result
-    figures."""
-    qc = hub._type_qc_groups["progressive_ratio"]
+    card's Optogenetics group; Analyze keeps the result table, Plots the
+    result figures."""
+    qc = hub._type_qc_groups["optogenetics"]
+    assert qc.title() == "Optogenetics"
     assert qc in hub.panels["qc"].findChildren(type(qc))
-    assert {b.text() for b in qc.findChildren(ActionButton)} == {
-        "Light QC table", "Licks per light event (QC)",
-        "Sucrose Well resting level (QC)"}
+    assert {b.text() for b in qc.findChildren(ActionButton)} == _PR_QC | _OPTO_QC
     analyze = hub._type_analyze_groups["progressive_ratio"]
     assert {b.text() for b in analyze.findChildren(ActionButton)} == {
         "Paired − yoked difference CSV", "Breaking point CSV"}
@@ -257,8 +265,24 @@ def test_progressive_ratio_light_qc_lives_on_the_qc_card(hub):
 
     _load_fake_of_type(hub, "ProgressiveRatio")
     assert not qc.isHidden() and not analyze.isHidden()
+    assert _shown(qc) == _PR_QC            # not optogenetic: no light data here
     _load_fake_of_type(hub, "Hedonic")
     assert qc.isHidden() and analyze.isHidden()
+
+
+def test_the_optogenetics_group_follows_the_member_not_the_type(hub):
+    """Any optogenetic member gets the opto light QC; Progressive Ratio adds
+    its own light checks to the same group."""
+    qc = hub._type_qc_groups["optogenetics"]
+    _load_fake_of_type(hub, None)
+    assert qc.isHidden()
+    hub.experiment.is_optogenetic = True
+    hub.refresh()
+    assert not qc.isHidden() and _shown(qc) == _OPTO_QC
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    hub.experiment.is_optogenetic = True
+    hub.refresh()
+    assert _shown(qc) == _OPTO_QC | _PR_QC
 
 
 def test_the_breaking_point_buttons_run_their_actions(hub, monkeypatch):
@@ -282,12 +306,14 @@ def test_the_qc_card_buttons_run_their_actions(hub, monkeypatch):
     monkeypatch.setattr(hub, "_run_experiment_action", sent.append)
     _load_fake_of_type(hub, "ProgressiveRatio")
     buttons = {b.text(): b for b in
-               hub._type_qc_groups["progressive_ratio"].findChildren(ActionButton)}
+               hub._type_qc_groups["optogenetics"].findChildren(ActionButton)}
     for label in ("Light QC table", "Licks per light event (QC)",
-                  "Sucrose Well resting level (QC)"):
+                  "Sucrose Well resting level (QC)", "Opto light QC table",
+                  "Light explained by licks (QC)"):
         buttons[label].click()
     assert [step["action"] for step in sent] == [
-        "pr_light_qc", "plot_pr_light_events", "plot_pr_resting_level"]
+        "pr_light_qc", "plot_pr_light_events", "plot_pr_resting_level",
+        "opto_light_qc", "plot_opto_light"]
 
 
 def test_the_pr_curve_buttons_use_the_bin_size_spinbox(hub, monkeypatch):

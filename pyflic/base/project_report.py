@@ -256,17 +256,17 @@ def _flagged_callouts(project) -> list[Any]:
     if flagged is None:
         return []
     if flagged.empty:
-        return [rl.Callout("Every chamber group's light followed its paired fly.",
+        return [rl.Callout("Every group's light was earned by its licks.",
                            tone="ok", title="Light QC")]
     excluded = flagged[flagged["Status"] == "excluded"]
     retained = flagged[flagged["Status"].str.startswith("retained")]
     warned = flagged[flagged["Status"].str.startswith("kept")]
     parts = []
     if len(excluded):
-        parts.append(f"{len(excluded)} chamber group(s) failed and were excluded")
+        parts.append(f"{len(excluded)} group(s) failed and were excluded")
     if len(retained):
         parts.append(f"{len(retained)} failed but are in the pooled numbers "
-                     f"(exclude_failed_pr_groups off)")
+                     f"(their exclusion switch is off)")
     if len(warned):
         parts.append(f"{len(warned)} carry warnings")
     tone = "failed" if len(excluded) or len(retained) else "warning"
@@ -295,20 +295,27 @@ def _qc_blocks(project) -> list[Any]:
         ]
     flagged = project.flagged_groups()
     if flagged is not None:
-        blocks.append(rl.Heading("Light QC — did the paired fly earn its light?", level=2))
+        blocks.append(rl.Heading("Light QC — was the light earned by licks?", level=2))
         if flagged.empty:
-            blocks.append(rl.Callout("No chamber group was flagged by the light QC.",
-                                     tone="ok"))
+            blocks.append(rl.Callout("No group was flagged by the light QC.", tone="ok"))
         else:
-            view = flagged.rename(columns={"LickFreeRunStartMin":
-                                           "Lick-free from (min after training)"})
+            view = flagged.rename(columns={
+                "LickFreeRunStartMin": "Lick-free from (min after training)",
+                "UnexplainedOnsetMin": "Unexplained from (min)"})
+            if not (view["Source"] == "Opto").any():
+                view = view.drop(columns=["Wells", "Unexplained from (min)"])
+            if not (view["Source"] == "PR").any():
+                view = view.drop(columns=["Lick-free from (min after training)"])
             blocks += [
-                rl.Paragraph("Chamber groups whose light the firmware fired without the "
-                             "paired fly's licks (failed), or whose Sucrose Well or lick "
-                             "trend looks wrong (warnings), from every member's "
-                             "pr_light_qc.csv."),
-                rl.Table(view, caption="Flagged chamber groups",
-                         formats={"Lick-free from (min after training)": "{:.0f}"},
+                rl.Paragraph("Groups whose light the firmware fired without the licks to "
+                             "explain it (failed), or whose sensor, program or lick trend "
+                             "looks wrong (warnings).  PR: a progressive-ratio chamber "
+                             "group, from every member's pr_light_qc.csv.  Opto: a "
+                             "linkage group of any optogenetic member, from "
+                             "qc/opto/opto_light_qc.csv."),
+                rl.Table(view, caption="Flagged groups",
+                         formats={"Lick-free from (min after training)": "{:.0f}",
+                                  "Unexplained from (min)": "{:.0f}"},
                          status={"Status": rl.tone_of, "Verdict": rl.tone_of}),
             ]
     return blocks

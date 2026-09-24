@@ -15,7 +15,9 @@ experiment assembles it per Chamber Group
 
 * a **Light Event** is one onset of the group's light;
 * a **Lick-free Light Event** has no Sucrose Well licks since the previous
-  Light Event ended;
+  Light Event ended, and no Sucrose Well activity (a lick or a touch) within
+  the light's decay window around it — the decay the Opto Program states,
+  so a light the fly did touch for is never counted against it;
 * **Self-triggered light** is a run of at least ``pr_lick_free_run``
   consecutive Lick-free Light Events in the Test phase — the light was
   following the sensor, not the fly;
@@ -284,12 +286,17 @@ def judge_group(
     resting: Mapping[str, float],
     reference_level: float,
     any_light: bool,
+    lick_free: np.ndarray | None = None,
 ) -> GroupVerdict:
-    """Flags and notes for one Chamber Group from its measured quantities."""
+    """Flags and notes for one Chamber Group from its measured quantities.
+
+    *lick_free* marks the Lick-free Light Events among the Test events; by
+    default an event with no credited licks.  The experiment passes the
+    decay-aware mask (``LickFree`` of the light events table)."""
     flags: list[str] = []
     notes: list[str] = []
     counts = np.asarray(test_counts, dtype=int)
-    lick_free = counts == 0
+    lick_free = (counts == 0) if lick_free is None else np.asarray(lick_free, dtype=bool)
     run, run_first = longest_run(lick_free)
     failing_start = first_run_start(lick_free, settings.lick_free_run)
     rho, slope = lick_trend(counts)

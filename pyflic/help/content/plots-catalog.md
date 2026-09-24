@@ -14,6 +14,7 @@ not figures for a paper.
 | Raw signal | `qc/raw_signal/DFM{n}_raw.png` | Every well's unprocessed signal |
 | Baselined signal | `qc/baselined/DFM{n}_baselined.png` | Every well after baseline subtraction, with thresholds drawn |
 | Cumulative licks | `qc/cumulative_licks/DFM{n}_cumulative_licks.png` | Running lick total per well over time |
+| Light explained by licks | `qc/opto/opto_light_dfm{n}.png` | Optogenetic experiments only: each linkage group's lit time, explained and unexplained by trigger-well licks |
 
 The **baselined signal with thresholds** is the most useful one in the set. It puts your
 `feeding_threshold` and `feeding_minimum` lines directly on the trace, so whether they sit
@@ -22,6 +23,14 @@ in a sensible place is a visual question rather than a guess.
 **Cumulative licks** curves reveal timing at a glance: a steady slope is steady feeding, a
 plateau is a fly that stopped, a step is a burst. A well whose curve never leaves zero is
 inactive and should be excluded.
+
+**Light explained by licks** (`plot_opto_light`) is drawn for an optogenetic experiment of
+any type, by basic analysis as well. One column per linkage group; the top row is its lit
+time per bin, grey-blue where a trigger-well lick or touch within the light's decay
+explains it and red where nothing does. The bottom row, when `data/Program.txt` allows it,
+is the time the emulated firmware trigger read the trigger wells above threshold with no
+lick or touch: a red top row over an orange bottom one is a drifting sensor. The strip
+carries the group's verdict. See [Optogenetic experiments](concepts-optogenetics.md).
 
 ## Summary plots
 
@@ -178,8 +187,8 @@ recording, against the median of the DFM's other Sucrose Wells (grey). Light ons
 rug along the bottom and the dashed line is training end. A well that creeps up while its
 rug thickens is the cause behind the red rings.
 
-Both are on the Hub's QC panel, in its *Progressive Ratio only* group beside the **Light
-QC table**.
+Both are on the Hub's QC panel, in its *Optogenetics* group beside the **Light QC
+table**.
 
 Every panel's strip carries the group's light QC verdict. A group that failed — and so left
 the analysis — stays in these three figures, its strip saying why; the result figures

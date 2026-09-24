@@ -503,6 +503,35 @@ ACTIONS: list[Action] = [
               "of its chambers out.",
     ),
     Action(
+        action="opto_light_qc",
+        label="Opto light QC table",
+        blurb="Per linkage group: was the light where the licks were? (optogenetic)",
+        icon="qc", category=Category.QC, produces="csv",
+        params=[],
+        notes="Writes qc/opto/: opto_light_qc.csv (one row per linkage group: lit "
+              "time, the unexplained light and the minute it began, what the "
+              "emulated firmware trigger saw, flags and verdict), "
+              "opto_light_intervals.csv, opto_light_events.csv and opto_program.csv "
+              "(data/Program.txt as read), and logs every flagged group.  Runs on "
+              "any optogenetic experiment, whatever its type: optogenetics: yes, or "
+              "auto with a Program.txt or light data.  Skipped otherwise.",
+    ),
+    Action(
+        action="plot_opto_light",
+        label="Light explained by licks (QC)",
+        blurb="Per DFM: lit time explained and unexplained by trigger-well licks.",
+        icon="plot", category=Category.QC, produces="figure",
+        params=[
+            Param(key="binsize", label="Bin size", type="float", unit="min",
+                  note="Width of the time bins.", default=10.0),
+        ],
+        notes="One column per linkage group: lit time per bin, explained by a "
+              "trigger-well lick or touch within the light's decay and unexplained, "
+              "and below it the time the emulated firmware trigger read the "
+              "trigger wells above threshold with no lick (needs Program.txt).  "
+              "Writes qc/opto/opto_light_dfm<id>.png.",
+    ),
+    Action(
         action="plot_pr_cumulative_diff",
         label="Cumulative difference curve",
         blurb="Paired − yoked cumulative licks since training end, by treatment.",

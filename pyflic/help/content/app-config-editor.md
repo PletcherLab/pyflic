@@ -86,6 +86,14 @@ load a config that states one. What each setting does is in
 [the light QC](concepts-progressive-ratio.md#light-qc) and
 [the breaking point](concepts-progressive-ratio.md#breaking-point).
 
+**Optogenetics has a setting and a section.** *Optogenetics* on the Experiment tab is
+`auto`, `yes` or `no`, and each DFM tab has its own picker, which inherits unless you pick.
+Once the experiment is known to be optogenetic — the setting is `yes`, `data/` holds a
+`Program.txt`, or a run has already written its light QC — an *Optogenetic light QC*
+section shows the thresholds, shared by every type, under the same rule as the rest: grey
+defaults, and only what you type is written. See
+[Optogenetic experiments](concepts-optogenetics.md).
+
 **A member's config shows the design read-only.** Opened on a Project's member, the
 editor fills the global settings from `project.yaml`, marks them read-only with a banner,
 and writes only `dfms:` — see [Projects and members](concepts-project.md).
