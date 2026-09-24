@@ -347,9 +347,16 @@ def test_the_dot_plot_is_the_within_group_difference(exp):
 
 def test_breaking_point_table_is_per_light_period_after_training(exp):
     bp = exp.breaking_point_table(1, 1)
-    assert list(bp.columns) == ["Minutes", "CumLicks", "DeltaMinutes", "DeltaLicks"]
+    ## Chamber 1 is paired: its rows are the group's Light Event Ledger.
+    assert list(bp.columns) == ["Minutes", "CumLicks", "DeltaMinutes", "DeltaLicks",
+                                "MinutesSincePrev", "LicksSincePrev", "LickFree",
+                                "RestingLevel"]
     assert (bp["Minutes"] > 0).all()
     assert bp["DeltaLicks"].iloc[0] == 0.0 and (bp["DeltaLicks"].iloc[1:] > 0).all()
+    assert (bp["LicksSincePrev"] > 0).all() and not bp["LickFree"].any()
+    ## The yoked chamber keeps the plain breaking-point table.
+    assert list(exp.breaking_point_table(1, 2).columns) == [
+        "Minutes", "CumLicks", "DeltaMinutes", "DeltaLicks"]
     assert exp.breaking_point_table(2, 5).empty       # group never trained
 
 
@@ -426,7 +433,10 @@ def test_project_pools_the_difference_and_makes_it_primary(tmp_path):
     assert "proj_PairedYokedDiff.csv" in written
     diff = pd.read_csv(root / "analysis" / "proj_PairedYokedDiff.csv")
     assert set(diff["Experiment"]) == {"rep1", "rep2"}
-    assert len(diff) == (5 * 2 + 1) + (6 * 2)
+    ## rep1's never-trained group leaves through the pipeline's auto-removal
+    ## (require_training_complete), so it contributes no Training row.
+    assert len(diff) == (5 * 2) + (6 * 2)
+    assert "proj_LightQC.csv" in written
 
     summary, facet, _missing = project.combined_frames()
     labels = [label for label, _ in project._facet_frames(summary, facet)]
@@ -435,7 +445,7 @@ def test_project_pools_the_difference_and_makes_it_primary(tmp_path):
     rows = project.diff_comparison_rows(diff)
     assert rows and all(r["phase"] == "Test" for r in rows)
     assert {r["metric"] for r in rows} >= {"dLicksA"}
-    text = (root / "analysis" / "proj_Stats.txt").read_text()
+    text = (root / "analysis" / "proj_Stats.txt").read_text(encoding="utf-8")
     assert text.index("Paired − yoked difference (primary") < text.index("Per-chamber metrics (secondary)")
 
     pdf = write_project_report(project, log=lambda *_a, **_k: None)
@@ -543,17 +553,19 @@ def test_every_app_draws_through_agg_not_a_gui_backend():
     assert "qtagg" not in out.stdout
 
 
-def test_a_report_page_is_built_without_pyplot():
-    """A figure built straight from ``Figure`` registers with nothing, so the
-    Hub's worker thread never asks matplotlib for a canvas it cannot make."""
+def test_a_report_page_is_built_without_pyplot(tmp_path):
+    """Report pages are built straight from ``Figure`` and register with
+    nothing, so the Hub's worker thread never asks matplotlib for a canvas it
+    cannot make."""
     import matplotlib.pyplot as plt
 
-    from pyflic.base.pdf_report import _page_figure
+    from pyflic.base import report_layout as rl
 
     before = set(plt.get_fignums())
-    fig, ax = _page_figure((8.5, 11))
+    doc = rl.ReportDocument("Experiment report", "x")
+    doc.add(rl.Cover("Experiment report", "x"), rl.Heading("One"), rl.Paragraph("text"))
+    doc.save(tmp_path / "r.pdf")
     assert set(plt.get_fignums()) == before
-    assert ax.get_figure() is fig
 
 
 def test_matplotlib_loads_before_qt_in_every_app_module():

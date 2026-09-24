@@ -242,6 +242,31 @@ def adopt_design(project_dir, names=None) -> list[str]:
     return changed
 
 
+def flagged_light_qc_groups(light_qc: pd.DataFrame) -> pd.DataFrame:
+    """The Chamber Groups a stacked light QC table (``pr_light_qc.csv`` with an
+    ``Experiment`` column) flagged, one row each.
+
+    ``Status`` says what the pooled numbers did with the group: *excluded* (its
+    Member's auto-removal took both chambers out), *retained* (it failed, but
+    ``exclude_failed_pr_groups`` was off, so it IS in the pooled numbers) or
+    *kept — warning only*.  ``LickFreeRunStartMin`` is minutes since the
+    group's training end.
+    """
+    columns = ["Experiment", "DFM", "Group", "Treatment", "Verdict", "Status",
+               "Flags", "LickFreeRunStartMin"]
+    flags = light_qc["Flags"].fillna("").astype(str)
+    flagged = light_qc[flags.str.strip() != ""].copy()
+    if flagged.empty:
+        return pd.DataFrame(columns=columns)
+    excluded = flagged["Excluded"].astype(str).str.lower().isin(("true", "1"))
+    failed = flagged["Verdict"].astype(str) == "failed"
+    flagged["Status"] = "kept — warning only"
+    flagged.loc[failed, "Status"] = "retained (exclude_failed_pr_groups: false)"
+    flagged.loc[excluded, "Status"] = "excluded"
+    flagged["Treatment"] = flagged["Treatment"].fillna("")
+    return flagged[columns].reset_index(drop=True)
+
+
 class _NameShim:
     """Duck-typed ``arena`` so an AI payload builder that reads
     ``experiment.arena.experiment_name`` works on a Project unchanged."""
@@ -686,6 +711,11 @@ class Project:
     # Status
     # ------------------------------------------------------------------
 
+    def member_report_path(self, name: str) -> str:
+        """Where a Member's own experiment report is written
+        (``pdf_report.write_experiment_report``'s default)."""
+        return os.path.join(self.member_dir(name), "analysis", "experiment_report.pdf")
+
     def member_status(self, name: str) -> dict:
         """Cheap per-Member status from saved artifacts (no data load)."""
         directory = self.member_dir(name)
@@ -695,8 +725,7 @@ class Project:
             "analyzed": os.path.isfile(summary),
             "faceted": os.path.isfile(
                 os.path.join(analysis, "feeding_summary_facet.csv")),
-            "report": os.path.isfile(
-                os.path.join(directory, f"{name}_report.pdf")),
+            "report": os.path.isfile(self.member_report_path(name)),
             "has_data": has_experiment_data(directory),
             "dfms": len(dfm_ids_in_data(directory)),
             "chambers": None,
@@ -788,6 +817,27 @@ class Project:
                 frames.append(df)
         return pd.concat(frames, ignore_index=True) if frames else None
 
+    def combined_light_qc_frame(self):
+        """The stacked Members' ``pr_light_qc.csv`` (Progressive Ratio only),
+        with an ``Experiment`` first column, or ``None`` when no Member has
+        one."""
+        frames = []
+        for name in self.member_names:
+            path = os.path.join(self.member_dir(name), "analysis", "pr_light_qc.csv")
+            if os.path.isfile(path):
+                df = pd.read_csv(path)
+                df.insert(0, "Experiment", name)
+                frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else None
+
+    def flagged_groups(self, light_qc: pd.DataFrame | None = None) -> pd.DataFrame | None:
+        """Every Chamber Group the light QC flagged, across Members
+        (:func:`flagged_light_qc_groups`), or ``None`` when no Member has a
+        light QC table."""
+        if light_qc is None:
+            light_qc = self.combined_light_qc_frame()
+        return None if light_qc is None else flagged_light_qc_groups(light_qc)
+
     def aggregated_exclusions(self) -> pd.DataFrame:
         """Every Member's exclusions in one table (ADR-0005).
 
@@ -845,6 +895,11 @@ class Project:
             path = os.path.join(self.analysis_path,
                                 f"{self.name}_PairedYokedDiff.csv")
             diff.to_csv(path, index=False, na_rep="NA")
+            written.append(path)
+        light_qc = self.combined_light_qc_frame()
+        if light_qc is not None:
+            path = os.path.join(self.analysis_path, f"{self.name}_LightQC.csv")
+            light_qc.to_csv(path, index=False, na_rep="NA")
             written.append(path)
         path = os.path.join(self.analysis_path, f"{self.name}_Excluded.csv")
         self.aggregated_exclusions().to_csv(path, index=False, na_rep="NA")
@@ -948,71 +1003,9 @@ class Project:
 
     def _compare_frames(self, frames: list[tuple[str, pd.DataFrame]],
                         metrics: list[str]) -> list[dict]:
-        import itertools
+        from .analytics import treatment_comparisons
 
-        import numpy as np
-        from scipy import stats as sstats
-
-        from .analytics import _resolve_metric_col
-
-        n_experiments = max(
-            [int(f["Experiment"].nunique()) for _, f in frames
-             if "Experiment" in f.columns] or [1])
-        rows: list[dict] = []
-        for metric in metrics:
-            for label, frame in frames:
-                value = pd.to_numeric(_resolve_metric_col(frame, metric),
-                                      errors="coerce")
-                if value.isna().all():
-                    continue
-                data = pd.DataFrame({
-                    "Treatment": frame["Treatment"].astype(str).str.strip(),
-                    "Experiment": frame.get("Experiment", "one"),
-                    "DFM": frame.get("DFM", 0),
-                    "Value": value,
-                }).dropna(subset=["Value"])
-                data = data[data["Treatment"] != ""]
-                groups = {t: g["Value"].values
-                          for t, g in data.groupby("Treatment", sort=False)
-                          if len(g) >= 2}
-                if len(groups) < 2:
-                    continue
-                try:
-                    if len(groups) == 2:
-                        (na_, va), (nb_, vb) = groups.items()
-                        _s, p = sstats.ttest_ind(va, vb, equal_var=False)
-                        pairs = [(na_, nb_, float(np.mean(vb) - np.mean(va)),
-                                  float(p))]
-                    else:
-                        from statsmodels.stats.multicomp import pairwise_tukeyhsd
-                        endog = np.concatenate(list(groups.values()))
-                        glabels = np.concatenate(
-                            [[t] * len(v) for t, v in groups.items()])
-                        res = pairwise_tukeyhsd(endog=endog, groups=glabels,
-                                                alpha=0.05)
-                        pairs = [(str(a), str(b), float(d), float(pv))
-                                 for (a, b), d, pv in zip(
-                                     itertools.combinations(res.groupsunique, 2),
-                                     res.meandiffs, res.pvalues)]
-                except Exception:  # noqa: BLE001
-                    continue
-                for a, b, diff, p_pooled in pairs:
-                    ## A non-finite p means the groups carry no usable variance
-                    ## in this facet (commonly: a tail window with no feeding).
-                    ## Printing "nan" as a result invites reading it as one.
-                    if not np.isfinite(p_pooled):
-                        continue
-                    p_mixed = (self._mixed_p(data, a, b)
-                               if n_experiments > 1 else None)
-                    rows.append({
-                        "metric": metric, "phase": label,
-                        "a": a, "n_a": len(groups[a]),
-                        "b": b, "n_b": len(groups[b]),
-                        "diff": diff, "p_pooled": p_pooled,
-                        "significant": bool(p_pooled < 0.05),
-                        "p_mixed": p_mixed,
-                    })
-        return rows
+        return treatment_comparisons(frames, metrics, mixed_p=self._mixed_p)
 
     @staticmethod
     def _mixed_p(data: pd.DataFrame, a: str, b: str) -> float | None:
@@ -1055,6 +1048,31 @@ class Project:
         except Exception:  # noqa: BLE001
             return None
 
+    def _flagged_groups_lines(self) -> list[str]:
+        """The Stats text's "Flagged Chamber Groups" block — Progressive Ratio
+        light QC — or nothing when no Member has a light QC table."""
+        flagged = self.flagged_groups()
+        if flagged is None:
+            return []
+        out = ["Flagged Chamber Groups (progressive ratio light QC)"]
+        if flagged.empty:
+            out += ["  (none — every chamber group's light followed its paired fly)", ""]
+            return out
+        for row in flagged.itertuples(index=False):
+            where = f"{row.Experiment} DFM {int(row.DFM)} group {int(row.Group)}"
+            if row.Treatment:
+                where += f" ({row.Treatment})"
+            onset = ("" if pd.isna(row.LickFreeRunStartMin) else
+                     f"; lick-free from {float(row.LickFreeRunStartMin):.1f} min "
+                     f"after training end")
+            out.append(f"  {where}: {row.Status} — {row.Flags}{onset}")
+        retained = int((flagged["Status"].str.startswith("retained")).sum())
+        if retained:
+            out.append(f"  {retained} failed group(s) retained by member setting ARE "
+                       f"in the pooled numbers below.")
+        out.append("")
+        return out
+
     def stats_text(self, summary: pd.DataFrame,
                    facet: pd.DataFrame | None,
                    diff: pd.DataFrame | None = None) -> str:
@@ -1079,6 +1097,7 @@ class Project:
                    "within Experiment — accounts for between-member and "
                    "between-device variation.")
         out.append("")
+        out.extend(self._flagged_groups_lines())
 
         def _table(table_rows: list[dict]) -> list[str]:
             header = (f"{'Metric':<14}{'Facet':<16}{'A':<12}{'B':<12}"

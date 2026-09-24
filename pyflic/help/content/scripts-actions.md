@@ -20,19 +20,20 @@ several devices. `group` defaults to the **script's name** — see
 
 | Action | Parameters | What it does |
 |---|---|---|
-| `basic_analysis` | — | The standard pipeline: summary, feeding summary, summary plot (QC is `run_qc`'s job) |
+| `basic_analysis` | — | The standard pipeline: auto-removal (the `constants:` cutoffs, once), summary, feeding summary, summary plot (QC is `run_qc`'s job) |
 | `run_qc` | — | Per-DFM QC reports into `qc/`: integrity, data breaks, bleeding, raw / baselined / cumulative-licks plots |
 | `feeding_csv` | — | Per-chamber feeding summary to CSV |
 | `binned_csv` | `binsize` | Feeding metrics binned over time, to CSV |
 | `weighted_duration` | — | Weighted-duration summary (hedonic experiments) |
 | `paired_yoked_diff` | — | Paired − yoked table, one row per chamber group per Facet (progressive ratio) |
+| `pr_light_qc` | — | **Light QC table**: per chamber group, did the paired fly earn its light? Writes `pr_light_qc.csv` and `pr_light_events.csv` and logs each flagged group (progressive ratio) |
 | `tidy_export` | `kind` | **Event statistics**: one row per individual event, for downstream statistics |
 | `bootstrap` | `metric`, `mode`, `n_boot`, `ci`, `seed` | Bootstrap confidence intervals |
 | `compare` | `metric`, `mode`, `model`, `factors` | ANOVA or linear mixed model across treatments |
 | `light_phase_summary` | — | Feeding summary split by light and dark phase |
 | `param_sensitivity` | `parameter`, `values` | Re-run across a range of one detection parameter |
 | `transition_matrix` | — | Transition probabilities between bout types |
-| `pdf_report` | `metrics`, `binsize` | Binned plots and tables bundled into one PDF |
+| `pdf_report` | `metrics`, `binsize` | The experiment report: cover, quality control, the type's inference figures with statistics, appendices — see [Reports](reports.md) |
 
 **`tidy_export`** — the **Event statistics** button — takes `kind: feeding` (default) or `tasting`, and writes one row per event with its `StartMin`, `Duration`, `Licks`, `AvgIntensity` and `MaxIntensity`, labelled by chamber, well and treatment. The action key keeps its original spelling, so scripts already on disk are unaffected.
 
@@ -74,7 +75,9 @@ parameter for a publication — an effect that appears only at one link gap is n
 | `plot_well_comparison` | `metric` | Well A against Well B for one metric |
 | `plot_hedonic` | — | Hedonic feeding plot |
 | `plot_pr_cumulative_diff` | `binsize` | Paired − yoked cumulative licks since training end, by treatment (progressive ratio) |
-| `plot_pr_cumulative_licks` | `binsize` | Per-DFM training-aligned paired/yoked traces, light-on as points (progressive ratio, QC) |
+| `plot_pr_cumulative_licks` | `binsize` | Per-DFM training-aligned paired/yoked traces, light-on as points, lick-free light events as rings (progressive ratio, QC) |
+| `plot_pr_light_events` | — | Per-DFM sucrose licks per Test light event; lick-free events as red rings (progressive ratio, QC) |
+| `plot_pr_resting_level` | — | Per-DFM paired Sucrose Well resting level over the recording, light onsets as a rug (progressive ratio, QC) |
 | `plot_breaking_point` | — | Per-DFM ΔLicks per light-on period since training end (progressive ratio) |
 
 ## `metric` and `mode`

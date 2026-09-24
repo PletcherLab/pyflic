@@ -60,18 +60,38 @@ These are defaults for the whole experiment. Any DFM may override any of them fo
 
 ## `global.constants`
 
-Cutoffs used by automatic chamber removal. They are **not** applied automatically during a
-normal load — they take effect when `auto_remove_chambers()` runs, either through the
-Python API or through a script step.
+Cutoffs used by automatic chamber removal. They are not applied at load: they take effect
+when `auto_remove_chambers()` runs, which **basic analysis does once, before it writes the
+summary** — the Hub's *Basic analysis*, *Analyze all*, a Batch Run and
+`execute_basic_analysis()` all apply them, and every output describes the filtered design.
+The QC Viewer's *Auto Filter Chambers* and the Python API run the same removal on demand.
 
 | Key | Applies to | Effect |
 |---|---|---|
 | `min_untransformed_licks_cutoff` | all experiment types | Remove a chamber if any of its wells has a lick count below this |
-| `max_med_duration_cutoff` | **hedonic only** | Remove a chamber if `MedDurationA` or `MedDurationB` is above this |
-| `max_events_cutoff` | **hedonic only** | Remove a chamber if `EventsA` or `EventsB` is above this |
+| `max_med_duration_cutoff` | hedonic, progressive ratio | Remove a chamber if `MedDurationA` or `MedDurationB` is above this |
+| `max_events_cutoff` | hedonic, progressive ratio | Remove a chamber if `EventsA` or `EventsB` is above this |
 
-None of them has a default value. Unset means the check is not performed — pyflic reports
-them as "not configured" rather than substituting a number.
+An Experiment Type supplies its own defaults for these (Hedonic and Progressive Ratio set
+all three); a yaml value always wins. A Custom Experiment has none, and there an unset key
+means the check is not performed — pyflic reports it as "not configured" rather than
+substituting a number.
+
+A Progressive Ratio experiment adds its own, all with defaults:
+
+| Key | Default | Effect |
+|---|---|---|
+| `require_training_complete` | `true` | Remove both chambers of a chamber group whose paired fly never finished training |
+| `exclude_failed_pr_groups` | `true` | Remove both chambers of a chamber group that fails the light QC (self-triggered light, implausible training); `false` keeps them, still listed in `pr_light_qc.csv` |
+| `pr_lick_free_run` | `5` | Consecutive Test light events with no sucrose licks that make a group's light self-triggered |
+| `pr_trend_min_events` | `5` | Test light events needed before the licks-per-event trend is judged |
+| `pr_trend_min_rho` | `0.3` | Spearman's rho below which a group gets the *no increasing trend* warning |
+| `pr_resting_level_rise` | `15` | Counts the sucrose well's resting level may rise above its first 30 minutes before a warning; also the margin an *elevated* well must clear |
+| `pr_resting_level_ratio` | `3` | Times the DFM's other sucrose wells a paired sucrose well may rest at before the *elevated* warning |
+
+What the light QC checks, and why, is in
+[Experiment types](concepts-experiment-types.md#progressive-ratio). The Project Design
+dialog shows these as fields for a Progressive Ratio design.
 
 One rule applies regardless of configuration: a chamber whose lick value is `NaN` or
 undefined is always removed by `auto_remove_chambers()`, because it produced no usable

@@ -328,7 +328,7 @@ ACTIONS: list[Action] = [
     Action(
         action="pdf_report",
         label="Write PDF report",
-        blurb="Bundle of binned plots + tables into one PDF.",
+        blurb="The experiment report: QC, the inference figures with statistics, appendices.",
         icon="pdf", category=Category.ANALYZE, produces="pdf",
         params=[
             Param(key="metrics", label="Metrics to include", type="list_str",
@@ -473,6 +473,22 @@ ACTIONS: list[Action] = [
               "Progressive Ratio statistics.",
     ),
     Action(
+        action="pr_light_qc",
+        label="Light QC table",
+        blurb="Per chamber group: did the paired fly earn its light? (progressive ratio)",
+        icon="qc", category=Category.QC, produces="csv",
+        requires="progressive_ratio",
+        params=[],
+        notes="Writes analysis/pr_light_qc.csv (one row per chamber group: "
+              "training and Test light events, lick-free light events, the "
+              "licks-per-event trend, the Sucrose Well resting level, flags and "
+              "verdict) and analysis/pr_light_events.csv (one row per Test light "
+              "event), and logs every flagged group.  Self-triggered light and "
+              "implausible training fail a group, and with "
+              "exclude_failed_pr_groups on (the default) auto-removal takes both "
+              "of its chambers out.",
+    ),
+    Action(
         action="plot_pr_cumulative_diff",
         label="Cumulative difference curve",
         blurb="Paired − yoked cumulative licks since training end, by treatment.",
@@ -497,8 +513,36 @@ ACTIONS: list[Action] = [
             Param(key="binsize", label="Bin size", type="float", unit="min",
                   note="Resolution of the cumulative curve.", default=1.0),
         ],
-        notes="One panel per chamber group; light-on bins are drawn as points. "
-              "A QC figure, not a result.",
+        notes="One panel per chamber group; light-on bins are drawn as points "
+              "and lick-free light events as rings on the paired trace.  A QC "
+              "figure, not a result: a group auto-removal took out stays in, "
+              "its strip saying why.",
+    ),
+    Action(
+        action="plot_pr_light_events",
+        label="Licks per light event (QC)",
+        blurb="Per DFM: sucrose licks credited to each Test light event.",
+        icon="plot", category=Category.QC, produces="figure",
+        requires="progressive_ratio",
+        params=[],
+        notes="One panel per chamber group.  A working progressive ratio "
+              "climbs; lick-free light events are hollow red rings, the dashed "
+              "line is the group's trend and the grey one the requirement "
+              "estimated across the experiment.  Writes "
+              "analysis/pr_light_events_dfm<id>.png.",
+    ),
+    Action(
+        action="plot_pr_resting_level",
+        label="Sucrose Well resting level (QC)",
+        blurb="Per DFM: the paired Sucrose Well's raw level over the recording.",
+        icon="plot", category=Category.QC, produces="figure",
+        requires="progressive_ratio",
+        params=[],
+        notes="One panel per chamber group: the per-minute median raw signal of "
+              "the paired chamber's Sucrose Well against the DFM's other Sucrose "
+              "Wells, light onsets as a rug and training end dashed.  A well "
+              "that creeps up while its light fires ever more often is a sensor, "
+              "not a fly.  Writes analysis/pr_resting_level_dfm<id>.png.",
     ),
     Action(
         action="plot_breaking_point",

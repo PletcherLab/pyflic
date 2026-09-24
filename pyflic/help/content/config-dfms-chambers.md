@@ -112,8 +112,11 @@ always removes chambers whose lick value is `NaN`. See
 and clears the feeding-summary cache, so everything computed afterwards reflects the
 filtered set.
 
-It does **not** run automatically during a normal load. Invoke it from the Python API or
-add it to a script.
+It does not run at load. Basic analysis runs it once, before writing the summary, so the
+Hub's *Basic analysis*, *Analyze all* and a Batch Run all apply it; the QC Viewer's *Auto
+Filter Chambers* and the Python API run it on demand. For a Progressive Ratio experiment
+it also takes out the chamber groups that fail the light QC — see
+[Experiment types](concepts-experiment-types.md#progressive-ratio).
 
 ---
 

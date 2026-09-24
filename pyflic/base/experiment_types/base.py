@@ -232,6 +232,12 @@ class ExperimentType:
         analysed?" without loading any data."""
         return ["feeding_summary.csv", "feeding_summary_facet.csv", "summary.txt"]
 
+    def project_results_blocks(self, project) -> list:
+        """Pooled figures of the type's own for the Project Report's Results,
+        after the report set (``report_layout`` blocks, from the Project's
+        saved Combined Analysis).  None by default."""
+        return []
+
     # ---- scaffolding --------------------------------------------------
 
     def build_global(self, *, params: dict | None = None,

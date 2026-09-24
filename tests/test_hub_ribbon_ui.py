@@ -234,6 +234,55 @@ def test_unloading_hides_every_type_specific_group(hub):
     hub.experiment_name = None
     hub.refresh()
     assert _group_titled(hub, "Progressive Ratio").isHidden()
+    assert hub._type_analyze_groups["progressive_ratio"].isHidden()
+    assert hub._type_qc_groups["progressive_ratio"].isHidden()
+
+
+def test_progressive_ratio_light_qc_lives_on_the_qc_card(hub):
+    """The light QC table and its two figures are QC, so they sit in the QC
+    card's type group; Analyze keeps the result table, Plots the result
+    figures."""
+    qc = hub._type_qc_groups["progressive_ratio"]
+    assert qc in hub.panels["qc"].findChildren(type(qc))
+    assert {b.text() for b in qc.findChildren(ActionButton)} == {
+        "Light QC table", "Licks per light event (QC)",
+        "Sucrose Well resting level (QC)"}
+    analyze = hub._type_analyze_groups["progressive_ratio"]
+    assert {b.text() for b in analyze.findChildren(ActionButton)} == {
+        "Paired − yoked difference CSV"}
+    plots = {b.text() for b in _group_titled(hub, "Progressive Ratio")
+             .findChildren(ActionButton)}
+    assert plots.isdisjoint({"Light QC table", "Licks per light event (QC)",
+                             "Sucrose Well resting level (QC)"})
+
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    assert not qc.isHidden() and not analyze.isHidden()
+    _load_fake_of_type(hub, "Hedonic")
+    assert qc.isHidden() and analyze.isHidden()
+
+
+def test_the_qc_card_buttons_run_their_actions(hub, monkeypatch):
+    sent: list[dict] = []
+    monkeypatch.setattr(hub, "_run_experiment_action", sent.append)
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    buttons = {b.text(): b for b in
+               hub._type_qc_groups["progressive_ratio"].findChildren(ActionButton)}
+    for label in ("Light QC table", "Licks per light event (QC)",
+                  "Sucrose Well resting level (QC)"):
+        buttons[label].click()
+    assert [step["action"] for step in sent] == [
+        "pr_light_qc", "plot_pr_light_events", "plot_pr_resting_level"]
+
+
+def test_the_pr_curve_buttons_use_the_bin_size_spinbox(hub, monkeypatch):
+    sent: list[dict] = []
+    monkeypatch.setattr(hub, "_run_experiment_action", sent.append)
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    hub.spin_binsize.setValue(5.0)
+    hub._run_plot_action("plot_pr_cumulative_licks")
+    hub._run_plot_action("plot_pr_light_events")
+    assert sent[0] == {"action": "plot_pr_cumulative_licks", "binsize": 5.0}
+    assert sent[1] == {"action": "plot_pr_light_events"}
 
 
 def test_well_comparison_is_offered_only_on_a_two_well_layout(hub):

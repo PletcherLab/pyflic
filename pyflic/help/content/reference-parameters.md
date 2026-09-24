@@ -2,6 +2,9 @@
 
 Every detection parameter, what it does, and which way your results move when you change
 it. These go under `global.params`, and any DFM may override any of them for itself.
+The auto-removal cutoffs and the Progressive Ratio light QC thresholds are not detection
+parameters; they live under `global.constants` —
+[see there](config-structure.md#globalconstants).
 
 ```yaml
 global:

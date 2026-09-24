@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import (
 from . import experiment_types, project as project_mod
 from .config_editor import FactorsWidget, ParamsForm
 from .ui import Category, icon
-from .ui.widgets import Card
+from .ui.widgets import Card, CardGroup
 
 #: The three auto-removal cutoffs, in the order the config editor shows them.
 _CONSTANT_ROWS: tuple[tuple[str, str, str], ...] = (
@@ -53,6 +53,49 @@ _CONSTANT_ROWS: tuple[tuple[str, str, str], ...] = (
      "e.g. 13  (leave blank to skip)"),
     ("max_events_cutoff", "Max Events", "e.g. 150  (leave blank to skip)"),
 )
+
+#: Progressive Ratio's own switches: which failed Chamber Groups auto-removal
+#: takes out.  (key, label, tooltip)
+_PR_SWITCH_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("require_training_complete", "Exclude groups whose training never completed",
+     "require_training_complete — both chambers of a chamber group whose paired "
+     "fly never finished training leave the analysis."),
+    ("exclude_failed_pr_groups", "Exclude groups that fail the light QC",
+     "exclude_failed_pr_groups — both chambers of a chamber group whose light "
+     "followed the sensor rather than the fly (self-triggered light, "
+     "implausible training) leave the analysis.  Off keeps them; "
+     "pr_light_qc.csv lists them either way."),
+)
+
+#: The light QC's thresholds (pyflic.base.pr_light_qc).  (key, label, tooltip)
+_PR_NUMBER_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("pr_lick_free_run", "Lick-free run (light events)",
+     "pr_lick_free_run — this many consecutive Test light events with no "
+     "Sucrose Well licks between them make a group's light self-triggered "
+     "(fails the group)."),
+    ("pr_trend_min_events", "Trend needs (light events)",
+     "pr_trend_min_events — Test light events needed before the "
+     "licks-per-event trend is judged; fewer is reported, never flagged."),
+    ("pr_trend_min_rho", "Trend minimum rho",
+     "pr_trend_min_rho — Spearman's rho of licks per light event against "
+     "event number below which a group gets the 'no increasing trend' "
+     "warning."),
+    ("pr_resting_level_rise", "Resting level rise (counts)",
+     "pr_resting_level_rise — a rise of the paired Sucrose Well's resting "
+     "level above its first 30 minutes by this many counts is a warning; it "
+     "is also the margin an 'elevated' well must clear."),
+    ("pr_resting_level_ratio", "Resting level ratio (×)",
+     "pr_resting_level_ratio — a paired Sucrose Well resting at this many "
+     "times the DFM's other Sucrose Wells is 'elevated' (a warning)."),
+)
+_PR_KEYS = {key for key, _l, _t in (*_PR_SWITCH_ROWS, *_PR_NUMBER_ROWS)}
+_MANAGED_KEYS = {key for key, _l, _p in _CONSTANT_ROWS} | _PR_KEYS
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(value)
 
 
 def _number(text: str):
@@ -269,6 +312,33 @@ class ProjectDesignDialog(QDialog):
             self.constant_edits[key] = edit
             cform.addRow(f"{label}:", edit)
         card.add_body(cform)
+
+        ## Shown only for a type that carries these constants (Progressive
+        ## Ratio); a hidden section writes nothing.
+        self.pr_qc_group = CardGroup(
+            "Progressive ratio light QC",
+            note="Did the paired fly earn its light?  Hover a field for what "
+                 "it does.")
+        pform = QFormLayout()
+        pform.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.pr_switch_checks: dict[str, QCheckBox] = {}
+        for key, label, tip in _PR_SWITCH_ROWS:
+            check = QCheckBox(label)
+            check.setChecked(True)
+            check.setToolTip(tip)
+            self.pr_switch_checks[key] = check
+            pform.addRow("", check)
+        self.pr_number_edits: dict[str, QLineEdit] = {}
+        for key, label, tip in _PR_NUMBER_ROWS:
+            edit = QLineEdit()
+            edit.setMaximumWidth(240)
+            edit.setToolTip(tip)
+            self.pr_number_edits[key] = edit
+            pform.addRow(f"{label}:", edit)
+        self.pr_qc_group.add(pform)
+        self.pr_qc_group.setVisible(False)
+        card.add_body(self.pr_qc_group)
         return card
 
     # ------------------------------------------------------------------
@@ -330,10 +400,12 @@ class ProjectDesignDialog(QDialog):
         elif not self.labels_edit.text().strip() and item.phase_labels:
             self.labels_edit.setText(", ".join(item.phase_labels))
         for key, value in (item.default_constants or {}).items():
-            edit = self.constant_edits.get(key)
+            edit = self.constant_edits.get(key) or self.pr_number_edits.get(key)
             if edit is not None and not edit.text().strip():
                 edit.setText(f"{value:g}" if isinstance(value, float)
                              else str(value))
+        self.pr_qc_group.setVisible(
+            bool(_PR_KEYS & set(item.default_constants or {})))
         self._on_layout_changed()
 
     def _on_layout_changed(self) -> None:
@@ -484,11 +556,14 @@ class ProjectDesignDialog(QDialog):
         params.pop("chamber_size", None)
         self.params_form.load_values(params, chamber_size)
         constants = g.get("constants") or {}
-        for key, edit in self.constant_edits.items():
+        self._loaded_constants = dict(constants)
+        for key, edit in (*self.constant_edits.items(), *self.pr_number_edits.items()):
             value = constants.get(key)
             edit.setText("" if value is None else
                          (f"{value:g}" if isinstance(value, float)
                           else str(value)))
+        for key, check in self.pr_switch_checks.items():
+            check.setChecked(_truthy(constants.get(key, True)))
         self._on_type_changed()
 
     # ------------------------------------------------------------------
@@ -521,6 +596,22 @@ class ProjectDesignDialog(QDialog):
             except ValueError:
                 self._warn(f"{label} must be a number.")
                 return None
+        if _PR_KEYS & set(item.default_constants or {}):
+            for key, check in self.pr_switch_checks.items():
+                constants[key] = check.isChecked()
+            for key, label, _tip in _PR_NUMBER_ROWS:
+                text = self.pr_number_edits[key].text().strip()
+                if not text:
+                    continue
+                try:
+                    constants[key] = _number(text)
+                except ValueError:
+                    self._warn(f"{label} must be a number.")
+                    return None
+        ## A constant this form has no field for was written by hand; keep it.
+        for key, value in getattr(self, "_loaded_constants", {}).items():
+            if key not in _MANAGED_KEYS:
+                constants.setdefault(key, value)
 
         wells = {}
         if chamber_size == 2:

@@ -93,6 +93,7 @@ TOC: tuple[Section, ...] = (
         "Reference",
         (
             "plots-catalog",
+            "reports",
             "python-api",
             "performance",
             "troubleshooting",

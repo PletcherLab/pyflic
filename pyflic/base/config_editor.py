@@ -1835,6 +1835,14 @@ class FLICConfigEditor(QMainWindow):
                 constants[key] = float(text)
             except ValueError:
                 pass
+        ## A constant this form has no field for — a type's own, such as
+        ## Progressive Ratio's require_training_complete and light-QC
+        ## thresholds — was typed into the yaml by hand; keep it on save.
+        managed = {key for _widget, key in self._threshold_fields()}
+        loaded = (self._loaded_raw.get("global") or {}).get("constants") or {}
+        for key, value in loaded.items():
+            if key not in managed:
+                constants.setdefault(key, value)
         if constants:
             global_section["constants"] = constants
 

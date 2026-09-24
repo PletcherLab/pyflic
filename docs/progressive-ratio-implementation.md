@@ -184,7 +184,16 @@ can be read as "before" and this as "after".
 - Paired well A never clears → both chambers keep their rows with
   `TrainingComplete = false`, `TrainingMinutes = NA`, no Test-facet data;
   `require_training_complete` auto-removes the group via the existing
-  exclusion path and it appears in the exclusions table.
+  exclusion path and it appears in the exclusions table.  (Until the light QC
+  change that path never ran in the pipeline; `execute_basic_analysis` now
+  runs `auto_remove_chambers()` once before writing the summary.)
+- **Light QC** (ADR-0013 addendum, `pr_light_qc.py`): per group, self-triggered
+  light (a run of `pr_lick_free_run` lick-free Test light events) and
+  implausible training (light events, zero sucrose licks) fail the group and
+  remove it through auto-removal while `exclude_failed_pr_groups` is on; no
+  increasing licks-per-event trend and a rising or elevated Sucrose Well
+  resting level are warnings. Computed over the whole recording; the QC
+  figures and `pr_light_qc.csv` keep an auto-removed group in view.
 - Light on for a chamber = OR of its two wells' `OptoCol1` bits (the data
   shows all four bits of a group set together).
 - Version-2 data (no flags, no `OptoCol1`) is a clear load error for this type.
@@ -193,12 +202,16 @@ can be read as "before" and this as "after".
 
 | File | Grain | Notes |
 |---|---|---|
-| `feeding_summary.csv` | chamber, whole recording | standard two-well columns + `Group`, `Role`, `TrainingMinutes` (the group's training end, on both its rows), `TrainingComplete`, `LightOn_sec` |
+| `feeding_summary.csv` | chamber, whole recording | standard two-well columns + `Group`, `Role`, `TrainingMinutes` (the group's training end, on both its rows), `TrainingComplete`, `LightOn_sec`, `LightQC` (the group's light QC flags), `LickFreeLightEvents` |
 | `feeding_summary_facet.csv` | chamber × Facet (Training, Test) | per-group windows; `StartMin`/`EndMin` vary by row |
 | `paired_yoked_diff.csv` | Chamber Group × Facet | Paired − Yoked for LicksA/B, EventsA/B, PI, MedDurationA/B; plus `PairedChamber`, `YokedChamber`, `TrainingMinutes`, `LightOn_sec`; no row if either chamber is missing |
 | `pr_cumulative_diff.png` | experiment | Cumulative Difference Curve: mean ± SEM per Treatment over groups, truncated to the range every group covers, faint group traces to each group's end, x = min since training end, 1-min bins, raw licks |
-| `pr_cumulative_licks_dfm<id>.png` | DFM, panel per group | QC: paired and yoked cumulative well-A licks, light-on samples as points, x from 0 at the group's training end |
-| `summary.txt` | — | gains per-group training table and flag-disagreement warnings |
+| `pr_cumulative_licks_dfm<id>.png` | DFM, panel per group | QC: paired and yoked cumulative well-A licks, light-on samples as points, lick-free light events as rings, x from 0 at the group's training end |
+| `pr_light_qc.csv` | Chamber Group | light QC verdict: training/Test light events, training licks, lick-free events and longest run (`LickFreeRunStartMin`, min since training end), licks-per-event trend (`TrendRho`, `TrendSlope`), Sucrose Well resting level (start/max/end/rise, ratio to the DFM's other Sucrose Wells), `Flags`, `Verdict`, `Excluded`, `Notes` |
+| `pr_light_events.csv` | Test Light Event | the Paired chamber's breaking-point table stacked with `DFM, Group, PairedChamber, Event`: `MinutesSincePrev`, `LicksSincePrev` (licks from the previous event's end to this one's), `LickFree`, `RestingLevel` |
+| `pr_light_events_dfm<id>.png` | DFM, panel per group | QC: licks per Test light event, lick-free events as hollow red rings, the group's trend and the estimated requirement |
+| `pr_resting_level_dfm<id>.png` | DFM, panel per group | QC: the paired Sucrose Well's per-minute median raw level against the DFM's other Sucrose Wells, light onsets as a rug |
+| `summary.txt` | — | gains per-group training table, flag-disagreement warnings and the light QC section |
 
 Cumulative curves always use raw lick counts; the tables obey
 `transform_licks` as every type does.

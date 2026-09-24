@@ -147,13 +147,45 @@ auto-removal path.
 rather than at a fixed minute, so the config never states `facet_cutoffs`. See
 [Facets](concepts-facets.md).
 
+**Light QC — did the paired fly earn its light?** The firmware lights a group from its own
+reading of the paired chamber's sucrose well during the run; pyflic counts licks
+afterwards, from the baselined signal. A sucrose well whose raw **resting level** creeps up
+looks continuously touched to the firmware and flat to pyflic, so the light fires on its
+own schedule and nothing about it was earned. Every chamber group is therefore checked,
+over the whole recording whatever window a table uses:
+
+| Check | Verdict |
+|---|---|
+| **Self-triggered light**: at least `pr_lick_free_run` (5) consecutive Test light events with no sucrose licks since the previous one | **fails** the group |
+| **Implausible training**: training completed with light events but not a single sucrose lick | **fails** the group |
+| **No increasing trend**: with at least `pr_trend_min_events` (5) Test light events, Spearman's rho of licks per event against event number is below `pr_trend_min_rho` (0.3) | warning |
+| **Resting level rise**: the sucrose well's resting level peaks at least `pr_resting_level_rise` (15) counts above its first 30 minutes | warning |
+| **Resting level elevated**: the sucrose well rests at `pr_resting_level_ratio` (3) times the DFM's other sucrose wells, and at least `pr_resting_level_rise` counts above them | warning |
+
+A few lick-free light events are normal — pyflic's feeding threshold misses brief touches
+the firmware counts — which is why a *run* of them, not a single one, fails a group, and
+why training fails only on zero licks rather than on fewer licks than pairings. A group
+with no Test light events at all has simply stopped before its first Test requirement: a
+breaking point, reported, never flagged.
+
+With the default `exclude_failed_pr_groups: true`, both chambers of a failed group leave
+the analysis through auto-removal, with the reason in `removed_chambers.csv`. Switch it off
+to keep them; `pr_light_qc.csv` lists every group's verdict either way, with
+`LickFreeRunStartMin` — minutes after training end at which the first failing run began —
+for deciding a cutoff by hand. The thresholds are design constants
+([Parameters](reference-parameters.md)).
+
 **Outputs** beyond the standard two-well summary: `Group`, `Role`, `TrainingMinutes`
 (the chamber group's training end, carried on both its chambers' rows and in every Facet —
-only a group that never finished training has none), `TrainingComplete` and `LightOn_sec`
+only a group that never finished training has none), `TrainingComplete`, `LightOn_sec`,
+`LightQC` (the group's light QC flags; empty when clean) and `LickFreeLightEvents`
 columns; `paired_yoked_diff.csv`, one
 row per chamber group per Facet with paired-minus-yoked differences (`dLicksA`, `dPI`, …);
-`pr_cumulative_diff.csv` and its figure, the cumulative difference curve; and per-DFM
-training-aligned traces as QC figures. See [Plots](plots-catalog.md).
+`pr_cumulative_diff.csv` and its figure, the cumulative difference curve;
+`pr_light_qc.csv` (one row per chamber group) and `pr_light_events.csv` (one row per Test
+light event, with the licks credited to it); and per-DFM QC figures — training-aligned
+traces, licks per light event, and the sucrose well resting level. See
+[Plots](plots-catalog.md).
 
 **Statistics** in a Project treat the difference table as primary — one observation per
 chamber group, treatment fixed, DFM nested within Experiment — with the per-chamber tables

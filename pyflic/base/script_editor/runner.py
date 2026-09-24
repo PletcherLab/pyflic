@@ -20,7 +20,8 @@ from typing import Any, Callable
 #: same information for the editor; this is the runtime half.
 _LAYOUT_GATED = {"plot_well_comparison", "transition_matrix"}
 _PR_GATED = {"plot_breaking_point", "paired_yoked_diff",
-             "plot_pr_cumulative_diff", "plot_pr_cumulative_licks"}
+             "plot_pr_cumulative_diff", "plot_pr_cumulative_licks",
+             "pr_light_qc", "plot_pr_light_events", "plot_pr_resting_level"}
 
 
 class ScriptContext:
@@ -261,6 +262,23 @@ def run_experiment_script(
                 _save_figure(fig, analysis_dir / f"pr_cumulative_licks_dfm{dfm_id}.png",
                              ctx.log)
                 figures.append((f"Training-aligned traces — DFM {dfm_id}", fig))
+
+        elif action == "pr_light_qc":
+            for path in exp.write_light_qc().values():
+                ctx.log(f"Wrote: {path}")
+            lines = exp.light_qc_lines()
+            ctx.log("\n".join(lines) if lines else "Light QC: every chamber group is ok.")
+
+        elif action in ("plot_pr_light_events", "plot_pr_resting_level"):
+            light_events = action == "plot_pr_light_events"
+            stem = "pr_light_events" if light_events else "pr_resting_level"
+            label = ("Licks per light event" if light_events
+                     else "Sucrose Well resting level")
+            for dfm_id in sorted(exp.dfms):
+                fig = (exp.plot_light_events_dfm(dfm_id) if light_events
+                       else exp.plot_resting_level_dfm(dfm_id))
+                _save_figure(fig, analysis_dir / f"{stem}_dfm{dfm_id}.png", ctx.log)
+                figures.append((f"{label} — DFM {dfm_id}", fig))
 
         elif action == "tidy_export":
             kind = str(step.get("kind", "feeding")).strip().lower()

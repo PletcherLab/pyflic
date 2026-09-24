@@ -441,6 +441,91 @@ _SUPPORTED_SWEEP_PARAMS = {
 _SENSITIVITY_METRICS = ("Licks", "Events", "MedDuration")
 
 
+def treatment_comparisons(
+    frames: Sequence[tuple[str, pd.DataFrame]],
+    metrics: Sequence[str],
+    *,
+    mixed_p: Any = None,
+) -> list[dict]:
+    """Treatment comparisons for every metric in every ``(label, frame)``.
+
+    Two treatments: Welch's t-test; three or more: Tukey HSD on every pair.
+    One observation per row of the frame, so a per-chamber summary compares
+    chambers and a Paired-Yoked Difference table compares Chamber Groups.
+    Treatments with fewer than two observations are left out, and so is a
+    pair whose p-value is not finite (no usable variance in that window).
+
+    *mixed_p* ``(data, a, b) -> p | None`` adds the linear-mixed-model p-value
+    when the frames span more than one ``Experiment`` (the Project's pooled
+    statistics); otherwise ``p_mixed`` is ``None``.
+
+    Each row: ``metric, phase, a, n_a, mean_a, b, n_b, mean_b, diff`` (mean
+    of *b* minus mean of *a*), ``p_pooled, significant, p_mixed, test``.
+    """
+    import itertools
+
+    from scipy import stats as sstats
+
+    n_experiments = max(
+        [int(f["Experiment"].nunique()) for _, f in frames if "Experiment" in f.columns]
+        or [1])
+    rows: list[dict] = []
+    for metric in metrics:
+        for label, frame in frames:
+            if frame is None or frame.empty or "Treatment" not in frame.columns:
+                continue
+            value = pd.to_numeric(_resolve_metric_col(frame, metric), errors="coerce")
+            if value.isna().all():
+                continue
+            data = pd.DataFrame({
+                "Treatment": frame["Treatment"].astype(str).str.strip(),
+                "Experiment": frame["Experiment"] if "Experiment" in frame.columns else "one",
+                "DFM": frame["DFM"] if "DFM" in frame.columns else 0,
+                "Value": value,
+            }).dropna(subset=["Value"])
+            data = data[data["Treatment"] != ""]
+            groups = {t: g["Value"].values
+                      for t, g in data.groupby("Treatment", sort=False) if len(g) >= 2}
+            if len(groups) < 2:
+                continue
+            try:
+                if len(groups) == 2:
+                    (name_a, va), (name_b, vb) = groups.items()
+                    _stat, p = sstats.ttest_ind(va, vb, equal_var=False)
+                    pairs = [(name_a, name_b, float(np.mean(vb) - np.mean(va)), float(p))]
+                    test = "Welch t"
+                else:
+                    from statsmodels.stats.multicomp import pairwise_tukeyhsd
+
+                    endog = np.concatenate(list(groups.values()))
+                    labels = np.concatenate([[t] * len(v) for t, v in groups.items()])
+                    res = pairwise_tukeyhsd(endog=endog, groups=labels, alpha=0.05)
+                    pairs = [(str(a), str(b), float(d), float(pv))
+                             for (a, b), d, pv in zip(
+                                 itertools.combinations(res.groupsunique, 2),
+                                 res.meandiffs, res.pvalues)]
+                    test = "Tukey HSD"
+            except Exception:  # noqa: BLE001
+                continue
+            for a, b, diff, p_pooled in pairs:
+                ## A non-finite p means the groups carry no usable variance in
+                ## this window (commonly: a tail with no feeding).  Printing
+                ## "nan" as a result invites reading it as one.
+                if not np.isfinite(p_pooled):
+                    continue
+                rows.append({
+                    "metric": metric, "phase": label,
+                    "a": a, "n_a": len(groups[a]), "mean_a": float(np.mean(groups[a])),
+                    "b": b, "n_b": len(groups[b]), "mean_b": float(np.mean(groups[b])),
+                    "diff": diff, "p_pooled": p_pooled,
+                    "significant": bool(p_pooled < 0.05),
+                    "p_mixed": (mixed_p(data, a, b)
+                                if mixed_p is not None and n_experiments > 1 else None),
+                    "test": test,
+                })
+    return rows
+
+
 def _resolve_metric_col(df: pd.DataFrame, metric: str) -> pd.Series:
     """Return per-row values for *metric*.
 

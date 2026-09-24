@@ -681,8 +681,8 @@ class Experiment:
             treatment=treatment,
         )
 
+    @staticmethod
     def plot_jitter_summary(
-        self,
         df: pd.DataFrame,
         *,
         x_col: str,
@@ -980,6 +980,14 @@ class Experiment:
                 figure_size=figsize,
             )
         )
+        ## The grouping column may be a synthetic one (factor combinations,
+        ## or treatment · role); its name is not an axis title.
+        from plotnine import labs
+
+        x_label = {"_RoleGroup": "Treatment · role",
+                   "_Group": " / ".join(self.design_factors or []) or "Treatment"
+                   }.get(group_col, group_col)
+        p = p + labs(x=x_label, y="")
 
         return p
 
@@ -2395,6 +2403,38 @@ class Experiment:
             )
         return paths
 
+    def apply_auto_removal(self, *, range_minutes: Sequence[float] = (0, 0)) -> pd.DataFrame:
+        """Run :meth:`auto_remove_chambers` once per loaded experiment and
+        return its record.  Basic analysis and the experiment report both
+        call this, so they describe the same filtered design, and a second
+        call keeps the first record instead of finding nothing left to
+        remove and overwriting it."""
+        if self.filtered_chambers is None:
+            self.auto_remove_chambers(range_minutes=range_minutes)
+        return self.filtered_chambers
+
+    # ---- experiment report hooks (pyflic.base.pdf_report) -------------------
+    #
+    # The report builds its cover, its generic quality control and its
+    # layout-driven results itself; an Experiment Type adds or replaces pages
+    # through these.  Each returns report_layout blocks.
+
+    def report_glance_blocks(self) -> list[Any]:
+        """Extra callouts for the cover's "At a glance" list."""
+        return []
+
+    def report_qc_blocks(self) -> list[Any]:
+        """The type's own quality-control subsections, after the generic
+        ones (data integrity, cross-talk, exclusions)."""
+        return []
+
+    def report_results_blocks(self, generic: list[Any], options: Any) -> list[Any]:
+        """The Results section.  *generic* is what the Chamber Layout
+        suggests (two-well: preference and consumption; single-well:
+        consumption); a type may return it unchanged, extend it, or replace
+        it.  *options* is the report's :class:`~pyflic.base.pdf_report.ReportOptions`."""
+        return generic
+
     def write_summary(
         self,
         path: str | Path | None = None,
@@ -2481,18 +2521,25 @@ class Experiment:
 
         Calls, in order:
           1. ``write_qc_reports()``           → ``experiment_dir/qc/``  (skipped when skip_qc=True)
-          2. ``write_summary()``              → ``experiment_dir/analysis/summary.txt``
-          3. ``write_feeding_summary()``       → ``experiment_dir/analysis/feeding_summary.csv``
-          4. ``write_feeding_summary_facet()`` → ``.../feeding_summary_facet.csv`` (faceted experiments only)
-          5. ``write_feeding_summary_plot()``  → ``.../feeding_summary.{plot_format}``
+          2. ``auto_remove_chambers()``       → ``experiment_dir/analysis/removed_chambers.csv``
+          3. ``write_summary()``              → ``experiment_dir/analysis/summary.txt``
+          4. ``write_feeding_summary()``       → ``experiment_dir/analysis/feeding_summary.csv``
+          5. ``write_feeding_summary_facet()`` → ``.../feeding_summary_facet.csv`` (faceted experiments only)
+          6. ``write_feeding_summary_plot()``  → ``.../feeding_summary.{plot_format}``
+
+        Auto-removal applies the design's ``constants:`` cutoffs once per
+        loaded experiment: every output after it describes the filtered
+        design, and a second run on the same object keeps the first run's
+        record rather than finding nothing left to remove.
 
         Returns a dict with keys ``"qc_dir"`` (``None`` when skipped),
+        ``"removed_chambers"`` (``None`` without an experiment directory),
         ``"summary"``, ``"feeding_summary"``, ``"feeding_summary_facet"``
         (``None`` when the experiment is not faceted) and
         ``"feeding_summary_plot"`` pointing to the written paths.
         """
         n_dfms = len(self.dfms)
-        n_steps = 4 if skip_qc else 5
+        n_steps = 5 if skip_qc else 6
         print("=" * 50, flush=True)
         print("FLIC Basic Analysis", flush=True)
         print(f"  Project : {self.experiment_dir}", flush=True)
@@ -2522,6 +2569,15 @@ class Experiment:
                 bleeding_cutoff=bleeding_cutoff,
             )
             print(f"  Done — {n_dfms} DFM(s) → {qc_dir}", flush=True)
+
+        step += 1
+        print(f"\n[{step}/{n_steps}] Auto-removal (constants: cutoffs)...", flush=True)
+        if self.filtered_chambers is None:
+            removed = self.apply_auto_removal(range_minutes=range_minutes)
+            print(f"  Done — {len(removed)} chamber(s) removed.", flush=True)
+        else:
+            print("  Already applied to this experiment — kept its record.", flush=True)
+        removed_path = self.write_removed_chambers()
 
         step += 1
         print(f"\n[{step}/{n_steps}] Experiment summary...", flush=True)
@@ -2566,6 +2622,7 @@ class Experiment:
 
         return {
             "qc_dir": qc_dir,
+            "removed_chambers": removed_path,
             "summary": summary_path,
             "feeding_summary": feeding_csv_path,
             "feeding_summary_facet": facet_csv_path,

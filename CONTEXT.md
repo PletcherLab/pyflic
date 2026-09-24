@@ -404,6 +404,46 @@ _Avoid_: breaking-point plot (that is the per-light-period ΔLicks table's
 figure), PR timecourse (the generic `timecourse_*` family uses recording
 time, not training-aligned time).
 
+**Light Event**:
+One onset of a Chamber Group's light — the moment the firmware judged the
+Paired fly to have met its requirement (or, in Training, to have fed). The
+firmware decides from its own reading of the Paired chamber's Sucrose Well
+*during* the recording; pyflic counts licks *afterwards*, from the baselined
+signal, so the two can disagree, and the **light QC** exists to measure that.
+A Light Event is credited with the Sucrose Well licks from the end of the
+previous Light Event to the end of its own — the licks that earned it. The
+per-event table is the Paired chamber's breaking-point table, the **Light
+Event Ledger** (`pr_light_events.csv`).
+_Avoid_: light period (that is the lit interval, not its onset), trigger
+(which names the cause the light QC is testing, not the event).
+
+**Lick-free Light Event**:
+A Light Event credited with no Sucrose Well licks at all. A few occur in
+healthy data (pyflic's feeding threshold misses brief touches the firmware
+counts); a run of them does not.
+_Avoid_: unearned light, false trigger (both presume the cause).
+
+**Self-triggered light**:
+The light QC's failure verdict when at least `pr_lick_free_run` (default 5)
+consecutive Test-phase Light Events are lick-free: the light was following the
+sensor, not the fly — typically a Sucrose Well whose Resting Level crept up
+until the firmware read it as continuous contact. It fails the Chamber Group,
+as does **implausible training** (Training completed with light events and no
+Sucrose Well licks at all); by default (`exclude_failed_pr_groups`) both
+chambers of a failed group leave the analysis through auto-removal. *No
+increasing trend* in licks per Light Event and a rising or elevated Resting
+Level are warnings only.
+_Avoid_: clock-driven run, stuck light, runaway light.
+
+**Resting Level**:
+The raw, un-baselined signal a well sits at between licks, measured as the
+per-minute median — a median over a minute ignores licks, which are brief.
+Baseline subtraction removes it, so no lick count can show it; the Sucrose
+Well Resting Level figure does, against the median of the DFM's other Sucrose
+Wells (never its yeast wells, which drift by hundreds of counts over a day).
+_Avoid_: baseline (that is the running median the baseline subtraction
+removes, over a 3-minute window), offset, DC level.
+
 ### Cross-app
 
 **MIRRORED.md**:
@@ -477,6 +517,13 @@ _Avoid_: manual, documentation, the docs, USAGE.
   table has one row per Chamber Group per Facet and is the primary input to the
   **Combined Analysis** statistics for this type; the per-chamber summaries,
   carrying Group and Role columns, are secondary.
+- Every Progressive Ratio **Chamber Group** gets a light QC verdict from its
+  **Light Events** and its Sucrose Well's **Resting Level**, over the whole
+  recording whatever window a table uses. A failed group (**Self-triggered
+  light**, implausible training) leaves through auto-removal like one that
+  never finished Training, so every result table and the **Combined Analysis**
+  stand on groups whose light followed the fly; the QC figures and
+  `pr_light_qc.csv` keep it in view.
 - Many **Help buttons** across the apps open the one **Help window**; each
   names a single **Help topic**. A tooltip may summarise a topic but never
   restates it — the topic is the only copy of the text.
@@ -560,6 +607,17 @@ _Avoid_: manual, documentation, the docs, USAGE.
   all three groups of a DFM. Resolved: `paired_chambers:` names the Paired
   chamber per group and `pi_direction` names the side; the configuration
   integer is retired.
+- "the light was on" was read as "the fly earned it". The first real dataset
+  says otherwise: on DFM 1 of `test_data/progressive_ratio` one group's
+  Sucrose Well drifted from 11 to 38 counts over the day and another's rested
+  at 60-240 from the start, and in both the firmware fired the light hundreds
+  of times with no lick pyflic could count — the second group even "completed"
+  Training in 13 s with none. Resolved: light-on time is evidence about the
+  sensor until the **light QC** says it is evidence about the fly; the rule
+  that fails a group is a run of **Lick-free Light Events**, never a
+  lick-per-pairing ratio, because pyflic's feeding threshold misses brief
+  touches the firmware counts (a healthy group trained on 5 lick samples over
+  8 pairings).
 
 ## Migration
 

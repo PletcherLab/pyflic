@@ -755,6 +755,24 @@ class AnalysisHubWindow(QMainWindow):
             grid.addWidget(button)
         card.add_body(grid)
 
+        ## Experiment-Type-specific analyses, shown only while a member of that
+        ## type is loaded — the same gating, and the same keys, as the Plots
+        ## card's type groups.  (The type's QC lives on the QC card.)
+        self._type_analyze_groups: dict[str, CardGroup] = {}
+        for requires, title, buttons in (
+            ("progressive_ratio", "Progressive Ratio only",
+             (("Paired − yoked difference CSV", "csv", "paired_yoked_diff"),)),
+        ):
+            group = CardGroup(title)
+            for label, icon_name, action in buttons:
+                button = ActionButton(label, Category.ANALYZE, icon_name)
+                button.clicked.connect(
+                    lambda _c=False, a=action: self._run_experiment_action({"action": a}))
+                group.add(button)
+            group.setVisible(False)
+            card.add_body(group)
+            self._type_analyze_groups[requires] = group
+
         row = QHBoxLayout()
         row.addWidget(QLabel("Bin size (min):"))
         self.spin_binsize = QDoubleSpinBox()
@@ -809,6 +827,36 @@ class AnalysisHubWindow(QMainWindow):
             "Open the member's qc/ folder in the system file browser.")
         folder_btn.clicked.connect(self._open_qc_folder)
         card.add_body(folder_btn)
+
+        ## Experiment-Type-specific QC, gated like the Analyze and Plots
+        ## cards' type groups.  Progressive Ratio: did the paired fly earn its
+        ## light?
+        self._type_qc_groups: dict[str, CardGroup] = {}
+        pr = CardGroup("Progressive Ratio only")
+        for label, icon_name, run, tip in (
+            ("Light QC table", "qc",
+             lambda: self._run_experiment_action({"action": "pr_light_qc"}),
+             "Per chamber group: did the paired fly earn its light?  Writes "
+             "pr_light_qc.csv and pr_light_events.csv and logs every flagged "
+             "group.  A failed group leaves the analysis at the next Basic "
+             "analysis unless exclude_failed_pr_groups is off."),
+            ("Licks per light event (QC)", "plot",
+             lambda: self._run_plot_action("plot_pr_light_events"),
+             "Per DFM: the sucrose licks credited to each Test light event.  A "
+             "working progressive ratio climbs; hollow red rings are lick-free "
+             "light events."),
+            ("Sucrose Well resting level (QC)", "plot",
+             lambda: self._run_plot_action("plot_pr_resting_level"),
+             "Per DFM: the paired Sucrose Well's per-minute median raw signal "
+             "against the DFM's other Sucrose Wells, light onsets as a rug."),
+        ):
+            button = ActionButton(label, Category.QC, icon_name)
+            button.setToolTip(tip)
+            button.clicked.connect(lambda _c=False, r=run: r())
+            pr.add(button)
+        pr.setVisible(False)
+        card.add_body(pr)
+        self._type_qc_groups["progressive_ratio"] = pr
         self.panels["qc"].add_card(card)
 
     def _build_plots_panel(self) -> None:
@@ -1725,6 +1773,10 @@ class AnalysisHubWindow(QMainWindow):
             metric = self.plot_metric.currentData()
             if metric:
                 step["metric"] = metric
+        if action in ("plot_pr_cumulative_diff", "plot_pr_cumulative_licks"):
+            ## These read the bin from the step, not the context, so a script
+            ## keeps its own 1-minute default; from the Hub the spinbox rules.
+            step["binsize"] = self.spin_binsize.value()
         self._run_experiment_action(step)
 
     def _run_experiment_script(self) -> None:
@@ -2102,7 +2154,7 @@ class AnalysisHubWindow(QMainWindow):
             return
         project = self.project
         paths = [Path(project.project_directory) / f"{project.name}_report.pdf"]
-        paths += [Path(project.member_dir(name)) / f"{name}_report.pdf"
+        paths += [Path(project.member_report_path(name))
                   for name in project.member_names]
         found = [path for path in paths if path.is_file()]
         if not found:
@@ -2935,7 +2987,9 @@ class AnalysisHubWindow(QMainWindow):
             for tile_key in ("analyze", "qc", "plots"):
                 self.tiles[tile_key].set_summary(["no member loaded", ""])
             self.plot_metric.clear()
-            for group in getattr(self, "_type_plot_groups", {}).values():
+            for group in (*getattr(self, "_type_plot_groups", {}).values(),
+                          *getattr(self, "_type_analyze_groups", {}).values(),
+                          *getattr(self, "_type_qc_groups", {}).values()):
                 group.setVisible(False)
             self.experiment_script.clear()
             self.scripts_hint.setText(
@@ -2972,7 +3026,9 @@ class AnalysisHubWindow(QMainWindow):
         from .script_editor.actions import requires_key_for
 
         active = requires_key_for(type_name)
-        for key, group in getattr(self, "_type_plot_groups", {}).items():
+        for key, group in (*getattr(self, "_type_plot_groups", {}).items(),
+                           *getattr(self, "_type_analyze_groups", {}).items(),
+                           *getattr(self, "_type_qc_groups", {}).items()):
             group.setVisible(key == active)
         for button in getattr(self, "_two_well_plot_buttons", []):
             button.setVisible(layout != "single_well")

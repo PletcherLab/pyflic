@@ -86,6 +86,9 @@ Re-run the member's analysis to clear it.
 ## Automatic exclusions are separate
 
 `auto_remove_chambers()` removes chambers that fail the Design's `constants:` cutoffs —
-too few licks to be a fly at all. That runs on every analysis and is reported in the
-Project Report's exclusions table alongside the declared ones. The sheet has nothing to do
-with it: one is a machine verdict, the other is the experimenter's.
+too few licks to be a fly at all, or, in a Progressive Ratio experiment, a chamber group
+whose training never finished or whose light the fly did not earn (the light QC). Basic
+analysis runs it once per member, before writing the summary, and its reasons are in the
+member's `removed_chambers.csv` and the Project Report's exclusions table alongside the
+declared ones. The sheet has nothing to do with it: one is a machine verdict, the other is
+the experimenter's.

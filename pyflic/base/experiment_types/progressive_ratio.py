@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..pr_light_qc import DEFAULT_CONSTANTS as LIGHT_QC_CONSTANTS
 from .base import ExperimentType
 
 #: Chamber Group -> its two chambers (two-well layout, chambers 1..6).
@@ -113,6 +114,10 @@ class ProgressiveRatioExperimentType(ExperimentType):
         ## Test phase; by default both its chambers leave the analysis through
         ## the ordinary auto-removal path so the rule is stated once.
         "require_training_complete": True,
+        ## Light QC (did the paired fly earn its light?): a group whose light
+        ## followed the sensor rather than the fly leaves the same way, unless
+        ## exclude_failed_pr_groups is switched off.  See pr_light_qc.
+        **LIGHT_QC_CONSTANTS,
     }
 
     def validate_dfm(self, dfm_id: int, node: dict | None,
@@ -145,7 +150,67 @@ class ProgressiveRatioExperimentType(ExperimentType):
         return ["timecourse_pr_diff", "faceted_licks", "faceted_events",
                 "faceted_pi"]
 
+    def project_results_blocks(self, project) -> list:
+        """The pooled Paired-Yoked Difference in the Test phase and the pooled
+        breaking point — one point per Chamber Group across every member,
+        with the mixed model beside the pooled test."""
+        from .. import report_content as rc
+        from .. import report_layout as rl
+        from ..analytics import treatment_comparisons
+
+        diff = project.combined_diff_frame()
+        if diff is None or diff.empty:
+            return []
+        names = project.design_global.get("well_names") or {}
+        factors = list((project.design_global.get("experimental_design_factors") or {}))
+        test = diff[diff["Facet"].astype(str) == "Test"]
+        if test.empty:
+            return []
+
+        def dot(frame, column, label, hline=None):
+            return lambda: rc.dot_plot(frame, column, y_label=label, factors=factors,
+                                       hline_at=hline)
+
+        blocks: list = [
+            rl.Heading("Paired − yoked difference, Test phase", level=2),
+            rl.Paragraph("One point per chamber group, pooled across members: the paired "
+                         "fly's value minus its yoked partner's over the Test phase.  "
+                         "Zero is the null; the statistics below test it."),
+            rl.PlotRow([
+                rl.Plot(dot(test, "dLicksA", rc.metric_label("dLicksA", names), 0.0),
+                        title=rc.metric_label("dLicksA", names)),
+                rl.Plot(dot(test, "dPI", rc.metric_label("dPI", names), 0.0),
+                        title=rc.metric_label("dPI", names)),
+            ], height=3.0),
+        ]
+        light = project.combined_light_qc_frame()
+        if light is not None and "TestLightEvents" in light.columns:
+            keys = ["Experiment", "DFM", "Group"]
+            carry = [c for c in ["Treatment", *factors] if c in test.columns]
+            merged = test[keys + carry].merge(
+                light[keys + ["TestLightEvents"]], on=keys, how="left"
+            ).rename(columns={"TestLightEvents": "BreakingPoint"})
+            merged = merged.dropna(subset=["BreakingPoint"])
+            if not merged.empty:
+                rows = treatment_comparisons([("Test", merged)], ["BreakingPoint"],
+                                             mixed_p=project._mixed_p)
+                blocks += [
+                    rl.Heading("Breaking point", level=2),
+                    rl.Paragraph("Test light events each paired fly earned — the last "
+                                 "ratio it completed — for the chamber groups in the "
+                                 "pooled analysis.  Test phases differ in length between "
+                                 "groups; each member's report tabulates them."),
+                    rl.PlotRow([rl.Plot(dot(merged, "BreakingPoint",
+                                            "Test light events earned"),
+                                        title="Breaking point by treatment",
+                                        width=(rl.CONTENT_W - 0.25) / 2)], height=3.0),
+                    *rc.stats_table(rows, caption="Treatment comparisons: breaking point",
+                                    well_names=names, show_phase=False),
+                ]
+        return blocks
+
     def output_manifest(self) -> list[str]:
         return ["feeding_summary.csv", "feeding_summary_facet.csv",
                 "paired_yoked_diff.csv", "pr_cumulative_diff.csv",
-                "pr_cumulative_diff.png", "summary.txt"]
+                "pr_cumulative_diff.png", "pr_light_qc.csv",
+                "pr_light_events.csv", "summary.txt"]

@@ -158,6 +158,11 @@ class DFM:
     def with_params(self, new_params: Parameters) -> DFM:
         """
         Equivalent of R's `ChangeParameterObject()` but returns a new object (no hidden global state).
+
+        The training flags travel with the copy rather than being read again:
+        ``raw_df`` had them stripped when this DFM loaded, so re-reading it
+        found no flag on any well and every Progressive Ratio group of a
+        QC Viewer recompute or a parameter sweep "never trained".
         """
 
         new = DFM(
@@ -166,9 +171,10 @@ class DFM:
             raw_df=self.raw_df.copy(),
             version=self.version,
             source_files=self.source_files,
+            well_names=self.well_names,
+            in_training_data=(None if self.in_training_data is None
+                              else self.in_training_data.copy()),
         )
-        if new.version == 3:
-            new._calculate_progressive_ratio_training()
         new.recompute_all(correct_for_dual_feeding=bool(new_params.correct_for_dual_feeding))
         return new
 

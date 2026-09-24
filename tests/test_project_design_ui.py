@@ -288,3 +288,46 @@ def test_a_progressive_ratio_design_saves_with_its_fixed_phase_names(app, tmp_pa
     assert g["experiment_type"] == "ProgressiveRatio"
     assert "facet_cutoffs" not in g and "facet_labels" not in g
     assert g["constants"]["require_training_complete"] is True
+
+
+def test_the_progressive_ratio_light_qc_settings_round_trip(app, tmp_path):
+    """The light QC's switches and thresholds are fields for a Progressive
+    Ratio design, hidden for any other type, and a constant the form has no
+    field for survives the save instead of being dropped."""
+    root = tmp_path / "pr"
+    _write(root / "project.yaml", {"name": "PR", "design": {"global": {
+        "experiment_type": "ProgressiveRatio",
+        "well_names": {"A": "Sucrose", "B": "Yeast"},
+        "constants": {"exclude_failed_pr_groups": False,
+                      "require_training_complete": False,
+                      "pr_lick_free_run": 8, "my_own_note": 3},
+    }}})
+    dialog = ProjectDesignDialog(start_dir=str(root))
+    assert not dialog.pr_qc_group.isHidden()
+    assert dialog.pr_switch_checks["exclude_failed_pr_groups"].isChecked() is False
+    assert dialog.pr_number_edits["pr_lick_free_run"].text() == "8"
+    assert dialog.pr_number_edits["pr_trend_min_rho"].text() == "0.3"
+    assert "pr_lick_free_run" in dialog.pr_number_edits["pr_lick_free_run"].toolTip()
+
+    constants = dialog._build_design()["global"]["constants"]
+    assert constants["exclude_failed_pr_groups"] is False
+    assert constants["require_training_complete"] is False
+    assert constants["pr_lick_free_run"] == 8
+    assert constants["my_own_note"] == 3
+
+    dialog.type_combo.setCurrentIndex(dialog.type_combo.findData("Hedonic"))
+    assert dialog.pr_qc_group.isHidden()
+
+
+def test_a_standalone_config_keeps_constants_it_has_no_field_for(app, tmp_path):
+    path = tmp_path / "solo" / "flic_config.yaml"
+    _write(path, {"global": {"experiment_type": "ProgressiveRatio",
+                             "well_names": {"A": "Sucrose", "B": "Yeast"},
+                             "constants": {"exclude_failed_pr_groups": False,
+                                           "pr_lick_free_run": 9}},
+                  "dfms": [{"id": 1, "paired_chambers": [1, 3, 5],
+                            "chambers": {1: "Ctrl", 2: "Ctrl"}}]})
+    editor = FLICConfigEditor(path)
+    constants = editor._collect_yaml()["global"]["constants"]
+    assert constants["exclude_failed_pr_groups"] is False
+    assert constants["pr_lick_free_run"] == 9

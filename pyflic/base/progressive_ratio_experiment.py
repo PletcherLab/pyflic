@@ -27,6 +27,7 @@ from typing import Any, Literal, Sequence
 import numpy as np
 import pandas as pd
 
+from . import pr_light_qc as lqc
 from . import windowing
 from .dfm import DFM
 from .experiment import Experiment
@@ -54,6 +55,23 @@ DIFF_METRICS: tuple[str, ...] = (
 
 #: Two wells clearing within this many minutes of each other count as together.
 _FLAG_TOLERANCE_MIN = 0.1
+
+#: The breaking-point columns every chamber's table carries.
+BREAKING_POINT_COLUMNS: tuple[str, ...] = ("Minutes", "CumLicks", "DeltaMinutes",
+                                           "DeltaLicks")
+#: The Light Event Ledger columns a Paired chamber's table adds (light QC).
+LEDGER_COLUMNS: tuple[str, ...] = ("MinutesSincePrev", "LicksSincePrev", "LickFree",
+                                   "RestingLevel")
+#: One row per Chamber Group — ``analysis/pr_light_qc.csv``.
+LIGHT_QC_COLUMNS: tuple[str, ...] = (
+    "DFM", "Group", "PairedChamber", "YokedChamber", "SucroseWell", "Treatment",
+    "TrainingComplete", "TrainingMinutes", "TrainingLightEvents", "TrainingLicks",
+    "TestLightEvents", "LickFreeEvents", "LongestLickFreeRun", "LickFreeRunStartMin",
+    "TrendRho", "TrendSlope", "RestingStart", "RestingMax", "RestingEnd",
+    "RestingRise", "RestingRatio", "Flags", "Verdict", "Excluded", "Notes",
+)
+#: What the light QC adds to every per-chamber summary row.
+LIGHT_QC_ROW_COLUMNS: tuple[str, ...] = ("LightQC", "LickFreeLightEvents")
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +106,8 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
 
     _pr_paired: dict | None = None
     _pr_training: dict | None = None
+    _pr_light: dict | None = None       # light QC caches, per DFM object
+    _pr_snapshot: dict | None = None    # design before auto-removal thinned it
 
     # ------------------------------------------------------------------
     # Loading
@@ -295,14 +315,422 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         return float(on.sum()) / float(dfm.params.samples_per_second)
 
     # ------------------------------------------------------------------
+    # Light QC: did the Paired fly earn its light?  (pr_light_qc)
+    # ------------------------------------------------------------------
+    #
+    # The firmware lights a group from its own reading of the Paired
+    # chamber's Sucrose Well during the run; pyflic counts licks afterwards,
+    # from the baselined signal.  A Sucrose Well whose resting level creeps up
+    # looks continuously touched to the firmware and flat to pyflic, so the
+    # light runs on its own and every light-on number describes the sensor.
+    # These methods measure that disagreement per Chamber Group, over the
+    # whole recording whatever window a table uses: they describe the
+    # hardware, not a window.
+
+    def light_qc_settings(self) -> lqc.LightQCSettings:
+        """The light QC's thresholds, from the design's ``constants:``."""
+        return lqc.LightQCSettings.from_constants(self.global_constants)
+
+    def _design_snapshot(self) -> dict[tuple[int, int], str]:
+        """``{(dfm, chamber): treatment}`` as the design stood before
+        auto-removal first thinned it.
+
+        The light QC table and the QC figures keep an auto-removed group in
+        view — seeing why it left is what they are for — while a chamber
+        excluded by hand in ``remove_chambers.csv`` never enters the design and
+        stays out of both.
+        """
+        if self._pr_snapshot is None:
+            self._pr_snapshot = {
+                (int(tc.dfm_id), int(tc.chamber_index)): name
+                for name, treatment in self.design.treatments.items()
+                for tc in treatment.chambers
+            }
+        return self._pr_snapshot
+
+    def _remove_chambers_from_design(self, remove_set: set[tuple[int, int]]) -> None:
+        self._design_snapshot()
+        Experiment._remove_chambers_from_design(self, remove_set)
+
+    def _group_treatment(self, dfm_id: int, group: int) -> str:
+        snapshot = self._design_snapshot()
+        a, b = CHAMBER_GROUPS[int(group)]
+        return snapshot.get((int(dfm_id), a)) or snapshot.get((int(dfm_id), b)) or ""
+
+    def _light_cache(self, dfm_id: int) -> dict:
+        """The light QC's cache for one DFM, dropped whenever that DFM object
+        is replaced — a QC Viewer recompute or a parameter sweep swaps in DFMs
+        re-detected under other parameters, and their licks differ."""
+        dfm = self.dfms[int(dfm_id)]
+        if self._pr_light is None:
+            self._pr_light = {}
+        entry = self._pr_light.get(int(dfm_id))
+        if entry is None or entry[0] is not dfm:
+            entry = (dfm, {})
+            self._pr_light[int(dfm_id)] = entry
+        return entry[1]
+
+    def resting_levels(self, dfm_id: int) -> pd.DataFrame:
+        """Every well's Resting Level on one DFM: the per-minute median of its
+        raw, un-baselined signal (:func:`pr_light_qc.resting_levels`)."""
+        cache = self._light_cache(dfm_id)
+        if "resting" not in cache:
+            dfm = self.dfms[int(dfm_id)]
+            minutes = pd.to_numeric(dfm.raw_df["Minutes"], errors="coerce")
+            cache["resting"] = lqc.resting_levels(dfm.raw_df,
+                                                  minutes.to_numpy(dtype=float))
+        return cache["resting"]
+
+    def resting_reference(self, dfm_id: int, well: int) -> pd.Series:
+        """Per-minute median Resting Level of the DFM's *other* Sucrose Wells.
+
+        Sucrose Wells only: the yeast wells of a long run drift by hundreds of
+        counts, and a reference that climbs with them would hide exactly the
+        slow rise of one Sucrose Well this is here to show.
+        """
+        dfm = self.dfms[int(dfm_id)]
+        levels = self.resting_levels(dfm_id)
+        others = [f"W{int(ch.well_a)}" for ch in dfm.chambers
+                  if int(ch.well_a) != int(well) and f"W{int(ch.well_a)}" in levels.columns]
+        if not others:
+            return pd.Series(dtype=float)
+        return levels[others].median(axis=1)
+
+    def light_events_table(self, dfm_id: int, group: int) -> pd.DataFrame:
+        """Every Light Event of one Chamber Group, Training and Test.
+
+        Light and licks are the Paired chamber's: its Sucrose Well is the one
+        the firmware watches.  Columns:
+
+        * ``Phase`` — Training or Test (onset after the group's training end);
+        * ``RecordingMinute`` — the onset, in recording minutes;
+        * ``Minutes`` — the onset in minutes since training end (NaN when
+          training never ended);
+        * ``CumLicks`` — Sucrose Well licks since training end, at the onset;
+        * ``MinutesSincePrev`` — onset to onset (NaN for the first event);
+        * ``LicksSincePrev`` — Sucrose Well licks from the end of the previous
+          event to the end of this one (:func:`pr_light_qc.licks_between_events`),
+          so the first Test event counts from the last Training one;
+        * ``LickFree`` — ``LicksSincePrev == 0``;
+        * ``RestingLevel`` — the Sucrose Well's Resting Level in the onset's
+          minute.
+        """
+        cache = self._light_cache(dfm_id)
+        key = ("events", int(group))
+        if key in cache:
+            return cache[key]
+        dfm = self.dfms[int(dfm_id)]
+        gt = self.group_training(dfm_id, group)
+        mins = pd.to_numeric(dfm.lick_df["Minutes"], errors="coerce").to_numpy(dtype=float)
+        licks = dfm.lick_df[f"W{gt.sucrose_well}"].to_numpy(dtype=bool)
+        light = self._chamber_light(dfm, gt.paired_chamber).to_numpy(dtype=bool)
+        onsets, ends = lqc.light_events(light)
+        on_min = mins[onsets]
+        end = float(gt.training_end) if gt.complete else np.inf
+        cum = np.cumsum(licks & (mins > end))
+        counts = lqc.licks_between_events(licks, ends)
+        levels = self.resting_levels(dfm_id)
+        column = f"W{gt.sucrose_well}"
+        if column in levels.columns and onsets.size:
+            rest = levels[column].reindex(np.floor(on_min).astype(int)).to_numpy(dtype=float)
+        else:
+            rest = np.full(onsets.size, np.nan)
+        table = pd.DataFrame({
+            "Phase": np.where(on_min > end, TEST_LABEL, TRAINING_LABEL),
+            "RecordingMinute": on_min,
+            "Minutes": (on_min - end) if gt.complete else np.full(onsets.size, np.nan),
+            "CumLicks": cum[onsets].astype(float),
+            "MinutesSincePrev": np.diff(on_min, prepend=np.nan),
+            "LicksSincePrev": counts,
+            "LickFree": counts == 0,
+            "RestingLevel": rest,
+        })
+        cache[key] = table
+        return table
+
+    def _light_qc_row(self, dfm_id: int, group: int,
+                      settings: lqc.LightQCSettings) -> dict:
+        cache = self._light_cache(dfm_id)
+        key = ("qc", int(group), settings)
+        if key in cache:
+            return cache[key]
+        dfm = self.dfms[int(dfm_id)]
+        gt = self.group_training(dfm_id, group)
+        events = self.light_events_table(dfm_id, group)
+        test = events[events["Phase"] == TEST_LABEL]
+        training = events[events["Phase"] == TRAINING_LABEL]
+        mins = pd.to_numeric(dfm.lick_df["Minutes"], errors="coerce").to_numpy(dtype=float)
+        licks = dfm.lick_df[f"W{gt.sucrose_well}"].to_numpy(dtype=bool)
+        end = float(gt.training_end) if gt.complete else np.inf
+        training_licks = int(licks[mins <= end].sum())
+        levels = self.resting_levels(dfm_id)
+        column = f"W{gt.sucrose_well}"
+        resting = (lqc.resting_summary(levels[column]) if column in levels.columns
+                   else lqc.resting_summary(pd.Series(dtype=float)))
+        reference = self.resting_reference(dfm_id, gt.sucrose_well)
+        reference_level = float(reference.median()) if not reference.empty else np.nan
+        verdict = lqc.judge_group(
+            settings,
+            training_complete=gt.complete,
+            training_light_events=len(training),
+            training_licks=training_licks,
+            test_counts=test["LicksSincePrev"].to_numpy(),
+            resting=resting,
+            reference_level=reference_level,
+            any_light=len(events) > 0,
+        )
+        run_start = (float(test["Minutes"].iloc[verdict.lick_free_run_start])
+                     if verdict.lick_free_run_start is not None else np.nan)
+        row = {
+            "DFM": int(dfm_id), "Group": int(group),
+            "PairedChamber": gt.paired_chamber, "YokedChamber": gt.yoked_chamber,
+            "SucroseWell": gt.sucrose_well,
+            "Treatment": self._group_treatment(dfm_id, group),
+            "TrainingComplete": bool(gt.complete),
+            "TrainingMinutes": float(gt.training_end) if gt.complete else np.nan,
+            "TrainingLightEvents": int(len(training)),
+            "TrainingLicks": training_licks,
+            "TestLightEvents": int(len(test)),
+            "LickFreeEvents": int(verdict.lick_free_events) if gt.complete else np.nan,
+            "LongestLickFreeRun": int(verdict.longest_lick_free_run) if gt.complete else np.nan,
+            "LickFreeRunStartMin": run_start,
+            "TrendRho": verdict.trend_rho,
+            "TrendSlope": verdict.trend_slope,
+            "RestingStart": resting["start"],
+            "RestingMax": resting["max"],
+            "RestingEnd": resting["end"],
+            "RestingRise": resting["max"] - resting["start"],
+            "RestingRatio": lqc.resting_ratio(resting["level"], reference_level),
+            "Flags": ", ".join(verdict.flags),
+            "Verdict": verdict.verdict,
+            "Excluded": bool(verdict.failed and settings.exclude),
+            "Notes": "; ".join(verdict.notes),
+        }
+        cache[key] = row
+        return row
+
+    def light_qc_table(self) -> pd.DataFrame:
+        """One row per Chamber Group: did the Paired fly earn its light?
+
+        ``Flags`` lists what fired — *self-triggered light* and *implausible
+        training* fail the group; *no increasing trend*, *resting level rise*
+        and *resting level elevated* are warnings.  ``Verdict`` is ``ok``,
+        ``warning`` or ``failed``; ``Excluded`` says a failed group leaves the
+        analysis (``exclude_failed_pr_groups``, on by default).
+        ``LickFreeRunStartMin`` is where the first failing run of Lick-free
+        Light Events begins, in minutes since training end — the latest a
+        hand-set cutoff could fall; the licks-per-event figure shows whether
+        the group degraded earlier.  The definitions are in
+        :mod:`pyflic.base.pr_light_qc`.
+        """
+        settings = self.light_qc_settings()
+        rows = [self._light_qc_row(dfm_id, group, settings)
+                for dfm_id in sorted(self.dfms) for group in CHAMBER_GROUPS]
+        return pd.DataFrame(rows, columns=list(LIGHT_QC_COLUMNS))
+
+    def _light_qc_by_group(self) -> dict[tuple[int, int], dict]:
+        settings = self.light_qc_settings()
+        return {(int(d), int(g)): self._light_qc_row(d, g, settings)
+                for d in sorted(self.dfms) for g in CHAMBER_GROUPS}
+
+    def light_qc_failed_groups(self) -> dict[tuple[int, int], list[str]]:
+        """``{(dfm, group): failing flags}`` for the groups the light QC
+        excludes — empty when ``exclude_failed_pr_groups`` is off."""
+        out: dict[tuple[int, int], list[str]] = {}
+        for key, row in self._light_qc_by_group().items():
+            if row["Excluded"]:
+                out[key] = [f for f in str(row["Flags"]).split(", ")
+                            if f in lqc.FAILING_FLAGS]
+        return out
+
+    def estimated_increment(self) -> tuple[float, float, int] | None:
+        """``(slope, intercept, n_groups)`` of the requirement across this
+        experiment's groups (:func:`pr_light_qc.estimate_increment`), for the
+        reference line and the summary; ``None`` when no group qualifies."""
+        series = []
+        for dfm_id in sorted(self.dfms):
+            for group in CHAMBER_GROUPS:
+                if not self.group_training(dfm_id, group).complete:
+                    continue
+                events = self.light_events_table(dfm_id, group)
+                series.append(events.loc[events["Phase"] == TEST_LABEL,
+                                         "LicksSincePrev"].to_numpy())
+        return lqc.estimate_increment(series)
+
+    def light_events_ledger(self) -> pd.DataFrame:
+        """Every group's Test-phase Light Event Ledger stacked — the Paired
+        chamber's :meth:`breaking_point_table` with ``DFM, Group,
+        PairedChamber, Event`` in front.  ``analysis/pr_light_events.csv``."""
+        cols = ["DFM", "Group", "PairedChamber", "Event",
+                *BREAKING_POINT_COLUMNS, *LEDGER_COLUMNS]
+        frames = []
+        for dfm_id in sorted(self.dfms):
+            for group in CHAMBER_GROUPS:
+                gt = self.group_training(dfm_id, group)
+                bp = self.breaking_point_table(dfm_id, gt.paired_chamber)
+                if bp.empty:
+                    continue
+                bp = bp.copy()
+                bp.insert(0, "Event", np.arange(1, len(bp) + 1))
+                bp.insert(0, "PairedChamber", gt.paired_chamber)
+                bp.insert(0, "Group", group)
+                bp.insert(0, "DFM", dfm_id)
+                frames.append(bp)
+        if not frames:
+            return pd.DataFrame(columns=cols)
+        return pd.concat(frames, ignore_index=True)[cols]
+
+    def write_light_qc(self) -> dict[str, Path]:
+        """Write ``analysis/pr_light_qc.csv`` (one row per Chamber Group) and
+        ``analysis/pr_light_events.csv`` (one row per Test Light Event)."""
+        if self.analysis_dir is None:
+            raise ValueError("experiment_dir must be set to write the light QC.")
+        self.analysis_dir.mkdir(parents=True, exist_ok=True)
+        qc_path = self.analysis_dir / "pr_light_qc.csv"
+        self.light_qc_table().to_csv(qc_path, index=False, na_rep="NA")
+        events_path = self.analysis_dir / "pr_light_events.csv"
+        self.light_events_ledger().to_csv(events_path, index=False, na_rep="NA")
+        return {"pr_light_qc": qc_path, "pr_light_events": events_path}
+
+    def light_qc_lines(self) -> list[str]:
+        """One plain-language line per flagged or noteworthy Chamber Group,
+        for the summary, the Hub's log and the report."""
+        settings = self.light_qc_settings()
+        lines: list[str] = []
+        for _, r in self.light_qc_table().iterrows():
+            where = f"DFM {int(r['DFM'])} group {int(r['Group'])}"
+            if r["Treatment"]:
+                where += f" ({r['Treatment']})"
+            reasons: list[str] = []
+            flags = [f for f in str(r["Flags"]).split(", ") if f]
+            for flag in flags:
+                if flag == lqc.SELF_TRIGGERED:
+                    reasons.append(
+                        f"self-triggered light: {int(r['LongestLickFreeRun'])} "
+                        f"consecutive lick-free light events, the first run of "
+                        f"{settings.lick_free_run} beginning "
+                        f"{r['LickFreeRunStartMin']:.1f} min after training end")
+                elif flag == lqc.IMPLAUSIBLE_TRAINING:
+                    reasons.append(
+                        f"implausible training: {int(r['TrainingLightEvents'])} "
+                        f"training light events and no sucrose licks before "
+                        f"training ended at {r['TrainingMinutes']:.1f} min")
+                elif flag == lqc.NO_TREND:
+                    rho = r["TrendRho"]
+                    reasons.append(
+                        f"no increasing trend over {int(r['TestLightEvents'])} Test "
+                        f"light events (" + (f"rho {rho:.2f} < {settings.trend_min_rho:g}"
+                                             if pd.notna(rho) else
+                                             "licks per event never changed") + ")")
+                elif flag == lqc.RESTING_RISE:
+                    reasons.append(
+                        f"resting level rise: {r['RestingStart']:.0f} → peak "
+                        f"{r['RestingMax']:.0f} counts (+{r['RestingRise']:.0f})")
+                elif flag == lqc.RESTING_ELEVATED:
+                    reasons.append(
+                        f"resting level elevated: {r['RestingRatio']:.1f}× the "
+                        f"DFM's other sucrose wells")
+            if r["Verdict"] == lqc.VERDICT_FAILED:
+                outcome = ("EXCLUDED (exclude_failed_pr_groups)" if r["Excluded"]
+                           else "FAILED but retained (exclude_failed_pr_groups is off)")
+            elif r["Verdict"] == lqc.VERDICT_WARNING:
+                outcome = "warning — kept"
+            else:
+                outcome = ""
+            if reasons:
+                lines.append(f"{where}: {outcome}")
+                lines.extend(f"    - {reason}" for reason in reasons)
+            if r["Notes"]:
+                if not reasons:
+                    lines.append(f"{where}:")
+                lines.extend(f"    · {note}" for note in str(r["Notes"]).split("; "))
+        return lines
+
+    def _light_qc_summary_lines(self) -> list[str]:
+        settings = self.light_qc_settings()
+        table = self.light_qc_table()
+        out = ["", "Progressive ratio light QC",
+               "--------------------------",
+               "Did the paired fly earn its light?  The firmware lights a group from",
+               "its own reading of the paired Sucrose Well; a lick-free light event",
+               "has no Sucrose Well licks since the previous light event ended.",
+               "Computed over the whole recording, whatever window a table uses.",
+               f"Settings: {settings.describe()}", ""]
+        if table.empty:
+            return out + ["(no DFMs)", ""]
+        show = table[["DFM", "Group", "PairedChamber", "Treatment",
+                      "TrainingLightEvents", "TrainingLicks", "TestLightEvents",
+                      "LickFreeEvents", "LongestLickFreeRun", "TrendRho",
+                      "RestingRise", "RestingRatio", "Verdict"]].copy()
+        show.columns = ["DFM", "Group", "Paired", "Treatment", "TrainEv",
+                        "TrainLicks", "TestEv", "LickFree", "Run", "Rho",
+                        "Rise", "Ratio", "Verdict"]
+        for col, fmt in (("Rho", "{:.2f}"), ("Rise", "{:.0f}"), ("Ratio", "{:.1f}")):
+            show[col] = show[col].map(lambda v, f=fmt: "—" if pd.isna(v) else f.format(v))
+        for col in ("LickFree", "Run"):
+            show[col] = show[col].map(lambda v: "—" if pd.isna(v) else f"{int(v)}")
+        out.append(show.to_string(index=False))
+        out.append("")
+        inc = self.estimated_increment()
+        if inc is None:
+            out.append("Estimated requirement increment: n/a (no chamber group has "
+                       f"{lqc.INCREMENT_EVENTS} Test light events with a rising count).")
+        else:
+            out.append(f"Estimated requirement increment: {inc[0]:.1f} licks per light "
+                       f"event (median over {inc[2]} chamber group(s)' first "
+                       f"{lqc.INCREMENT_EVENTS} Test light events).")
+        detail = self.light_qc_lines()
+        if detail:
+            out.append("")
+            out.extend(f"  {line}" for line in detail)
+        excluded = table[table["Excluded"]]
+        failed_kept = table[(table["Verdict"] == lqc.VERDICT_FAILED) & ~table["Excluded"]]
+        out.append("")
+        if not excluded.empty:
+            groups = ", ".join(f"DFM {int(r.DFM)} group {int(r.Group)}"
+                               for r in excluded.itertuples())
+            out.append(f"Excluded by the light QC (both chambers of each): {groups}.")
+        if not failed_kept.empty:
+            groups = ", ".join(f"DFM {int(r.DFM)} group {int(r.Group)}"
+                               for r in failed_kept.itertuples())
+            out.append(f"FAILED but retained (exclude_failed_pr_groups is off): {groups}.")
+        if excluded.empty and failed_kept.empty:
+            out.append("No chamber group failed the light QC.")
+        out.append("")
+        return out
+
+    # ------------------------------------------------------------------
     # Feeding summary: standard two-well columns + Group/Role/Training/Light
     # ------------------------------------------------------------------
 
     def _augment_rows(self, df: pd.DataFrame) -> pd.DataFrame:
         """Append ``Group, Role, TrainingMinutes, TrainingComplete, LightOn_sec``
-        to a per-chamber frame carrying ``DFM, Chamber, StartMin, EndMin``."""
-        if df is None or df.empty or "Role" in df.columns:
+        and the light QC's ``LightQC, LickFreeLightEvents`` to a per-chamber
+        frame carrying ``DFM, Chamber, StartMin, EndMin``.
+
+        The light QC columns are redone on every call, even on a frame that
+        already has the rest: a summary read back from the disk cache carries
+        whatever they said when it was written, and their thresholds live in
+        the design, which that cache's key does not cover.
+        """
+        if df is None or df.empty:
             return df
+        if "Role" not in df.columns:
+            df = self._augment_role_rows(df)
+        return self._with_light_qc_columns(df)
+
+    def _with_light_qc_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """``LightQC`` (the group's flags, comma-joined; empty when clean) and
+        ``LickFreeLightEvents`` on every row, from :meth:`light_qc_table`."""
+        by_group = self._light_qc_by_group()
+        df = df.drop(columns=[c for c in LIGHT_QC_ROW_COLUMNS if c in df.columns])
+        keys = list(zip(df["DFM"].astype(int), df["Group"].astype(int)))
+        df["LightQC"] = [by_group[k]["Flags"] if k in by_group else "" for k in keys]
+        df["LickFreeLightEvents"] = [by_group[k]["LickFreeEvents"] if k in by_group
+                                     else np.nan for k in keys]
+        return df
+
+    def _augment_role_rows(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         groups, roles, tmins, tdone, light = [], [], [], [], []
         for _, row in df.iterrows():
@@ -340,7 +768,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             transform_licks = self.transform_licks
         base = Experiment.feeding_summary(
             self, range_minutes=range_minutes, transform_licks=transform_licks)
-        if base is None or base.empty or "Role" in base.columns:
+        if base is None or base.empty:
             return base
         out = self._augment_rows(base)
         key = (float(range_minutes[0]), float(range_minutes[1])), bool(transform_licks)
@@ -440,7 +868,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         cols = ["Treatment", *(self.design_factors or []), "DFM", "Group", "Facet",
                 "FacetRange", "PairedChamber", "YokedChamber", "StartMin", "EndMin",
                 "TrainingMinutes", "TrainingComplete", "LightOn_sec",
-                *(f"d{m}" for m in DIFF_METRICS)]
+                *LIGHT_QC_ROW_COLUMNS, *(f"d{m}" for m in DIFF_METRICS)]
         if facet is None or facet.empty:
             return pd.DataFrame(columns=cols)
         rows = []
@@ -462,6 +890,8 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 "TrainingMinutes": p["TrainingMinutes"],
                 "TrainingComplete": bool(p["TrainingComplete"]),
                 "LightOn_sec": float(p["LightOn_sec"]),
+                "LightQC": p.get("LightQC", ""),
+                "LickFreeLightEvents": p.get("LickFreeLightEvents", np.nan),
             })
             for m in DIFF_METRICS:
                 pv, yv = p.get(m, np.nan), y.get(m, np.nan)
@@ -672,7 +1102,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         )
 
     # ------------------------------------------------------------------
-    # Auto-removal: two-well thresholds + require_training_complete
+    # Auto-removal: two-well thresholds + require_training_complete + light QC
     # ------------------------------------------------------------------
 
     def auto_remove_chambers(
@@ -682,6 +1112,10 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         transform_licks: bool = True,
         min_untransformed_licks_cutoff: float | None = None,
     ) -> pd.DataFrame:
+        ## The light QC reads the design as loaded, so it runs before anything
+        ## below thins it; its verdicts are cached for the tables written later.
+        light_settings = self.light_qc_settings()
+        light_failed = self.light_qc_failed_groups()
         base = Experiment.auto_remove_chambers(
             self, range_minutes=range_minutes,
             min_untransformed_licks_cutoff=min_untransformed_licks_cutoff)
@@ -715,6 +1149,11 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 reasons.append(
                     f"training never completed in chamber group {int(row['Group'])} "
                     f"(require_training_complete)")
+            failing = light_failed.get((key[0], int(row["Group"])))
+            if failing:
+                reasons.append(
+                    f"light QC failed in chamber group {int(row['Group'])}: "
+                    f"{', '.join(failing)} (exclude_failed_pr_groups)")
             if reasons:
                 to_remove.add(key)
                 removed_rows.append({"DFM": key[0], "Chamber": key[1],
@@ -748,6 +1187,12 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                      if require_training else
                      "  • require_training_complete = false: incomplete-training "
                      "groups are kept (TrainingComplete = false).")
+        lines.append("  • exclude_failed_pr_groups = true: both chambers of a chamber "
+                     "group whose light QC fails (self-triggered light, implausible "
+                     "training) are excluded — see pr_light_qc.csv"
+                     if light_settings.exclude else
+                     "  • exclude_failed_pr_groups = false: groups that fail the light "
+                     "QC are kept; pr_light_qc.csv still lists them.")
         self.filter_criteria_summary = self.filter_criteria_summary + "\n" + "\n".join(lines)
         self.write_removed_chambers()
         return combined
@@ -761,6 +1206,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         *,
         binsize_min: float = 1.0,
         well: str = "A",
+        qc: bool = False,
     ) -> pd.DataFrame:
         """Per-chamber cumulative raw licks on *well* since the group's
         training end, at *binsize_min* resolution.
@@ -770,6 +1216,10 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         minutes since training end and ``LightOn`` says whether the group's
         light was on at any sample in the bin.  Groups that never completed
         training contribute nothing.
+
+        With *qc*, chambers auto-removal took out are kept (see
+        :meth:`_design_snapshot`) — the QC traces exist to show why a group
+        left, the result curves must not include it.
         """
         if binsize_min <= 0:
             raise ValueError("binsize_min must be positive.")
@@ -789,7 +1239,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 bins = np.floor(rel / float(binsize_min)).astype(int)
                 edges = (bins + 1) * float(binsize_min)
                 for chamber in chambers:
-                    if self.design.treatment_for(dfm_id, chamber) is None:
+                    treatment = (self._design_snapshot().get((dfm_id, chamber)) if qc
+                                 else self.design.treatment_for(dfm_id, chamber))
+                    if treatment is None:
                         continue
                     ch = dfm.chambers[chamber - 1]
                     w = int(ch.well_a if well.upper() == "A" else ch.well_b)
@@ -806,7 +1258,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                     agg.insert(0, "Group", group)
                     agg.insert(0, "Chamber", chamber)
                     agg.insert(0, "DFM", dfm_id)
-                    agg.insert(0, "Treatment", self.design.treatment_for(dfm_id, chamber))
+                    agg.insert(0, "Treatment", treatment)
                     frames.append(agg.drop(columns="licks"))
         cols = ["Treatment", "DFM", "Chamber", "Group", "Role", "Minutes",
                 "CumLicks", "LightOn"]
@@ -918,16 +1370,33 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
              + p9.theme(figure_size=figsize, legend_position="right"))
         return g
 
+    def _qc_panel_label(self, dfm_id: int, group: int, head: str) -> str:
+        """``Group g (Treatment) — <head>`` over the group's light QC verdict,
+        the strip of every per-DFM QC figure."""
+        treatment = self._group_treatment(dfm_id, group)
+        first = f"Group {group}" + (f" ({treatment})" if treatment else "") + f" — {head}"
+        row = self._light_qc_row(dfm_id, group, self.light_qc_settings())
+        if row["Verdict"] == lqc.VERDICT_FAILED:
+            failing = [f for f in row["Flags"].split(", ") if f in lqc.FAILING_FLAGS]
+            second = ("EXCLUDED: " if row["Excluded"] else "FAILED: ") + ", ".join(failing)
+        elif row["Verdict"] == lqc.VERDICT_WARNING:
+            second = "warning: " + row["Flags"]
+        else:
+            second = "light QC ok"
+        return f"{first}\n{second}"
+
     def plot_cumulative_licks_dfm(self, dfm_id: int, *, binsize_min: float = 1.0,
                                   base_font_size: float = 10.0,
                                   figsize: tuple[float, float] | None = None):
         """QC figure for one DFM: one panel per Chamber Group, paired and
         yoked cumulative sucrose-well licks since the group's training end,
-        light-on bins drawn as points."""
+        light-on bins drawn as points and Lick-free Light Events as rings on
+        the paired trace.  A group auto-removal took out stays in, its strip
+        saying why."""
         import plotnine as p9
 
         dfm_id = int(dfm_id)
-        curves = self.cumulative_curve_data(binsize_min=binsize_min, well="A")
+        curves = self.cumulative_curve_data(binsize_min=binsize_min, well="A", qc=True)
         curves = curves[curves["DFM"] == dfm_id] if not curves.empty else curves
         if curves.empty:
             return p9.ggplot() + p9.labs(
@@ -936,35 +1405,219 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         panel = {}
         for group in CHAMBER_GROUPS:
             gt = self.group_training(dfm_id, group)
-            trt = self.design.treatment_for(dfm_id, gt.paired_chamber) or \
-                self.design.treatment_for(dfm_id, gt.yoked_chamber) or ""
             end = "n/a" if not gt.complete else f"{gt.training_end:.1f} min"
-            panel[group] = f"Group {group} ({trt}) — trained {end}"
-        curves["Panel"] = pd.Categorical(curves["Group"].map(panel),
-                                         categories=[panel[g] for g in CHAMBER_GROUPS
-                                                     if panel[g] in set(curves["Group"].map(panel))],
+            panel[group] = self._qc_panel_label(dfm_id, group, f"trained {end}")
+        present = set(curves["Group"])
+        order = [panel[g] for g in CHAMBER_GROUPS if g in present]
+        curves["Panel"] = pd.Categorical(curves["Group"].map(panel), categories=order,
                                          ordered=True)
         curves["Role"] = pd.Categorical(curves["Role"], categories=[ROLE_PAIRED, ROLE_YOKED])
         lit = curves[curves["LightOn"]]
+        ## Lick-free Light Events, on the paired trace at the moment they fired.
+        rings = []
+        for group in CHAMBER_GROUPS:
+            if group not in present:
+                continue
+            events = self.light_events_table(dfm_id, group)
+            free = events[(events["Phase"] == TEST_LABEL) & events["LickFree"]]
+            if not free.empty:
+                rings.append(pd.DataFrame({"Minutes": free["Minutes"].to_numpy(),
+                                           "CumLicks": free["CumLicks"].to_numpy(),
+                                           "Panel": panel[group]}))
         colors = {ROLE_PAIRED: "#D55E00", ROLE_YOKED: "#0072B2"}
         well_a = (self.well_names or {}).get("A", "well A")
         n = curves["Panel"].nunique()
         if figsize is None:
-            figsize = (4.0 * max(n, 1), 3.6)
+            figsize = (4.0 * max(n, 1), 5.0)
         g = (p9.ggplot(curves, p9.aes("Minutes", "CumLicks", color="Role"))
              + p9.geom_line(size=0.7)
-             + p9.geom_point(data=lit, size=1.4, alpha=0.9)
-             + p9.facet_wrap("~ Panel", ncol=3, scales="free_x")
-             + p9.scale_color_manual(values=colors)
-             + p9.labs(title=f"DFM {dfm_id} — cumulative {well_a} licks since training end "
-                             f"(points: light on)",
-                       x="Time since training end (min)", y=f"Cumulative licks ({well_a})")
-             + p9.theme_bw(base_size=base_font_size)
-             + p9.theme(figure_size=figsize, legend_position="bottom"))
+             + p9.geom_point(data=lit, size=1.4, alpha=0.9))
+        if rings:
+            ring_data = pd.concat(rings, ignore_index=True)
+            ring_data["Panel"] = pd.Categorical(ring_data["Panel"], categories=order,
+                                                ordered=True)
+            g += p9.geom_point(ring_data, p9.aes("Minutes", "CumLicks"),
+                               inherit_aes=False, shape="o", fill="none",
+                               color="#000000", size=2.6, stroke=0.6)
+        g = (g + p9.facet_wrap("~ Panel", ncol=3, scales="free_x")
+              + p9.scale_color_manual(values=colors)
+              + p9.labs(title=f"DFM {dfm_id} — cumulative {well_a} licks since training end "
+                              f"(points: light on; rings: lick-free light events)",
+                        x="Time since training end (min)", y=f"Cumulative licks ({well_a})")
+              + p9.theme_bw(base_size=base_font_size)
+              + p9.theme(figure_size=figsize, legend_position="bottom"))
+        return g
+
+    def plot_light_events_dfm(self, dfm_id: int, *, base_font_size: float = 10.0,
+                              figsize: tuple[float, float] | None = None):
+        """Licks per light event (QC) for one DFM, one panel per Chamber Group.
+
+        x is the Test-phase Light Event number, y the Sucrose Well licks
+        credited to it (``LicksSincePrev``).  A working progressive ratio
+        climbs; a Lick-free Light Event is a hollow red ring; the dashed line
+        is the group's own linear trend and the faint grey one the
+        requirement estimated across the experiment
+        (:meth:`estimated_increment`), when there is one.
+        """
+        import plotnine as p9
+
+        dfm_id = int(dfm_id)
+        frames, fits = [], []
+        panel = {}
+        for group in CHAMBER_GROUPS:
+            events = self.light_events_table(dfm_id, group)
+            test = events[events["Phase"] == TEST_LABEL]
+            if test.empty:
+                continue
+            panel[group] = self._qc_panel_label(
+                dfm_id, group, f"{len(test)} Test light events")
+            x = np.arange(1, len(test) + 1, dtype=float)
+            y = test["LicksSincePrev"].to_numpy(dtype=float)
+            frames.append(pd.DataFrame({"Event": x, "Licks": y,
+                                        "LickFree": test["LickFree"].to_numpy(dtype=bool),
+                                        "Group": group}))
+            if len(test) >= 2:
+                slope, intercept = np.polyfit(x, y, 1)
+                fits.append(pd.DataFrame({"Event": [x[0], x[-1]],
+                                          "Licks": [intercept + slope * x[0],
+                                                    intercept + slope * x[-1]],
+                                          "Group": group}))
+        if not frames:
+            return p9.ggplot() + p9.labs(
+                title=f"DFM {dfm_id} — no Test light events in any chamber group")
+        data = pd.concat(frames, ignore_index=True)
+        order = [panel[g] for g in CHAMBER_GROUPS if g in panel]
+
+        def with_panel(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            df["Panel"] = pd.Categorical(df["Group"].map(panel), categories=order,
+                                         ordered=True)
+            return df
+
+        data = with_panel(data)
+        earned, free = data[~data["LickFree"]], data[data["LickFree"]]
+        well_a = (self.well_names or {}).get("A", "well A")
+        if figsize is None:
+            figsize = (4.0 * max(len(order), 1), 5.0)
+        g = p9.ggplot(data, p9.aes("Event", "Licks"))
+        inc = self.estimated_increment()
+        if inc is not None:
+            slope, intercept, _n = inc
+            ref = []
+            for group, sub in data.groupby("Group", sort=True):
+                last = float(sub["Event"].max())
+                ## Stop the line just above the panel's own data: drawn to the
+                ## last of 400 self-triggered events it would set the y axis
+                ## and flatten everything the panel is there to show.
+                top = max(float(sub["Licks"].max()), 1.0) * 1.1
+                last = min(last, max(1.0, (top - intercept) / slope))
+                ref.append(pd.DataFrame({"Event": [1.0, last],
+                                         "Licks": [intercept + slope, intercept + slope * last],
+                                         "Group": group}))
+            g += p9.geom_line(with_panel(pd.concat(ref, ignore_index=True)),
+                              p9.aes("Event", "Licks"), color="#9E9E9E", alpha=0.7, size=0.8)
+        if fits:
+            g += p9.geom_line(with_panel(pd.concat(fits, ignore_index=True)),
+                              p9.aes("Event", "Licks"), color="#0072B2",
+                              linetype="dashed", size=0.6)
+        if not earned.empty:
+            g += p9.geom_point(earned, color="#333333", size=1.3, alpha=0.85)
+        if not free.empty:
+            g += p9.geom_point(free, shape="o", fill="none", color="#D62728",
+                               size=2.2, stroke=0.6)
+        caption = ("Filled: light events with licks; hollow red: lick-free. Dashed: "
+                   "the group's trend. ")
+        caption += ("Grey: estimated requirement "
+                    f"({inc[0]:.1f} licks per event)." if inc is not None
+                    else "No requirement could be estimated.")
+        g = (g + p9.facet_wrap("~ Panel", ncol=3, scales="free")
+              + p9.labs(title=f"DFM {dfm_id} — {well_a} licks per light event, Test phase",
+                        caption=caption, x="Light event (Test phase)",
+                        y=f"{well_a} licks since the previous light event")
+              + p9.theme_bw(base_size=base_font_size)
+              + p9.theme(figure_size=figsize))
+        return g
+
+    def plot_resting_level_dfm(self, dfm_id: int, *, base_font_size: float = 10.0,
+                               figsize: tuple[float, float] | None = None):
+        """Sucrose Well resting level (QC) for one DFM, one panel per Chamber
+        Group.
+
+        The paired chamber's Sucrose Well — the one the firmware watches — as
+        its per-minute median raw signal over the whole recording, against the
+        median of the DFM's other Sucrose Wells.  Light onsets are the rug
+        along the bottom and the dashed line is training end.  A well that
+        creeps up while its light fires ever more often is a sensor, not a fly.
+        """
+        import plotnine as p9
+
+        dfm_id = int(dfm_id)
+        dfm = self.dfms[dfm_id]
+        levels = self.resting_levels(dfm_id)
+        series, rugs, ends = [], [], []
+        panel = {}
+        own, others = "Paired Sucrose Well", "Other Sucrose Wells (median)"
+        for group in CHAMBER_GROUPS:
+            gt = self.group_training(dfm_id, group)
+            column = f"W{gt.sucrose_well}"
+            if column not in levels.columns:
+                continue
+            panel[group] = self._qc_panel_label(
+                dfm_id, group, f"paired ch{gt.paired_chamber}, W{gt.sucrose_well}")
+            s = levels[column]
+            series.append(pd.DataFrame({"Minute": s.index.to_numpy(dtype=float),
+                                        "Level": s.to_numpy(dtype=float),
+                                        "Series": own, "Group": group}))
+            ref = self.resting_reference(dfm_id, gt.sucrose_well)
+            if not ref.empty:
+                series.append(pd.DataFrame({"Minute": ref.index.to_numpy(dtype=float),
+                                            "Level": ref.to_numpy(dtype=float),
+                                            "Series": others, "Group": group}))
+            events = self.light_events_table(dfm_id, group)
+            if not events.empty:
+                rugs.append(pd.DataFrame({"Minute": events["RecordingMinute"].to_numpy(),
+                                          "Group": group}))
+            if gt.complete:
+                ends.append(pd.DataFrame({"Minute": [float(gt.training_end)],
+                                          "Group": group}))
+        if not series:
+            return p9.ggplot() + p9.labs(title=f"DFM {dfm_id} — no Sucrose Well signal")
+        order = [panel[g] for g in CHAMBER_GROUPS if g in panel]
+
+        def with_panel(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            df["Panel"] = pd.Categorical(df["Group"].map(panel), categories=order,
+                                         ordered=True)
+            return df
+
+        data = with_panel(pd.concat(series, ignore_index=True))
+        data["Series"] = pd.Categorical(data["Series"], categories=[own, others])
+        if figsize is None:
+            figsize = (4.0 * max(len(order), 1), 5.0)
+        g = (p9.ggplot(data, p9.aes("Minute", "Level", color="Series"))
+             + p9.geom_line(size=0.6))
+        if rugs:
+            g += p9.geom_rug(with_panel(pd.concat(rugs, ignore_index=True)),
+                             p9.aes(x="Minute"), inherit_aes=False, sides="b",
+                             color="#0072B2", alpha=0.35, length=0.05)
+        if ends:
+            g += p9.geom_vline(with_panel(pd.concat(ends, ignore_index=True)),
+                               p9.aes(xintercept="Minute"), linetype="dashed",
+                               color="#555555", size=0.5)
+        g = (g + p9.facet_wrap("~ Panel", ncol=3, scales="free_y")
+              + p9.scale_color_manual(values={own: "#D55E00", others: "#9E9E9E"})
+              + p9.labs(title=f"DFM {dfm_id} — Sucrose Well resting level "
+                              f"(per-minute median raw signal)",
+                        caption="Rug: light onsets. Dashed: training end.",
+                        x="Minutes", y="Raw signal (counts)", color="")
+              + p9.theme_bw(base_size=base_font_size)
+              + p9.theme(figure_size=figsize, legend_position="bottom"))
         return g
 
     def write_pr_figures(self, *, binsize_min: float = 1.0, dpi: int = 200) -> dict[str, Path]:
-        """Write the headline curve and the per-DFM QC traces into ``analysis/``."""
+        """Write the headline curve and the per-DFM QC figures into
+        ``analysis/``: training-aligned traces, licks per light event and the
+        Sucrose Well resting level."""
         if self.analysis_dir is None:
             raise ValueError("experiment_dir must be set to write figures.")
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -973,10 +1626,15 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         self.plot_cumulative_diff(binsize_min=binsize_min).save(str(path), dpi=dpi, verbose=False)
         written["pr_cumulative_diff"] = path
         for dfm_id in sorted(self.dfms):
-            path = self.analysis_dir / f"pr_cumulative_licks_dfm{dfm_id}.png"
-            self.plot_cumulative_licks_dfm(dfm_id, binsize_min=binsize_min).save(
-                str(path), dpi=dpi, verbose=False)
-            written[f"pr_cumulative_licks_dfm{dfm_id}"] = path
+            for stem, build in (
+                ("pr_cumulative_licks",
+                 lambda d: self.plot_cumulative_licks_dfm(d, binsize_min=binsize_min)),
+                ("pr_light_events", self.plot_light_events_dfm),
+                ("pr_resting_level", self.plot_resting_level_dfm),
+            ):
+                path = self.analysis_dir / f"{stem}_dfm{dfm_id}.png"
+                build(dfm_id).save(str(path), dpi=dpi, verbose=False)
+                written[f"{stem}_dfm{dfm_id}"] = path
         return written
 
     # ------------------------------------------------------------------
@@ -990,29 +1648,47 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         training end), ``DeltaMinutes`` and ``DeltaLicks`` since the previous
         onset.  Empty for a group that never completed training.
 
-        The details are provisional (see the decided-direction notes in
+        For the **Paired** chamber — the one whose Sucrose Well the light
+        answers to — the rows are the group's Light Event Ledger and carry
+        :data:`LEDGER_COLUMNS` as well: ``MinutesSincePrev`` and
+        ``LicksSincePrev`` count from the previous light event even when it
+        fell in training, ``LickFree`` marks an event with no licks since the
+        previous one ended, and ``RestingLevel`` is the well's per-minute
+        median raw level at the onset (see :meth:`light_events_table`).
+
+        An onset is a light event beginning after training end; an event lit
+        across the training end belongs to training.  The details are
+        provisional (see the decided-direction notes in
         ``docs/progressive-ratio-implementation.md``); what is kept from the R
         port is the shape: ΔLicks per light period, read against time.
         """
-        cols = ["Minutes", "CumLicks", "DeltaMinutes", "DeltaLicks"]
         dfm_id, chamber = int(dfm_id), int(chamber)
+        role = self.role_of(dfm_id, chamber)
+        paired = role.role == ROLE_PAIRED
+        cols = [*BREAKING_POINT_COLUMNS, *(LEDGER_COLUMNS if paired else ())]
         dfm = self.dfms[dfm_id]
-        gt = self.group_training(dfm_id, group_of(chamber))
+        gt = self.group_training(dfm_id, role.group)
         if not gt.complete:
             return pd.DataFrame(columns=cols)
         end = float(gt.training_end)
-        mins = dfm.lick_df["Minutes"].to_numpy(dtype=float)
-        mask = mins > end
-        if not mask.any():
+        if paired:
+            events = self.light_events_table(dfm_id, role.group)
+            test = events[events["Phase"] == TEST_LABEL]
+            out = pd.DataFrame({"Minutes": test["Minutes"].to_numpy(dtype=float),
+                                "CumLicks": test["CumLicks"].to_numpy(dtype=float)})
+            for col in LEDGER_COLUMNS:
+                out[col] = test[col].to_numpy()
+        else:
+            mins = pd.to_numeric(dfm.lick_df["Minutes"], errors="coerce").to_numpy(dtype=float)
+            well_a = self._sucrose_well(dfm, chamber)
+            licks = dfm.lick_df[f"W{well_a}"].to_numpy(dtype=float)
+            cum = np.cumsum(np.where(mins > end, licks, 0.0))
+            onsets, _ends = lqc.light_events(
+                self._chamber_light(dfm, chamber).to_numpy(dtype=bool))
+            onsets = onsets[mins[onsets] > end]
+            out = pd.DataFrame({"Minutes": mins[onsets] - end, "CumLicks": cum[onsets]})
+        if out.empty:
             return pd.DataFrame(columns=cols)
-        well_a = self._sucrose_well(dfm, chamber)
-        cum = dfm.lick_df[f"W{well_a}"].to_numpy(dtype=float)[mask].cumsum()
-        light = self._chamber_light(dfm, chamber).to_numpy(dtype=bool)[mask]
-        rel = mins[mask] - end
-        onsets = np.flatnonzero(light & ~np.concatenate([[False], light[:-1]]))
-        if onsets.size == 0:
-            return pd.DataFrame(columns=cols)
-        out = pd.DataFrame({"Minutes": rel[onsets], "CumLicks": cum[onsets]})
         out["DeltaMinutes"] = np.concatenate([[0.0], np.diff(out["Minutes"].to_numpy())])
         out["DeltaLicks"] = np.concatenate([[0.0], np.diff(out["CumLicks"].to_numpy())])
         return out[cols].reset_index(drop=True)
@@ -1034,7 +1710,10 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 continue
             tmp = df[["Minutes", "DeltaLicks"]].copy()
             r = self.role_of(dfm_id, chamber)
-            tmp["Chamber"] = f"Chamber {chamber} ({r.role}, group {r.group})"
+            removed = (self.design.treatment_for(dfm_id, chamber) is None
+                       and (dfm_id, chamber) in self._design_snapshot())
+            tmp["Chamber"] = (f"Chamber {chamber} ({r.role}, group {r.group})"
+                              + (" — excluded" if removed else ""))
             frames.append(tmp)
         if not frames:
             return p9.ggplot() + p9.labs(title=f"DFM {dfm_id} — no breaking-point data")
@@ -1080,8 +1759,316 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             buf.extend(f"  {w}" for w in warnings)
         else:
             buf.append("  (all four wells of every group cleared together)")
-        buf.append("")
+        buf.extend(self._light_qc_summary_lines())
         return text + "\n".join(buf) + "\n"
+
+    # ------------------------------------------------------------------
+    # Breaking point, per Chamber Group
+    # ------------------------------------------------------------------
+
+    def breaking_point_summary(self) -> pd.DataFrame:
+        """One row per Chamber Group in the analysis (both chambers present,
+        training complete): the paired fly's **breaking point**, the number of
+        Test light events it earned — the last ratio it completed.
+
+        Also: ``LargestRequirement`` (the most Sucrose Well licks credited to a
+        single Test light event), ``TestMinutes`` (Test time the recording
+        allowed, which differs by group because training end does) and
+        ``LastLightEventMin`` (minutes after training end of the last light
+        event).  A group the light QC excluded is not here; one it failed but
+        kept (``exclude_failed_pr_groups: false``) is, with ``LightQC``.
+        """
+        factors = list(self.design_factors or [])
+        cols = ["Treatment", *factors, "DFM", "Group", "PairedChamber", "BreakingPoint",
+                "LargestRequirement", "TestMinutes", "LastLightEventMin", "LightQC"]
+        diff = self.paired_yoked_diff()
+        if diff.empty:
+            return pd.DataFrame(columns=cols)
+        test = diff[diff["Facet"] == TEST_LABEL]
+        by_group = self._light_qc_by_group()
+        rows = []
+        for _, r in test.iterrows():
+            key = (int(r["DFM"]), int(r["Group"]))
+            events = self.light_events_table(*key)
+            earned = events[events["Phase"] == TEST_LABEL]
+            gt = self.group_training(*key)
+            end = self._recording_end(self.dfms[key[0]])
+            row = {"Treatment": r["Treatment"]}
+            for f in factors:
+                row[f] = r.get(f, "")
+            row.update({
+                "DFM": key[0], "Group": key[1], "PairedChamber": int(r["PairedChamber"]),
+                "BreakingPoint": int(len(earned)),
+                "LargestRequirement": (int(earned["LicksSincePrev"].max())
+                                       if len(earned) else 0),
+                "TestMinutes": float(end - float(gt.training_end)),
+                "LastLightEventMin": (float(earned["Minutes"].max())
+                                      if len(earned) else np.nan),
+                "LightQC": by_group[key]["Verdict"],
+            })
+            rows.append(row)
+        return pd.DataFrame(rows, columns=cols)
+
+    # ------------------------------------------------------------------
+    # Experiment report hooks (pyflic.base.pdf_report)
+    # ------------------------------------------------------------------
+
+    def report_glance_blocks(self) -> list[Any]:
+        from . import report_content as rc
+        from . import report_layout as rl
+
+        table = self.light_qc_table()
+        excluded = [(int(r.DFM), int(r.Group)) for r in table.itertuples() if r.Excluded]
+        kept = [(int(r.DFM), int(r.Group)) for r in table.itertuples()
+                if r.Verdict == lqc.VERDICT_FAILED and not r.Excluded]
+        warned = [(int(r.DFM), int(r.Group)) for r in table.itertuples()
+                  if r.Verdict == lqc.VERDICT_WARNING]
+        n = len(table)
+        if excluded or kept:
+            parts = []
+            if excluded:
+                parts.append(f"{len(excluded)} of {n} chamber groups failed and were "
+                             f"excluded ({rc.join_groups(excluded)})")
+            if kept:
+                parts.append(f"{len(kept)} failed but were kept because "
+                             f"exclude_failed_pr_groups is off ({rc.join_groups(kept)})")
+            text = "; ".join(parts) + "."
+            tone = "failed"
+        else:
+            text = f"Every chamber group's light followed its paired fly ({n} of {n})."
+            tone = "ok"
+        if warned:
+            text += (f"  {len(warned)} warning(s): {rc.join_groups(warned)} — "
+                     f"see Quality control.")
+            tone = "warning" if tone == "ok" else tone
+        incomplete = [(int(r.DFM), int(r.Group)) for r in table.itertuples()
+                      if not r.TrainingComplete]
+        blocks = [rl.Callout(text, tone=tone,
+                             title="Light QC — did the paired fly earn its light?")]
+        if incomplete:
+            required = _truthy((self.global_constants or {}).get(
+                "require_training_complete", True))
+            blocks.append(rl.Callout(
+                f"Training never completed in {rc.join_groups(incomplete)}; "
+                + ("both chambers of each were excluded." if required
+                   else "they are kept (require_training_complete is off)."),
+                tone="warning", title="Training"))
+        return blocks
+
+    def report_qc_blocks(self) -> list[Any]:
+        from . import report_layout as rl
+
+        training = self.training_table()
+        training_view = pd.DataFrame({
+            "DFM": training["DFM"], "Group": training["Group"],
+            "Treatment": [self._group_treatment(d, g)
+                          for d, g in zip(training["DFM"], training["Group"])],
+            "Paired chamber": training["PairedChamber"],
+            "Yoked chamber": training["YokedChamber"],
+            "Sucrose Well": [f"W{int(w)}" for w in training["SucroseWell"]],
+            "Training end (min)": training["TrainingEndMin"],
+            "Training": ["complete" if c else "never completed"
+                         for c in training["TrainingComplete"]],
+        })
+
+        def training_tone(value: Any) -> str | None:
+            return "ok" if value == "complete" else "failed"
+
+        blocks: list[Any] = [
+            rl.Heading("Progressive ratio: training", level=2),
+            rl.Paragraph(
+                "Training ends, per chamber group, at the last minute the firmware flags "
+                "the paired chamber's Sucrose Well as in training; the Test phase is "
+                "everything after it, and Progressive Ratio time axes run from there."),
+            rl.Table(training_view, caption="Training by chamber group",
+                     formats={"Training end (min)": "{:.1f}"},
+                     status={"Training": training_tone}),
+        ]
+        notes = self.training_warnings()
+        if notes:
+            blocks.append(rl.Paragraph("Training-flag notes (QC, not errors):",
+                                       size=rl.SIZE_SMALL, color=rl.MUTED))
+            blocks.append(rl.Bullets(notes, size=rl.SIZE_SMALL, color=rl.MUTED))
+
+        settings = self.light_qc_settings()
+        table = self.light_qc_table()
+        view = pd.DataFrame({
+            "DFM": table["DFM"], "Group": table["Group"], "Treatment": table["Treatment"],
+            "Training light events": table["TrainingLightEvents"],
+            "Training licks": table["TrainingLicks"],
+            "Test light events": table["TestLightEvents"],
+            "Lick-free": table["LickFreeEvents"],
+            "Longest run": table["LongestLickFreeRun"],
+            "Trend rho": table["TrendRho"],
+            "Resting rise": table["RestingRise"],
+            "Resting ratio": table["RestingRatio"],
+            "Verdict": [("excluded" if ex else v)
+                        for v, ex in zip(table["Verdict"], table["Excluded"])],
+        })
+        blocks += [
+            rl.Heading("Progressive ratio: light QC", level=2),
+            rl.Paragraph(
+                "The firmware lights a group from its own reading of the paired chamber's "
+                "Sucrose Well during the run; pyflic counts licks afterwards, from the "
+                "baselined signal.  A Sucrose Well whose resting level creeps up looks "
+                "continuously touched to the firmware and flat to pyflic, so the light "
+                "fires on its own schedule.  Self-triggered light (a run of "
+                f"{settings.lick_free_run} or more lick-free Test light events) and "
+                "implausible training (training light events with no sucrose lick) fail a "
+                "group; no increasing trend in licks per light event and a rising or "
+                "elevated resting level are warnings.  Computed over the whole recording."),
+            rl.Table(view, caption="Light QC by chamber group",
+                     formats={"Trend rho": "{:.2f}", "Resting rise": "{:.0f}",
+                              "Resting ratio": "{:.1f}"},
+                     status={"Verdict": rl.tone_of}),
+            rl.Paragraph(f"Thresholds: {settings.describe()}.", size=rl.SIZE_SMALL,
+                         color=rl.MUTED),
+        ]
+        detail = self._light_qc_bullets()
+        if detail:
+            blocks.append(rl.Bullets(detail, size=rl.SIZE_SMALL + 0.5))
+        inc = self.estimated_increment()
+        if inc is not None:
+            blocks.append(rl.Paragraph(
+                f"Estimated requirement increment: {inc[0]:.1f} licks per light event "
+                f"(median over {inc[2]} chamber group(s)' first {lqc.INCREMENT_EVENTS} Test "
+                f"light events).", size=rl.SIZE_SMALL, color=rl.MUTED))
+        for dfm_id in sorted(self.dfms):
+            blocks += [
+                rl.Heading(f"Light QC figures — DFM {dfm_id}", level=2),
+                rl.Plot(lambda d=dfm_id: self.plot_light_events_dfm(d, base_font_size=8.5),
+                        height=3.4, title=f"Licks per light event — DFM {dfm_id}",
+                        caption="Sucrose Well licks credited to each Test light event. "
+                                "A working progressive ratio climbs; hollow red rings are "
+                                "lick-free light events, the dashed line the group's trend, "
+                                "the grey line the estimated requirement."),
+                rl.Plot(lambda d=dfm_id: self.plot_resting_level_dfm(d, base_font_size=8.5),
+                        height=3.2, title=f"Sucrose Well resting level — DFM {dfm_id}",
+                        caption="Per-minute median raw signal of the paired Sucrose Well "
+                                "against the DFM's other Sucrose Wells; light onsets as a "
+                                "rug, training end dashed."),
+                rl.Plot(lambda d=dfm_id: self.plot_cumulative_licks_dfm(d, base_font_size=8.5),
+                        height=3.4, title=f"Training-aligned traces — DFM {dfm_id}",
+                        caption="Paired and yoked cumulative Sucrose Well licks since "
+                                "training end; points: light on; rings: lick-free light "
+                                "events."),
+            ]
+        return blocks
+
+    def _light_qc_bullets(self) -> list[str]:
+        """:meth:`light_qc_lines` as one line per flagged or noted group."""
+        items: list[str] = []
+        current: str | None = None
+        for line in self.light_qc_lines():
+            stripped = line.strip()
+            if not line.startswith(" "):
+                if current:
+                    items.append(current)
+                current = stripped
+            elif current is not None:
+                sep = " " if current.endswith(":") else "; "
+                current += sep + stripped.lstrip("-· ").strip()
+        if current:
+            items.append(current)
+        return items
+
+    def report_results_blocks(self, generic: list[Any], options: Any) -> list[Any]:
+        """Replaces the layout's results: the per-treatment plots of a two-well
+        experiment pool each paired fly with its own yoked control.  In their
+        place — the Cumulative Difference Curve, the Paired-Yoked Difference in
+        the Test phase, and the breaking point."""
+        from . import report_content as rc
+        from . import report_layout as rl
+        from .analytics import treatment_comparisons
+
+        names = self.well_names or {}
+        well_a = names.get("A") or "well A"
+
+        def dot(frame, column, label, hline=None):
+            return lambda: rc.dot_plot(frame, column, y_label=label,
+                                       factors=self.design_factors, hline_at=hline)
+
+        diff = self.paired_yoked_diff()
+        test = diff[diff["Facet"] == TEST_LABEL] if not diff.empty else diff
+        blocks: list[Any] = [
+            rl.Heading("Cumulative difference curve", level=2),
+            rl.Paragraph(
+                f"Paired minus yoked cumulative {well_a} licks since each chamber group's "
+                f"training end: above zero, the paired fly worked for the light more than "
+                f"its yoked control fed.  Mean ± SEM per treatment, drawn only over the "
+                f"time every group covers; the faint lines are the individual groups.  "
+                f"Groups the light QC excluded are not included."),
+            rl.Plot(lambda: self.plot_cumulative_diff(base_font_size=9.5), height=3.5),
+            rl.Heading("Paired − yoked difference, Test phase", level=2),
+            rl.Paragraph(
+                "One point per chamber group: the paired fly's value minus its yoked "
+                "partner's over the Test phase.  Zero is the null."),
+        ]
+        if test.empty:
+            blocks.append(rl.Callout("No chamber group has both chambers and a Test phase "
+                                     "in the analysis.", tone="warning"))
+        else:
+            blocks.append(rl.PlotRow([
+                rl.Plot(dot(test, "dLicksA", rc.metric_label("dLicksA", names), 0.0),
+                        title=rc.metric_label("dLicksA", names)),
+                rl.Plot(dot(test, "dPI", rc.metric_label("dPI", names), 0.0),
+                        title=rc.metric_label("dPI", names)),
+            ], height=3.0))
+            if options.include_comparison:
+                rows = treatment_comparisons(
+                    [(TEST_LABEL, test)],
+                    ["dLicksA", "dLicksB", "dEventsA", "dPI", "dMedDurationA"])
+                blocks += rc.stats_table(rows, caption="Treatment comparisons: paired − "
+                                                       "yoked difference, Test phase",
+                                         well_names=names, show_phase=False)
+
+        summary = self.breaking_point_summary()
+        blocks += [
+            rl.Heading("Breaking point", level=2),
+            rl.Paragraph(
+                "The breaking point is the number of Test light events a paired fly earned "
+                "— the last ratio it completed.  Test phases differ in length because "
+                "training ends at a different time in every group, so the table gives the "
+                "Test minutes the recording allowed, the largest single requirement met "
+                "(licks credited to one light event) and when the last light event came."),
+        ]
+        if summary.empty:
+            blocks.append(rl.Callout("No chamber group in the analysis has a Test phase.",
+                                     tone="warning"))
+        else:
+            blocks.append(rl.PlotRow([
+                rl.Plot(dot(summary, "BreakingPoint", "Test light events earned"),
+                        title="Breaking point by treatment"),
+                rl.Plot(dot(summary, "LargestRequirement",
+                            f"{well_a} licks, one light event"),
+                        title="Largest requirement met"),
+            ], height=3.0))
+            if options.include_comparison:
+                rows = treatment_comparisons([(TEST_LABEL, summary)],
+                                             ["BreakingPoint", "LargestRequirement"])
+                for r in rows:
+                    if r["metric"] == "LargestRequirement":
+                        r["metric"] = f"Largest requirement met ({well_a} licks)"
+                blocks += rc.stats_table(rows, caption="Treatment comparisons: breaking "
+                                                       "point", well_names=names,
+                                         show_phase=False)
+            view = summary.rename(columns={
+                "PairedChamber": "Paired chamber", "BreakingPoint": "Breaking point",
+                "LargestRequirement": "Largest requirement",
+                "TestMinutes": "Test minutes", "LastLightEventMin": "Last light event (min)",
+                "LightQC": "Light QC"})
+            blocks.append(rl.Table(view, caption="Breaking point by chamber group",
+                                   formats={"Test minutes": "{:.0f}",
+                                            "Last light event (min)": "{:.0f}"},
+                                   status={"Light QC": rl.tone_of}))
+        for dfm_id in sorted(self.dfms):
+            blocks.append(rl.Plot(
+                lambda d=dfm_id: self.plot_breaking_point_dfm(d, base_font_size=8.5),
+                height=4.4, title=f"Licks per light-on period — DFM {dfm_id}",
+                caption="ΔLicks between successive light onsets after training end, one "
+                        "panel per chamber (both roles; groups excluded by the light QC "
+                        "included for reference)."))
+        return blocks
 
     def execute_basic_analysis(
         self,
@@ -1111,6 +2098,12 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         print("[PR] Cumulative difference curve data...", flush=True)
         result["pr_cumulative_diff_csv"] = self.write_cumulative_diff()
         print(f"  Done → {result['pr_cumulative_diff_csv']}", flush=True)
+        print("[PR] Light QC tables...", flush=True)
+        light = self.write_light_qc()
+        result.update(light)
+        print(f"  Done → {light['pr_light_qc']}", flush=True)
+        for line in self.light_qc_lines():
+            print(f"  {line}", flush=True)
         print("[PR] Figures...", flush=True)
         figs = self.write_pr_figures(dpi=dpi)
         result.update(figs)

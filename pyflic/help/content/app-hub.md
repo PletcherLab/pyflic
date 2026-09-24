@@ -152,7 +152,8 @@ one and open it; an unfiled recording offers to file itself.
 Appears when a Project is open, in the order the work happens:
 
 - **Analyze all** / **Combine** / **Create report** — the project-level actions.
-- **View reports** — opens the Project Report and each member's own report.
+- **View reports** — opens the Project Report and each member's own report
+  (`analysis/experiment_report.pdf`). See [Reports](reports.md).
 - **Apply exclusion sheet…** — see [Excluding chambers in bulk](concepts-exclusions.md).
 - **Plot editor…** / **Render figures** — the Project's publication figures.
   `plot_specs.yaml` and `figures/` live at the project root, so their buttons live here
@@ -169,8 +170,17 @@ Appears when a Project is open, in the order the work happens:
 Actions on the **loaded member**: basic analysis, the summary CSVs, the faceted
 summary, binned CSVs, **Event statistics** (one row per individual feeding or tasting
 event — its start minute, duration, licks and intensity — written by the `tidy_export`
-action to `analysis*/tidy_<kind>_events.csv`), and the per-member PDF report. Basic
-analysis deliberately skips QC — that is the QC panel's job.
+action to `analysis*/tidy_<kind>_events.csv`), and the member's PDF report
+([Reports](reports.md)). Basic
+analysis deliberately skips QC — that is the QC panel's job — but it does apply the
+Design's auto-removal cutoffs, once, before writing anything.
+
+A **Progressive Ratio only** group appears while such a member is loaded: **Paired −
+yoked difference CSV** writes `paired_yoked_diff.csv`. The type's light QC is on the QC
+panel.
+
+The **Bin size** box sets the bin of the binned CSV, the binned plots, the PDF report, and
+the two Progressive Ratio curve figures (cumulative difference, training-aligned traces).
 
 ## QC panel
 
@@ -182,6 +192,13 @@ interactive app on the already-loaded member — tables, plots, and per-chamber
 exclusions saved to `remove_chambers.csv` (see [QC Viewer](app-qc-viewer.md)).
 **View QC plots** opens the saved signal plots as output-area tabs, one per DFM and
 kind, reusing tabs on a second look. **Open qc folder** shows the files themselves.
+
+A **Progressive Ratio only** group appears while such a member is loaded — did the paired
+fly earn its light? **Light QC table** writes `pr_light_qc.csv` and `pr_light_events.csv`
+and logs every chamber group that failed or warned; **Licks per light event (QC)** and
+**Sucrose Well resting level (QC)** draw the two per-DFM figures behind the verdict. See
+[Experiment types](concepts-experiment-types.md#progressive-ratio) and
+[Plot catalogue](plots-catalog.md#did-the-paired-fly-earn-its-light-qc).
 
 ## Plots panel
 
@@ -198,7 +215,9 @@ the Metric box does not reach them. **Well A vs B** is offered only on a two-wel
 **Type-specific groups** are titled with the Experiment Type they belong to
 (*Progressive Ratio only*, *Hedonic only*) and appear only while a member of that type
 is loaded, so the card never offers a button whose only possible answer is "this requires
-a different Experiment Type".
+a different Experiment Type". The Progressive Ratio group holds the cumulative difference
+curve, the training-aligned traces and the breaking-point plots; its light QC figures are
+on the QC panel.
 
 The panel does not repeat which member is loaded: the Experiment tile it hangs from
 already says so, as does the status strip.

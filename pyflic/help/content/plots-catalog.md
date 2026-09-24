@@ -135,13 +135,44 @@ ends; the faint traces run to each group's own end.
 
 **Training-aligned traces** (`plot_pr_cumulative_licks`) — per DFM, one panel per chamber
 group: paired and yoked cumulative sucrose-well licks since training end, with the bins in
-which the group's light was on drawn as points. A QC figure, not a result.
+which the group's light was on drawn as points and lick-free light events as black rings on
+the paired trace. A QC figure, not a result.
 
 **Breaking-point plots** (`plot_breaking_point`) — per DFM, one panel per chamber:
 `DeltaLicks` per light-on period against minutes since training end. Provisional; the
 per-period table is the classic breaking-point readout and is kept in that spirit.
 
-All three require light data (`OptoCol1`).
+All of these require light data (`OptoCol1`).
+
+### Did the paired fly earn its light? (QC)
+
+The firmware lights a chamber group from its own reading of the paired chamber's Sucrose
+Well *during* the run; pyflic counts licks *afterwards*, from the baselined signal. When a
+Sucrose Well's resting level creeps up, the firmware reads it as continuous contact and
+fires the light on its own schedule, while the baselined signal is flat and no licks are
+recorded — so the light looks earned in every light-on number and nothing was earned. Two
+figures show it, beside the training-aligned traces:
+
+**Licks per light event** (`plot_pr_light_events`) — per DFM, one panel per chamber group:
+the sucrose licks credited to each Test-phase light event, against the event's number. A
+working progressive ratio climbs. Hollow red rings are **lick-free light events**, the
+dashed line is the group's own trend, and the faint grey line is the requirement estimated
+across the experiment (the median slope of the groups' first eight Test events). A long row
+of red rings along zero is the light following the sensor, not the fly.
+
+**Sucrose Well resting level** (`plot_pr_resting_level`) — per DFM, one panel per chamber
+group: the paired chamber's Sucrose Well as its per-minute median raw signal over the whole
+recording, against the median of the DFM's other Sucrose Wells (grey). Light onsets are the
+rug along the bottom and the dashed line is training end. A well that creeps up while its
+rug thickens is the cause behind the red rings.
+
+Both are on the Hub's QC panel, in its *Progressive Ratio only* group beside the **Light
+QC table**.
+
+Every panel's strip carries the group's light QC verdict. A group that failed — and so left
+the analysis — stays in these three figures, its strip saying why; the result figures
+(the cumulative difference curve, the dot plot) no longer contain it. See
+[Experiment types](concepts-experiment-types.md) for the checks behind the verdict.
 
 ## Interactive or static
 

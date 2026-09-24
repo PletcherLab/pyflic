@@ -366,6 +366,28 @@ class HedonicFeedingExperiment(TwoWellExperiment):
         self.weighted_duration_summary(save=True, range_minutes=range_minutes)
         return result
 
+    def report_results_blocks(self, generic: list, options) -> list:
+        """The two-well results, then the type's own: bout duration at each
+        well by treatment, and its event-weighted summary."""
+        from . import report_layout as rl
+
+        blocks = list(generic)
+        blocks += [
+            rl.Heading("Hedonic feeding", level=2),
+            rl.Paragraph("Duration is the measure of interest in a hedonic design: median "
+                         "feeding-bout duration at each well, one point per chamber, "
+                         "panelled by treatment."),
+            rl.Plot(lambda: self.hedonic_feeding_plot(
+                range_minutes=options.range_minutes, base_font_size=10.0, save=False),
+                height=3.3),
+        ]
+        weighted = self.weighted_duration_summary(range_minutes=options.range_minutes,
+                                                  save=False)
+        if weighted is not None and not weighted.empty:
+            blocks.append(rl.Table(weighted, caption="Median bout duration by treatment, "
+                                                     "weighted by each chamber's events"))
+        return blocks
+
     def weighted_duration_summary(
         self,
         *,
