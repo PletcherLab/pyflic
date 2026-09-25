@@ -340,6 +340,12 @@ class CardGroup(QGroupBox):
         self._body.setContentsMargins(8, 7, 8, 8)
         self._body.setSpacing(6)
         self._notes: list[QLabel] = []
+        #: Widgets added with :meth:`add`, in order — what a title widget can
+        #: sit beside (:meth:`reflow_title_widget`).
+        self._members: list[QWidget] = []
+        self._title_widget: QWidget | None = None
+        self._title_host: QWidget | None = None      # the row it shares
+        self._title_member: QWidget | None = None    # ...with this member
         if note:
             self.add_note(note)
         self.restyle()
@@ -393,30 +399,115 @@ class CardGroup(QGroupBox):
     def add(self, widget_or_layout: QWidget | Any) -> None:
         if isinstance(widget_or_layout, QWidget):
             self._body.addWidget(widget_or_layout)
+            self._members.append(widget_or_layout)
         else:
             self._body.addLayout(widget_or_layout)
 
     def add_title_widget(self, widget: QWidget) -> None:
-        """Put *widget* at the top-right of the group, level with its note.
+        """Put *widget* at the top-right of the group without growing it.
 
         The counterpart of :meth:`Card.add_title_widget`, used for the group's
         help button.  A QGroupBox paints its own title, so nothing can sit in
-        the title itself; the widget goes in a row at the top of the body
-        instead, sharing it with the first note when there is one so the
-        group grows no taller.  Like the Card, the group knows nothing about
-        help — it just offers the slot.
+        the title itself, and a row of its own at the top of the body opens an
+        empty band under the title.  So the widget shares a row: the first
+        note's when the group opens with one, else the first member's, which
+        gives up the width — the widget sits at its right.  Only a group with
+        neither yet gets a row of its own.  Like the Card, the group knows
+        nothing about help — it just offers the slot.
         """
+        first = self._body.itemAt(0)
+        if self._notes and first is not None and first.widget() is self._notes[0]:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+            self._body.removeWidget(self._notes[0])
+            row.addWidget(self._notes[0], 1)
+            row.addWidget(widget, 0, Qt.AlignmentFlag.AlignTop)
+            self._body.insertLayout(0, row)
+            return
+        if self._members:
+            self._title_widget = widget
+            self.reflow_title_widget()
+            return
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
-        first = self._body.itemAt(0)
-        if self._notes and first is not None and first.widget() is self._notes[0]:
-            self._body.removeWidget(self._notes[0])
-            row.addWidget(self._notes[0], 1)
-        else:
-            row.addStretch(1)
+        row.addStretch(1)
         row.addWidget(widget, 0, Qt.AlignmentFlag.AlignTop)
         self._body.insertLayout(0, row)
+
+    def reflow_title_widget(self) -> None:
+        """Keep the title widget beside the first member still shown.
+
+        Call after showing or hiding members: beside a hidden one it would sit
+        alone on a row, the empty band this placement exists to avoid.  A
+        no-op for a group whose title widget shares a note's row, or already
+        sits beside the right member.
+        """
+        widget = self._title_widget
+        if widget is None or not self._members:
+            return
+        target = next((m for m in self._members if not _hidden_by_hand(m)),
+                      self._members[0])
+        if target is self._title_member:
+            return
+        widget_state = _visibility(widget)
+        target_state = _visibility(target)
+        self._release_title_member()
+        index = self._body.indexOf(target)
+        if index < 0:
+            return
+        host = QWidget(self)
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        self._body.removeWidget(target)
+        row.addWidget(target, 1)
+        row.addWidget(widget, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._body.insertWidget(index, host)
+        _restore_visibility(target, target_state)
+        _restore_visibility(widget, widget_state)
+        self._title_host, self._title_member = host, target
+
+    def _release_title_member(self) -> None:
+        """Put the member the title widget sat beside back in the body."""
+        host, member = self._title_host, self._title_member
+        if host is None or member is None:
+            return
+        state = _visibility(member)
+        index = self._body.indexOf(host)
+        host.layout().removeWidget(member)
+        if self._title_widget is not None:
+            host.layout().removeWidget(self._title_widget)
+            self._title_widget.setParent(self)
+        self._body.removeWidget(host)
+        self._body.insertWidget(index, member)
+        _restore_visibility(member, state)
+        host.deleteLater()
+        self._title_host = self._title_member = None
+
+
+def _hidden_by_hand(widget: QWidget) -> bool:
+    """Whether *widget* was hidden on purpose.  A widget whose window has not
+    been shown yet reads as hidden too, and it will appear with its parent."""
+    return widget.isHidden() and widget.testAttribute(
+        Qt.WidgetAttribute.WA_WState_ExplicitShowHide)
+
+
+def _visibility(widget: QWidget) -> tuple[bool, bool]:
+    """``(explicit, hidden)``: whether *widget*'s visibility was set by hand,
+    and whether it is hidden.  Moving a widget between layouts reparents it,
+    which hides it; this is what to put back."""
+    return (widget.testAttribute(Qt.WidgetAttribute.WA_WState_ExplicitShowHide),
+            widget.isHidden())
+
+
+def _restore_visibility(widget: QWidget, state: tuple[bool, bool]) -> None:
+    """Undo what reparenting did to *widget*'s visibility.  A widget never
+    shown — its window not up yet — is left to appear with its parent."""
+    explicit, hidden = state
+    if explicit or not hidden:
+        widget.setVisible(not hidden)
 
 
 # ---------------------------------------------------------------------------

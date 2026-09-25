@@ -153,3 +153,90 @@ def test_qc_written_refreshes_and_rearms(app, member):
         assert "refreshed" in win.statusBar().currentMessage()
     finally:
         win.close()
+
+
+# ---------------------------------------------------------------------------
+# The Opto Light QC tab
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def opto_window(app, tmp_path):
+    """The viewer on the synthetic optogenetic rig (``opto_fixtures``), handed
+    over as the Hub hands over a loaded member."""
+    import contextlib
+    import io
+
+    from opto_fixtures import make_opto_dir
+    from pyflic.base.yaml_config import load_experiment_yaml
+
+    root = make_opto_dir(tmp_path / "rig")
+    with contextlib.redirect_stdout(io.StringIO()):
+        exp = load_experiment_yaml(root, parallel=False, use_disk_cache=False)
+    win = qc_viewer.MainWindow(root, experiment=exp)
+    yield win
+    win.close()
+
+
+def _column(tab, header: str) -> int:
+    headers = [tab._table.horizontalHeaderItem(c).text()
+               for c in range(tab._table.columnCount())]
+    return headers.index(header)
+
+
+def test_an_optogenetic_experiment_gets_the_tab(opto_window):
+    win = opto_window
+    tabs = [win._tabs.tabText(i) for i in range(win._tabs.count())]
+    assert tabs == ["Load", "Feeding Summary", "DFM 1", "Opto Light QC", "Params"]
+    win._tabs.setCurrentIndex(tabs.index("Opto Light QC"))
+    assert win._help_ref == "concepts-optogenetics"
+
+
+def test_the_tab_opens_on_the_worst_group_and_says_why(opto_window):
+    from pyflic.base.ui import ZoomableImageView
+
+    tab = opto_window._opto_tab
+    assert tab._table.rowCount() == 12
+    verdict = _column(tab, "Verdict")
+    assert tab._table.item(1, verdict).text() == "failed: unexplained light"
+    assert tab._table.item(0, verdict).text() == "ok"
+    ## The first failed group is selected, and the detail pane explains it.
+    selected = tab._selected()
+    assert selected["Verdict"] == "failed" and selected["Group"] == 2
+    why = tab._why.toPlainText()
+    assert "DFM 1 linkage group 2" in why and "drifting baseline" in why
+    assert tab._details.count() == 4
+    assert tab._hosts["Intervals"].count() == 1 and tab._hosts["Light events"].count() == 1
+    ## The figure is drawn for the selected group alone.
+    assert tab._only_selected.isChecked()
+    assert isinstance(tab._figure_host.itemAt(0).widget(), ZoomableImageView)
+    assert tab._figure_key[1] == (2,)
+    tab._only_selected.setChecked(False)
+    assert tab._figure_key[1] is None                  # the whole DFM
+
+
+def test_the_buttons_tick_chambers_but_save_nothing(opto_window, tmp_path):
+    win = opto_window
+    tab = win._opto_tab
+    feeding = win._feeding_tab
+    tab._btn_exclude_failed.click()
+    excluded = feeding._table.excluded_dataframe()
+    assert sorted(excluded["Chamber"].astype(int)) == [2, 3, 4]
+    assert win._dfm_tab_widgets[1].get_excluded_wells() == [2, 3, 4]
+    assert "Save Exclusions" in win.statusBar().currentMessage()
+    assert not (Path(win._experiment_dir) / "remove_chambers.csv").exists()
+    ## The selected group only: pick the open-loop warning (group 6).
+    tab._table.selectRow(5)
+    tab._btn_exclude_selected.click()
+    assert 6 in set(feeding._table.excluded_dataframe()["Chamber"].astype(int))
+
+
+def test_a_params_recompute_refreshes_the_verdicts(opto_window):
+    win = opto_window
+    tab = win._opto_tab
+    verdict = _column(tab, "Verdict")
+    assert tab._table.item(0, verdict).text() == "ok"
+    ## Thresholds no burst reaches: the healthy group's light loses its licks.
+    win._on_params_recompute({"feeding_threshold": 500.0, "feeding_minimum": 400.0,
+                              "tasting_minimum": 300.0, "tasting_maximum": 400.0})
+    assert tab._table.item(0, verdict).text() == "failed: unexplained light"
+    assert "opto light QC" in win.statusBar().currentMessage()

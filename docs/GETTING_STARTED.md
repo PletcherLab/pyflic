@@ -220,7 +220,12 @@ Every pyflic command is typed as `uv run` followed by the command. For example:
 | Open the hub on a specific folder | `uv run pyflic hub "path/to/my_project"` |
 | Open the config editor | `uv run pyflic config` |
 | Check a config for mistakes | `uv run pyflic lint "path/to/my_experiment"` |
+| Check a recording's quality in the QC viewer | `uv run pyflic qc "path/to/my_experiment"` |
 | Make a PDF report | `uv run pyflic report "path/to/my_project"` |
+| Open the Plot Editor for a project's figures | `uv run pyflic plots "path/to/my_project"` |
+| Run a project script in every project under a folder | `uv run pyflic batch "path/to/my_study"` |
+| Delete pyflic's cached results for a folder | `uv run pyflic clear-cache "path/to/my_experiment"` |
+| Show the installed version | `uv run pyflic version` |
 | Open the built-in help | `uv run pyflic help` |
 | List all commands | `uv run pyflic --help` |
 
@@ -229,8 +234,44 @@ Put folder paths in double quotes, especially if they contain spaces.
 > **Finding a folder's path.** You can drag a folder from File Explorer (Windows) or
 > Finder (macOS) into the terminal window, and its full path is typed in for you.
 
-See the [README](../README.md) for what each command does and how to lay out your
-experiment folders.
+See the [README](../README.md) for what each command does.
+
+---
+
+## Next steps: your first analysis
+
+pyflic is installed. From here on the work happens in pyflic's own windows, and the
+built-in help walks you through it: press **F1** in the hub, or run `uv run pyflic help`.
+Its **Guides** list starts with *Your first experiment*, which goes from an empty folder
+to your first plot.
+
+In outline:
+
+1. **Make a folder for the recording**, outside the pyflic folder, with a `data`
+   folder inside it. Copy the DFM files from the rig into `data`. For an optogenetic
+   recording, copy the `Program.txt` the MCU exported into `data` as well: pyflic uses it
+   to check that the light followed the flies.
+
+   ```
+   my_experiment/
+     data/
+       DFM1_0.csv
+       DFM2_0.csv
+       Program.txt        (optogenetic recordings)
+   ```
+
+2. **Describe the experiment** in the config editor (`uv run pyflic config`). It saves
+   your answers as `flic_config.yaml` in the recording's folder.
+3. **Open the hub on the folder** and run **Basic analysis**.
+4. **Check the data before you believe any result.** On the hub's **QC** panel, click
+   **QC reports**, then **Open QC Viewer**.
+
+Two more guides sit beside this one:
+
+| Guide | Read it when |
+|---|---|
+| [Checking your data](qc-user-guide.md) | you want to know what every quality-control check, table and figure means, for ordinary and optogenetic experiments alike |
+| [Analysing a Progressive Ratio assay](progressive-ratio-user-guide.md) | you run Progressive Ratio experiments |
 
 ---
 

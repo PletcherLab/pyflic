@@ -12,11 +12,17 @@ my_experiment/
   data/                   <-- you create this; put your CSVs here
     DFM1_0.csv
     DFM2_0.csv
+    Program.txt           <-- optogenetic recordings: the program the MCU exported
 ```
 
 Only two things are required: a configuration file named `flic_config.yaml`, and a `data/`
 folder containing your raw CSVs. The folder name is yours to choose — pyflic never reads
 meaning from it.
+
+For an optogenetic recording, copy the `Program.txt` the MCU wrote out into `data/` too.
+It is optional, but it tells pyflic each well's threshold, linkage and light decay, which
+the light QC needs to judge the light fully. See
+[Optogenetic experiments](concepts-optogenetics.md#programtxt).
 
 ## What pyflic adds
 
@@ -25,7 +31,7 @@ my_experiment/
   flic_config.yaml
   data/
   remove_chambers.csv     <-- optional; chamber exclusions you declare
-  qc/                     <-- quality-control output
+  qc/                     <-- quality-control output; qc/opto/ for optogenetic experiments
   analysis/               <-- summaries, CSV exports, plots, the experiment report
   .pyflic_cache/          <-- cached feeding summaries; safe to delete
 ```

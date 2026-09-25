@@ -377,3 +377,77 @@ def test_type_groups_carry_their_own_help(hub):
     for key, requires in AnalysisHubWindow._TYPE_GROUP_HELP:
         group = hub._type_groups(key)[requires]
         assert _help_refs(group) == [AnalysisHubWindow._TYPE_GROUP_HELP[(key, requires)]]
+
+
+def _beside(group):
+    """``(button, help)`` sharing the group's help row, else ``None``."""
+    from pyflic.help.button import HelpButton
+
+    helps = group.findChildren(HelpButton)
+    if len(helps) != 1:
+        return None
+    row = helps[0].parentWidget()
+    buttons = [w for w in row.findChildren(ActionButton) if w.parentWidget() is row]
+    return (buttons[0], helps[0]) if len(buttons) == 1 else None
+
+
+def test_type_group_help_sits_beside_the_first_button(hub):
+    """A help row of its own opened an empty band under each group's title;
+    the ``?`` shares the first button's row instead, at its right."""
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    for key, requires in AnalysisHubWindow._TYPE_GROUP_HELP:
+        group = hub._type_groups(key)[requires]
+        pair = _beside(group)
+        assert pair is not None, (key, requires)
+        button, _help = pair
+        ## In layout order, the first button not hidden on purpose.
+        from pyflic.base.ui.widgets import _hidden_by_hand
+
+        shown = [m for m in group._members if not _hidden_by_hand(m)]
+        assert button is shown[0], (key, requires, button.text())
+
+
+def test_the_optogenetics_help_follows_the_first_button_shown(hub):
+    qc = hub._type_qc_groups["optogenetics"]
+    _load_fake_of_type(hub, "ProgressiveRatio")          # not optogenetic
+    assert _beside(qc)[0].text() == "Light QC table"
+    hub.experiment.is_optogenetic = True
+    hub.refresh()
+    assert _beside(qc)[0].text() == "Opto light QC table"
+    _load_fake_of_type(hub, "ProgressiveRatio")
+    assert _beside(qc)[0].text() == "Light QC table"
+    ## Every button kept the visibility the refresh gave it.
+    assert _shown(qc) == _PR_QC
+
+
+def test_a_card_group_places_its_title_widget_without_a_row_of_its_own(app):
+    from PyQt6.QtWidgets import QLabel, QWidget
+
+    from pyflic.base.ui.widgets import CardGroup
+
+    noted = CardGroup("Noted", note="a note")
+    noted.add(ActionButton("first"))
+    help_ = QLabel("?")
+    noted.add_title_widget(help_)
+    ## With a note, the widget shares the note's row, as before.
+    assert noted._body.itemAt(0).layout() is not None
+    assert noted._title_member is None
+    plain = CardGroup("Plain")
+    first, second = ActionButton("first"), ActionButton("second")
+    plain.add(first)
+    plain.add(second)
+    plain.add_title_widget(QLabel("?"))
+    assert plain._title_member is first
+    assert isinstance(plain._body.itemAt(0).widget(), QWidget)
+    ## Hide the first member: the widget moves to the second, and the first
+    ## stays hidden where it was.
+    first.setVisible(False)
+    plain.reflow_title_widget()
+    assert plain._title_member is second
+    assert plain._body.itemAt(0).widget() is first and first.isHidden()
+    from pyflic.base.ui.widgets import _hidden_by_hand
+
+    assert _hidden_by_hand(first) and not _hidden_by_hand(second)
+    empty = CardGroup("Empty")
+    empty.add_title_widget(QLabel("?"))              # nothing to sit beside yet
+    assert empty._body.itemAt(0).layout() is not None

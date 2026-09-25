@@ -25,12 +25,14 @@ plateau is a fly that stopped, a step is a burst. A well whose curve never leave
 inactive and should be excluded.
 
 **Light explained by licks** (`plot_opto_light`) is drawn for an optogenetic experiment of
-any type, by basic analysis as well. One column per linkage group; the top row is its lit
-time per bin, grey-blue where a trigger-well lick or touch within the light's decay
-explains it and red where nothing does. The bottom row, when `data/Program.txt` allows it,
-is the time the emulated firmware trigger read the trigger wells above threshold with no
-lick or touch: a red top row over an orange bottom one is a drifting sensor. The strip
-carries the group's verdict. See [Optogenetic experiments](concepts-optogenetics.md).
+any type, by basic analysis as well. One row per linkage group. The left panel is its lit
+time per bin, stacked: grey-blue where a trigger-well lick or touch within the light's
+decay explains it, red where nothing does, purple where it was lit while every threshold
+was -1, and light grey where the light is not judged by licks (open loop, non-feeding
+activation). The right panel, when `data/Program.txt` allows it, is orange: the time the
+emulated firmware trigger read the trigger wells above threshold with no lick or touch.
+Red beside orange in the same bins is a drifting sensor. The strip carries the group's
+verdict. See [Optogenetic experiments](concepts-optogenetics.md).
 
 ## Summary plots
 

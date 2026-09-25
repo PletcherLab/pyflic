@@ -6,7 +6,9 @@ to choose them, how to read each figure, and what the statistics do and do
 not let you conclude.
 
 You do not need to read code to use it. For installing and starting pyflic,
-see [Getting Started](GETTING_STARTED.md). The in-app help topic
+see [Getting Started](GETTING_STARTED.md). For the quality-control checks
+every experiment gets, including the optogenetic light QC, see
+[Checking your data](qc-user-guide.md). The in-app help topic
 *Progressive Ratio experiments* (`pyflic help`) covers the same ground as a
 concise reference. The developer's view is in
 [progressive-ratio-implementation.md](progressive-ratio-implementation.md).
@@ -139,11 +141,18 @@ Every step is also a Script Editor action, so a Project Script or
 any setting.** Members analysed before a setting changed keep their old
 numbers until you do.
 
+**Check each member's data before its results.** Basic analysis does not
+write the per-DFM QC bundle (integrity, data breaks, crosstalk and the
+signal plots). **Hub → QC → QC reports** writes it, and **Open QC Viewer**
+shows it. [Checking your data](qc-user-guide.md) explains every check.
+
 ### What basic analysis does, in order
 
 1. **Training.** It finds each group's training end (section 5.1).
 2. **Quality control and exclusions.** It checks training and light for
    every group, and removes chambers that fail (sections 5.2 and 5.3).
+   It also runs the optogenetic light QC and writes it into `qc/opto/`
+   (section 5.2).
 3. **Feeding summaries.** It computes the standard two-well metrics (licks,
    events, durations, preference index) per chamber, for the whole
    recording and separately for the Training and Test phases.
@@ -192,6 +201,9 @@ them for the whole Project, never for one member.
 | `require_training_complete` | true | removes **both** chambers of a group whose paired fly never finished training |
 | `exclude_failed_pr_groups` | true | removes **both** chambers of a group that fails the light QC |
 
+The optogenetic light QC has its own switch, `exclude_failed_opto_chambers`,
+in the optogenetic table below. It is off by default.
+
 ### Light QC thresholds
 
 | Setting | Default | Meaning |
@@ -216,6 +228,11 @@ section 5.2. Its settings, with their defaults:
 | `opto_unexplained_min_sec` | 30 | seconds of unexplained light needed before either is judged |
 | `opto_default_decay_ms` | 1000 | the light decay assumed without `Program.txt` |
 | `opto_decay_tolerance_samples` | 2 | slack, in samples, around the decay |
+| `opto_unlit_feeding_fraction` | 0.50 | in a closed-loop interval, this share of feeding bouts that never lit the group is a warning |
+| `opto_open_loop_min_lit_fraction` | 0.95 | an open-loop interval lit for less than this share of its time is a warning |
+
+[Checking your data](qc-user-guide.md), section 6, describes the checks
+these settings drive.
 
 ### Breaking point
 
@@ -338,7 +355,12 @@ lick-free events, and fails the general one, because 93% of those four
 hours had no lick. A group the general check fails is flagged, not removed,
 unless you switch on `exclude_failed_opto_chambers`. Its results are in
 `qc/opto/`, an *Optogenetic light QC* section of `summary.txt` and of the
-report, and the **Light explained by licks (QC)** figure.
+report, and the **Light explained by licks (QC)** figure. The QC Viewer's
+**Opto Light QC** tab shows the same verdicts group by group, says why each
+group got its own, recomputes them when you change a detection parameter,
+and can tick a failed group's chambers for exclusion. Every check it makes,
+and how to read its figure, is in [Checking your data](qc-user-guide.md),
+section 6.
 
 ### 5.3 Exclusions
 
@@ -349,6 +371,11 @@ Chambers leave the analysis for three kinds of reason:
   implausible event count. Only that chamber is removed.
 - **A group-level failure:** training never completed, or the light QC
   failed. Both chambers are removed.
+
+A linkage group that fails the optogenetic light QC is flagged, not
+removed, unless you switch on `exclude_failed_opto_chambers`. Here a
+linkage group is a chamber group, so its failure would remove both
+chambers too.
 
 Every automatic removal and its reason is written to `removed_chambers.csv`
 and listed in `summary.txt`. The Project gathers them all into
@@ -518,6 +545,21 @@ trace went flat. That pattern is self-triggering.
 Every QC figure's panel title gives the group's treatment and its light QC
 result: *light QC ok*, *warning: …*, or *EXCLUDED: …*.
 
+**Light explained by licks** (`qc/opto/opto_light_dfm<id>.png`). The
+optogenetic light QC's figure: one row per group, with its wells and its
+optogenetic verdict in the strip. The left panel is the group's lit time
+per bin, 10 minutes when basic analysis draws it: grey-blue where a lick or
+touch at the paired sucrose well explains it, and red where nothing does.
+The right panel, drawn when `Program.txt` is in `data/`, is orange where
+the firmware read the paired sucrose well as touched while pyflic saw
+nothing.
+
+- Red beside orange in the same bins is a drifting well: the light
+  followed the sensor.
+- Red with no orange is light the firmware had no reason to switch on.
+- [Checking your data](qc-user-guide.md), section 6.7, covers the other
+  colours.
+
 ---
 
 ## 7. Statistics and inference
@@ -632,6 +674,6 @@ the same device, or in the same recording, as independent.
 | The Project Report says a member has no breaking point table | that member was analysed with an older pyflic | re-run its basic analysis |
 | Loading fails on `paired_chambers` | missing, two chambers from one group, or a group left out | name exactly one chamber from each of 1–2, 3–4, 5–6 |
 | Loading fails on treatments | the two chambers of a group have different treatments | give both chambers the same treatment |
-| A linkage group failed for **unexplained light** | most of its lit time had no lick or touch behind it | open *Light explained by licks*: orange under the red is a drifting well, no orange is a light the firmware had no reason to switch on |
+| A linkage group failed for **unexplained light** | most of its lit time had no lick or touch behind it | open *Light explained by licks*: orange beside the red is a drifting well, no orange is a light the firmware had no reason to switch on |
 | "holds more than one Program.txt" | two program files in `data/` | keep only the one the MCU exported for this recording |
 | `summary.txt` says `paired_chambers` disagrees with `Program.txt` | the config names a different paired chamber than the program's trigger well | check which chamber the program lit for; fix the config or the program |

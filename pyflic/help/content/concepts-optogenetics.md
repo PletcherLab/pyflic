@@ -178,14 +178,18 @@ Basic analysis and **QC reports** write, into the member's `qc/opto/`:
 
 `summary.txt` gains an *Optogenetic light QC* section, and the experiment report a
 subsection of Quality control with the program table, the verdicts and the figure. The
-figure, **Light explained by licks (QC)**, shows each group's lit time per bin, explained and
-unexplained, and below it the emulated trigger's contact with no lick. A Project's Combined
+figure, **Light explained by licks (QC)**, gives each group a row: its lit time per bin,
+explained and unexplained, and beside it the emulated trigger's contact with no lick. A
+Project's Combined
 Analysis stacks every member's verdicts into `<project>_LightQC.csv` with `Source` = `Opto`.
 
 The Hub's QC panel has an **Optogenetics** group whenever the loaded member is
 optogenetic: **Opto light QC table** and **Light explained by licks (QC)**, with the
 Progressive Ratio light checks beside them for that type. The Script Editor's actions are
-`opto_light_qc` and `plot_opto_light`.
+`opto_light_qc` and `plot_opto_light`. The [QC Viewer](app-qc-viewer.md#the-opto-light-qc-tab)
+has an **Opto Light QC** tab: the verdicts, why each group got its own, the figure per
+group, a Params recompute that updates them live, and buttons that tick a failed group's
+chambers for exclusion.
 
 ## Progressive Ratio
 

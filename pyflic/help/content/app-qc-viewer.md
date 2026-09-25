@@ -26,6 +26,7 @@ load.
 | **Load** | Load the experiment and choose the time range |
 | **Feeding Summary** | The per-chamber summary table |
 | **DFM *n*** | One tab per device, with per-well traces |
+| **Opto Light QC** | Optogenetic experiments only: was the light where the licks were? |
 | **Params** | Detection parameters, with live recompute |
 
 Each **DFM** tab has its own sub-tabs:
@@ -43,19 +44,45 @@ Hub's QC panel rather than here; see
 [Light QC](concepts-progressive-ratio.md#light-qc). The Feeding Summary tab shows its
 `Group`, `Role` and light QC columns like any other.
 
+## The Opto Light QC tab
+
+Shown for an optogenetic experiment of any type: one row per linkage group, with its lit
+time, the share of it no trigger-well lick or touch explains, the minute that began, the
+time the emulated firmware trigger saw contact with no lick, and the verdict, coloured by
+tone. The tab opens on the worst group. Selecting a group fills the panes below it:
+
+- **Why** — the verdict, a line per flag with its numbers and likely cause, and the notes
+  about its DFM and its program.
+- **Intervals**, **Light events** and **Program** — the group's rows of the tables in
+  `qc/opto/`, and its DFM's program as read.
+- The **Light explained by licks** figure — the selected group's panels, or the whole DFM
+  with **Selected group only** unticked, at the bin size you choose.
+
+The tab is computed from the loaded experiment, not read from `qc/opto/`, so a **Params**
+recompute updates its verdicts at once: a threshold that loses real licks makes healthy
+light look unexplained, which is worth seeing before you commit to it.
+
+**Mark Selected Group Excluded** and **Mark Failed Groups Excluded** tick the chambers of
+those groups on the Feeding Summary and DFM tabs. They save nothing: a failed light does not
+invalidate the feeding record, so whether to exclude is yours to decide, and **Save
+Exclusions…** records the decision. See
+[Optogenetic experiments](concepts-optogenetics.md).
+
 ## What to look for
 
 **Does the baseline sit where it should?** It should track the background and ignore
 feeding. A baseline that visibly rises during long bouts means the running median is being
 pulled up by the feeding itself — see [the baseline](concepts-signal.md).
 
-**Do detected events match the visible bouts?** Events marked where the trace is flat means
-thresholds are too low. Obvious feeding left unmarked means they are too high.
+**Does detection match the visible bouts?** The plots do not mark individual events, so set
+a well's **Baselined** trace, with its threshold lines, beside its **Cumulative Licks**
+curve, which climbs only where licks were detected. Climbs where the trace is flat mean the
+thresholds are too low. Clear deflections with no climb mean they are too high.
 
-**Are bouts being split or merged?** One visible meal broken into many events means the
-link gap is too small. Long events spanning obvious gaps means it is too large. This is the
-single most common cause of surprising duration and event-count results — see
-[event linking](concepts-licks-events.md#event-linking-the-link-gap).
+**Are bouts being split or merged?** The plots cannot show this, but the Feeding Summary
+can: many short events per chamber suggest the link gap is too small, and a few very long
+ones that it is too large. This is the single most common cause of surprising duration and
+event-count results — see [event linking](concepts-licks-events.md#event-linking-the-link-gap).
 
 **Are some wells dead?** A well with no signal at all is an empty position or a hardware
 fault. Exclude it rather than letting a zero into your averages.

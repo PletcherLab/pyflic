@@ -111,7 +111,10 @@ Light*, *Emulated Trigger*.
   `summary.txt` and the experiment report gain a section for every type; the
   Project stacks each Member's verdicts into `<project>_LightQC.csv` beside
   the PR ones, marked by a `Source` column; the Hub's QC panel groups both
-  checks under *Optogenetics*.
+  checks under *Optogenetics*; the QC Viewer has an *Opto Light QC* tab,
+  computed from the loaded experiment so that a Params recompute moves its
+  verdicts, whose buttons tick a failed group's chambers for exclusion and
+  save nothing.
 
 ## Considered options
 

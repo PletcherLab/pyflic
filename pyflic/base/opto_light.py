@@ -446,6 +446,31 @@ class OptoLightQC:
                     lines.extend(f"    · {note}" for note in str(r["Notes"]).split("; "))
         return lines
 
+    def group_lines(self, dfm_id: int, group: int) -> list[str]:
+        """What the light QC says about one Linkage Group: its verdict, a line
+        per flag, its notes, and the notes and flags of its DFM — for the QC
+        Viewer's detail pane."""
+        table = self.qc_table()
+        rows = table[(table["DFM"] == int(dfm_id)) & (table["Group"] == int(group))]
+        if rows.empty:
+            return []
+        r = rows.iloc[0]
+        result = self.result(dfm_id)
+        verdict = verdict_text(r["Flags"])
+        if r["Excluded"]:
+            verdict += " (excluded by exclude_failed_opto_chambers)"
+        out = [f"Verdict: {verdict}"]
+        own = [f for f in _split_flags(r["Flags"]) if f not in result.flags]
+        out += [f"- {self._reason(flag, r)}" for flag in own]
+        if r["Notes"]:
+            out += [f"· {note}" for note in str(r["Notes"]).split("; ")]
+        if result.flags or result.notes:
+            head = f"DFM {int(dfm_id)}"
+            if result.flags:
+                head += f": {verdict_text(', '.join(result.flags))}"
+            out += ["", head, *[f"· {note}" for note in result.notes]]
+        return out
+
     @staticmethod
     def _reason(flag: str, r) -> str:
         if flag in _UNEXPLAINED_FLAGS:
@@ -563,7 +588,8 @@ class OptoLightQC:
     # ------------------------------------------------------------------
 
     def plot_dfm(self, dfm_id: int, *, binsize_min: float = 10.0,
-                 base_font_size: float = 10.0, figsize: tuple[float, float] | None = None):
+                 base_font_size: float = 10.0, figsize: tuple[float, float] | None = None,
+                 groups=None):
         """Light explained over time (QC) for one DFM, one row per Linkage
         Group that was ever lit or touched.
 
@@ -574,7 +600,9 @@ class OptoLightQC:
         Emulated Trigger, is the time the firmware would have read the trigger
         wells above threshold while pyflic saw no lick or touch — the
         drifting-baseline signature.  A group never lit or touched is left
-        out unless it was flagged.
+        out unless it was flagged.  *groups* limits the figure to those
+        Linkage Groups, drawn whatever they hold (the QC Viewer shows one at a
+        time).
         """
         import plotnine as p9
 
@@ -586,11 +614,15 @@ class OptoLightQC:
         binsize = max(float(binsize_min), 1.0)
         emulated = any(pd.notna(g["ContactSec"]) for g in result.groups)
         frames, order = [], []
+        wanted = None if groups is None else {int(g) for g in groups}
         for group in result.groups:
             tl = result.timelines.get(group["Group"])
             if tl is None or tl.empty:
                 continue
-            if not self._drawn(group, tl):
+            if wanted is not None:
+                if int(group["Group"]) not in wanted:
+                    continue
+            elif not self._drawn(group, tl):
                 continue
             head = (f"Group {group['Group']} ({group['Wells']}) — "
                     f"{verdict_text(group['Flags'])}")
@@ -616,6 +648,9 @@ class OptoLightQC:
                                             "Kind": "firmware contact, no lick"}))
         if not frames:
             return p9.ggplot() + p9.labs(title=f"DFM {dfm_id} — no light to show")
+        subject = f"DFM {dfm_id}"
+        if wanted is not None and len(wanted) == 1:
+            subject += f" group {next(iter(wanted))}"
         data = pd.concat(frames, ignore_index=True)
         data["Panel"] = pd.Categorical(data["Panel"], categories=order, ordered=True)
         kinds = ["explained", "unexplained", "lit while off", "not judged by licks",
@@ -635,7 +670,7 @@ class OptoLightQC:
              + p9.expand_limits(y=[0, 1])
              + p9.facet_wrap("~ Panel", ncol=ncol, scales="free_y")
              + p9.scale_fill_manual(values=colors, drop=False)
-             + p9.labs(title=f"DFM {dfm_id} — light explained by trigger-well licks "
+             + p9.labs(title=f"{subject} — light explained by trigger-well licks "
                              f"({binsize:g}-min bins)",
                        x="Minutes", y="Seconds per bin", fill="")
              + p9.theme_bw(base_size=base_font_size)

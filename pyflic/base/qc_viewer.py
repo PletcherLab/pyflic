@@ -25,6 +25,12 @@ Workflow
    sub-tabs (Integrity, Sim. Feeding, Bleeding, Raw Signal …).  The right
    side shows a narrow "Exclude Wells" panel with one checkbox per well (1-12).
 
+4. **Opto Light QC tab** — for an optogenetic experiment only: the
+   optogenetic light QC per Linkage Group, the reasons behind each verdict,
+   and the *Light explained by licks* figure, computed from the loaded
+   experiment (so a Params recompute updates it).  Its buttons tick the
+   chambers of failed groups for exclusion; they save nothing.
+
 Exclusion checkboxes are **bidirectionally synchronised**: toggling a chamber
 in the Feeding Summary tab updates the corresponding well checkbox in the DFM
 tab and vice versa.
@@ -56,6 +62,7 @@ from matplotlib.figure import Figure
 
 from PyQt6 import QtCore, QtWidgets
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QToolButton
 
 _Checked   = Qt.CheckState.Checked
@@ -69,7 +76,7 @@ import yaml
 
 from .ui import (
     ActionButton, Card, Category, OutputLog, TopBar,
-    apply_theme, icon, resolved_mode,
+    apply_theme, category_color, icon, resolved_mode,
 )
 from .gui_env import sanitize_input_method_environment
 from .ui import settings as ui_settings
@@ -958,6 +965,342 @@ class DfmTab(QtWidgets.QWidget):
 # Main window
 # ───────────────────────────────────────────────────────────────────────────
 
+# ───────────────────────────────────────────────────────────────────────────
+# Optogenetic light QC tab
+# ───────────────────────────────────────────────────────────────────────────
+
+class OptoTab(QtWidgets.QWidget):
+    """
+    The optogenetic light QC of the loaded experiment — was the light where
+    the licks were? — one row per Linkage Group (``exp.opto.qc_table()``).
+
+    Selecting a group shows why it got its verdict, its scheduled intervals,
+    its light events and the program behind it, and draws its DFM's
+    *Light explained by licks* figure.  Everything is computed from
+    ``exp.opto`` rather than read from ``qc/opto/``, so :meth:`refresh` after a
+    Params recompute shows the verdicts under the new parameters.
+
+    Excluding stays the user's call, as the light QC leaves it: the two
+    buttons only tick chambers in the Feeding Summary and DFM tabs, through
+    ``exclude_requested([(dfm_id, chamber), …])``, and **Save Exclusions…**
+    records them.
+    """
+
+    exclude_requested = pyqtSignal(list)   # [(dfm_id, chamber), ...]
+
+    #: (header, qc_table column) for the verdict table.
+    _COLUMNS: tuple[tuple[str, str], ...] = (
+        ("DFM", "DFM"), ("Group", "Group"), ("Wells", "Wells"),
+        ("Chambers", "Chambers"), ("Treatment", "Treatment"),
+        ("Paradigm", "Paradigm"), ("Lit (s)", "LitSec"),
+        ("Unexplained", "UnexplainedFraction"), ("From (min)", "UnexplainedOnsetMin"),
+        ("Contact, no lick (min)", "ContactWithoutActivitySec"),
+        ("Verdict", "Flags"), ("Likely cause", "LikelyCause"),
+    )
+
+    def __init__(self, exp, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._exp = exp
+        self._rows: list[dict] = []
+        self._figure_key: tuple | None = None
+        self._build()
+        self.refresh()
+
+    # ------------------------------------------------------------------
+    # Layout
+    # ------------------------------------------------------------------
+
+    def _build(self) -> None:
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
+
+        head = QtWidgets.QHBoxLayout()
+        self._program_label = QtWidgets.QLabel("")
+        self._program_label.setWordWrap(True)
+        head.addWidget(self._program_label, 1)
+        self._btn_exclude_failed = ActionButton(
+            "Mark Failed Groups Excluded", Category.QC, icon_name="stop")
+        self._btn_exclude_failed.setToolTip(
+            "Tick every chamber of every linkage group the opto light QC failed, in "
+            "the Feeding Summary and DFM tabs.  Nothing is saved until you click "
+            "Save Exclusions… on the Feeding Summary tab.")
+        self._btn_exclude_failed.clicked.connect(self._exclude_failed)
+        self._btn_exclude_selected = ActionButton(
+            "Mark Selected Group Excluded", Category.QC, icon_name="stop")
+        self._btn_exclude_selected.setToolTip(
+            "Tick the chambers of the selected linkage group for exclusion.")
+        self._btn_exclude_selected.clicked.connect(self._exclude_selected)
+        head.addWidget(self._btn_exclude_selected)
+        head.addWidget(self._btn_exclude_failed)
+        root.addLayout(head)
+
+        splitter = QtWidgets.QSplitter(Qt.Orientation.Vertical)
+
+        self._table = QtWidgets.QTableWidget()
+        self._table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setVisible(False)
+        self._table.itemSelectionChanged.connect(self._on_selection)
+        splitter.addWidget(self._table)
+
+        lower = QtWidgets.QSplitter(Qt.Orientation.Horizontal)
+        self._details = QtWidgets.QTabWidget()
+        self._why = QtWidgets.QTextEdit()
+        self._why.setReadOnly(True)
+        self._details.addTab(self._why, "Why")
+        self._hosts: dict[str, QtWidgets.QVBoxLayout] = {}
+        for label in ("Intervals", "Light events", "Program"):
+            host = QtWidgets.QWidget()
+            layout = QtWidgets.QVBoxLayout(host)
+            layout.setContentsMargins(0, 0, 0, 0)
+            self._hosts[label] = layout
+            self._details.addTab(host, label)
+        lower.addWidget(self._details)
+
+        figure_panel = QtWidgets.QWidget()
+        figure_layout = QtWidgets.QVBoxLayout(figure_panel)
+        figure_layout.setContentsMargins(0, 0, 0, 0)
+        controls = QtWidgets.QHBoxLayout()
+        controls.addWidget(QtWidgets.QLabel("Figure for DFM:"))
+        self._dfm_combo = QtWidgets.QComboBox()
+        self._dfm_combo.currentIndexChanged.connect(self._render_figure)
+        controls.addWidget(self._dfm_combo)
+        controls.addSpacing(12)
+        controls.addWidget(QtWidgets.QLabel("Bin (min):"))
+        self._bin_spin = QtWidgets.QDoubleSpinBox()
+        self._bin_spin.setRange(1.0, 240.0)
+        self._bin_spin.setSingleStep(5.0)
+        self._bin_spin.setDecimals(0)
+        self._bin_spin.setValue(10.0)
+        self._bin_spin.setKeyboardTracking(False)
+        self._bin_spin.valueChanged.connect(self._render_figure)
+        controls.addWidget(self._bin_spin)
+        controls.addSpacing(12)
+        ## One group's two panels read at a glance; the whole DFM needs the
+        ## zoom, so the selected group is the default.
+        self._only_selected = QtWidgets.QCheckBox("Selected group only")
+        self._only_selected.setChecked(True)
+        self._only_selected.toggled.connect(self._render_figure)
+        controls.addWidget(self._only_selected)
+        controls.addStretch(1)
+        figure_layout.addLayout(controls)
+        self._figure_host = QtWidgets.QVBoxLayout()
+        figure_layout.addLayout(self._figure_host, 1)
+        lower.addWidget(figure_panel)
+        lower.setSizes([520, 760])
+
+        splitter.addWidget(lower)
+        splitter.setSizes([260, 560])
+        root.addWidget(splitter, 1)
+
+    # ------------------------------------------------------------------
+    # Content
+    # ------------------------------------------------------------------
+
+    def refresh(self) -> None:
+        """Recompute the verdicts from the experiment as it now stands."""
+        from .opto_light import verdict_text
+
+        opto = self._exp.opto
+        try:
+            table = opto.qc_table()
+            chambers = {(int(d), g["Group"]): tuple(g["_chambers"])
+                        for d in opto.dfm_ids() for g in opto.result(d).groups}
+        except Exception as exc:  # noqa: BLE001 - a view must not take the window down
+            self._program_label.setText(f"The opto light QC could not be computed: {exc}")
+            return
+        self._rows = [dict(r, _chambers=chambers.get((int(r["DFM"]), r["Group"]), ()))
+                      for r in table.to_dict("records")]
+
+        line = opto.program_line()
+        notes = opto.experiment_notes()
+        self._program_label.setText(
+            f"<b>Program:</b> {line}" + ("".join(f"<br>· {n}" for n in notes[:4])
+                                         if notes else ""))
+        self._program_label.setToolTip("\n".join(notes))
+
+        self._table.blockSignals(True)
+        self._table.clear()
+        self._table.setColumnCount(len(self._COLUMNS))
+        self._table.setHorizontalHeaderLabels([h for h, _c in self._COLUMNS])
+        self._table.setRowCount(len(self._rows))
+        tones = {"failed": category_color(Category.QC),
+                 "warning": category_color(Category.PLOTS),
+                 "ok": category_color(Category.ANALYZE)}
+        for r, row in enumerate(self._rows):
+            for c, (_header, column) in enumerate(self._COLUMNS):
+                value = row.get(column)
+                if column == "Flags":
+                    text = verdict_text(value)
+                    if row.get("Excluded"):
+                        text = "excluded — " + text
+                elif column in ("UnexplainedFraction",):
+                    text = "—" if pd.isna(value) else f"{100 * float(value):.0f}%"
+                elif column == "ContactWithoutActivitySec":
+                    text = "—" if pd.isna(value) else f"{float(value) / 60.0:.0f}"
+                elif column in ("LitSec", "UnexplainedOnsetMin"):
+                    text = "—" if pd.isna(value) else f"{float(value):.0f}"
+                else:
+                    text = "" if value is None or (isinstance(value, float) and pd.isna(value)) \
+                        else str(value)
+                item = QtWidgets.QTableWidgetItem(text)
+                if column == "Flags":
+                    item.setForeground(QColor(tones.get(row.get("Verdict"), tones["ok"])))
+                    item.setToolTip(str(row.get("Notes") or ""))
+                elif column == "LikelyCause" and text:
+                    item.setToolTip(text)
+                self._table.setItem(r, c, item)
+        self._table.resizeColumnsToContents()
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.blockSignals(False)
+
+        current = self._dfm_combo.currentData()
+        self._dfm_combo.blockSignals(True)
+        self._dfm_combo.clear()
+        for dfm_id in opto.dfm_ids():
+            self._dfm_combo.addItem(f"DFM {dfm_id}", int(dfm_id))
+        index = self._dfm_combo.findData(current)
+        self._dfm_combo.setCurrentIndex(max(index, 0))
+        self._dfm_combo.blockSignals(False)
+
+        self._btn_exclude_failed.setEnabled(
+            any(row.get("Verdict") == "failed" and row["_chambers"] for row in self._rows))
+        self._figure_key = None
+        ## Open on the worst group: that is the one to look at first.
+        order = sorted(range(len(self._rows)),
+                       key=lambda i: {"failed": 0, "warning": 1}.get(
+                           self._rows[i].get("Verdict"), 2))
+        if order:
+            self._table.selectRow(order[0])
+        else:
+            self._on_selection()
+        self._render_figure()
+
+    def _selected(self) -> dict | None:
+        rows = self._table.selectionModel().selectedRows() if self._table.selectionModel() else []
+        if not rows:
+            return None
+        index = rows[0].row()
+        return self._rows[index] if 0 <= index < len(self._rows) else None
+
+    def _on_selection(self) -> None:
+        row = self._selected()
+        self._btn_exclude_selected.setEnabled(bool(row and row["_chambers"]))
+        for layout in self._hosts.values():
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+        if row is None:
+            self._why.setPlainText("Select a linkage group.")
+            return
+        opto = self._exp.opto
+        dfm_id, group = int(row["DFM"]), row["Group"]
+        lines = [f"DFM {dfm_id} linkage group {group} — {row['Wells']}; "
+                 f"chamber(s) {row['Chambers']}"
+                 + (f"; {row['Treatment']}" if row.get("Treatment") else ""), ""]
+        lines += opto.group_lines(dfm_id, group)
+        notes = opto.experiment_notes()
+        if notes:
+            lines += ["", "Experiment", *[f"· {n}" for n in notes]]
+        self._why.setPlainText("\n".join(lines))
+
+        def rows_of(frame: pd.DataFrame, *, by_group: bool = True) -> pd.DataFrame:
+            keep = frame["DFM"] == dfm_id
+            if by_group:
+                keep &= frame["Group"] == group
+            return frame[keep].drop(columns=[c for c in ("DFM", "Group") if c in frame])
+
+        for label, frame, by_group in (
+            ("Intervals", opto.interval_table(), True),
+            ("Light events", opto.events_table(), True),
+            ("Program", opto.program_table(), False),
+        ):
+            shown = rows_of(frame, by_group=by_group)
+            layout = self._hosts[label]
+            if shown.empty:
+                layout.addWidget(QtWidgets.QLabel(f"No {label.lower()} for this group."))
+            else:
+                layout.addWidget(_DfTableWidget(shown.reset_index(drop=True)))
+
+        index = self._dfm_combo.findData(dfm_id)
+        if index >= 0 and index != self._dfm_combo.currentIndex():
+            self._dfm_combo.setCurrentIndex(index)       # draws the figure
+        else:
+            self._render_figure()
+
+    def _render_figure(self, *_args) -> None:
+        """Draw the figure — the selected group's, or its whole DFM's — once per
+        DFM, group, bin size and QC run."""
+        dfm_id = self._dfm_combo.currentData()
+        if dfm_id is None:
+            return
+        groups = None
+        if self._only_selected.isChecked():
+            row = self._selected()
+            if row is not None and int(row["DFM"]) == int(dfm_id):
+                groups = [row["Group"]]
+        opto = self._exp.opto
+        try:
+            result = opto.result(int(dfm_id))
+        except Exception as exc:  # noqa: BLE001
+            self._show_figure(QtWidgets.QLabel(f"Could not compute DFM {dfm_id}: {exc}"))
+            return
+        key = (int(dfm_id), None if groups is None else tuple(groups),
+               float(self._bin_spin.value()), id(result))
+        if key == self._figure_key:
+            return
+        self._figure_key = key
+        try:
+            import io
+            import matplotlib.pyplot as plt
+            from PyQt6.QtGui import QPixmap
+
+            from .ui import ZoomableImageView
+
+            figure = opto.plot_dfm(int(dfm_id), binsize_min=float(self._bin_spin.value()),
+                                   base_font_size=9.0, groups=groups).draw()
+            buf = io.BytesIO()
+            try:
+                figure.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+            finally:
+                plt.close(figure)
+            pixmap = QPixmap()
+            pixmap.loadFromData(buf.getvalue())
+            widget: QtWidgets.QWidget = ZoomableImageView(pixmap)
+        except Exception as exc:  # noqa: BLE001
+            widget = QtWidgets.QLabel(f"Could not draw the figure: {exc}")
+        self._show_figure(widget)
+
+    def _show_figure(self, widget: QtWidgets.QWidget) -> None:
+        while self._figure_host.count():
+            item = self._figure_host.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._figure_host.addWidget(widget)
+
+    # ------------------------------------------------------------------
+    # Exclusions (ticked, never saved, here)
+    # ------------------------------------------------------------------
+
+    def _exclude_failed(self) -> None:
+        pairs = sorted({(int(row["DFM"]), int(c)) for row in self._rows
+                        if row.get("Verdict") == "failed" for c in row["_chambers"]})
+        if pairs:
+            self.exclude_requested.emit(pairs)
+
+    def _exclude_selected(self) -> None:
+        row = self._selected()
+        if row is not None and row["_chambers"]:
+            self.exclude_requested.emit(sorted((int(row["DFM"]), int(c))
+                                               for c in row["_chambers"]))
+
+
 def _param_help_button(key: str, parent: QtWidgets.QWidget | None = None):
     """A ``?`` opening the parameter reference at *key*, or ``None``."""
     try:
@@ -1092,7 +1435,8 @@ class MainWindow(QtWidgets.QMainWindow):
     """
     Top-level window.
 
-    Tab order after loading: Load | Feeding Summary | DFM 1 | DFM 2 | …
+    Tab order after loading: Load | Feeding Summary | DFM 1 | DFM 2 | … |
+    Opto Light QC (optogenetic experiments only) | Params
 
     Exclusion checkboxes in the Feeding Summary tab and DFM tabs are kept in
     sync via the ``_syncing`` flag and two cross-wired signal handlers.
@@ -1112,6 +1456,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dfm_chamber_sizes: dict[int, int] = {}  # dfm_id → chamber_size
         self._feeding_tab: FeedingSummaryTab | None = None
         self._params_tab: ParamsTab | None = None
+        self._opto_tab: OptoTab | None = None
         self._active_subtab_idx: int = 0
 
         central = QtWidgets.QWidget()
@@ -1181,6 +1526,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dfm_chamber_sizes.clear()
         self._feeding_tab = None
         self._params_tab = None
+        self._opto_tab = None
 
         # Cache chamber_size per DFM
         for dfm_id, dfm in exp.dfms.items():
@@ -1227,6 +1573,19 @@ class MainWindow(QtWidgets.QMainWindow):
             tab._tabs.currentChanged.connect(self._on_subtab_changed)
             self._dfm_tab_widgets[dfm_id] = tab
             self._tabs.addTab(tab, icon("qc", category=Category.QC), f"DFM {dfm_id}")
+
+        # Opto Light QC tab — only for an optogenetic experiment.  ``is True``
+        # rather than truthiness: a stand-in experiment (a mock) answers every
+        # attribute with something truthy.
+        try:
+            optogenetic = getattr(exp, "is_optogenetic", False) is True
+        except Exception:  # noqa: BLE001 - no opto layer, no tab
+            optogenetic = False
+        if optogenetic:
+            self._opto_tab = OptoTab(exp)
+            self._opto_tab.exclude_requested.connect(self._on_opto_exclude)
+            self._tabs.addTab(self._opto_tab, icon("qc", category=Category.QC),
+                              "Opto Light QC")
 
         # Params tab (live recompute)
         self._params_tab = ParamsTab()
@@ -1300,9 +1659,14 @@ class MainWindow(QtWidgets.QMainWindow):
         excluded_by_dfm = self._read_excluded_from_file()
         if self._feeding_tab is not None:
             self._feeding_tab.populate(fs, excluded_by_dfm=excluded_by_dfm)
+        ## The opto light QC is computed from the licks, so it moves with them.
+        if self._opto_tab is not None:
+            self._opto_tab.refresh()
         self.statusBar().showMessage(
-            "Recomputed feeding/tasting with new parameters.  QC plots reflect "
-            "original disk-cached images; re-run write_qc_reports to refresh them."
+            "Recomputed feeding/tasting with new parameters"
+            + (" and the opto light QC" if self._opto_tab is not None else "")
+            + ".  QC plots reflect original disk-cached images; re-run "
+              "write_qc_reports to refresh them."
         )
 
     # ------------------------------------------------------------------
@@ -1356,6 +1720,27 @@ class MainWindow(QtWidgets.QMainWindow):
                         tab.set_well_excluded(w, excluded)
         finally:
             self._syncing = False
+
+    def _on_opto_exclude(self, pairs: list) -> None:
+        """Tick the ``(dfm, chamber)`` pairs the Opto Light QC tab names, in
+        the Feeding Summary and DFM tabs; nothing is saved here."""
+        ticked = 0
+        self._syncing = True
+        try:
+            for dfm_id, chamber in pairs:
+                dfm_id, chamber = int(dfm_id), int(chamber)
+                if self._feeding_tab is not None:
+                    self._feeding_tab.set_chamber_excluded(dfm_id, chamber, True)
+                tab = self._dfm_tab_widgets.get(dfm_id)
+                if tab is not None:
+                    for well in self._wells_for_chamber(dfm_id, chamber):
+                        tab.set_well_excluded(well, True)
+                ticked += 1
+        finally:
+            self._syncing = False
+        self.statusBar().showMessage(
+            f"Opto light QC: {ticked} chamber(s) marked excluded.  Click 'Save "
+            f"Exclusions…' on the Feeding Summary tab to persist.")
 
     # ------------------------------------------------------------------
     # Auto filter
@@ -1593,6 +1978,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._help_ref = "app-qc-viewer#the-params-tab"
         elif label == "Feeding Summary":
             self._help_ref = "concepts-metrics"
+        elif label == "Opto Light QC":
+            self._help_ref = "concepts-optogenetics"
         else:
             self._help_ref = "app-qc-viewer"
 

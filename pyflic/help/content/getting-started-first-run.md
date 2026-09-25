@@ -38,25 +38,35 @@ removal once, then writes the standard outputs into the member's folder:
 
 An Experiment Type adds its own — a Progressive Ratio experiment writes its difference
 table, light QC, breaking point and figures too
-([Progressive Ratio experiments](concepts-progressive-ratio.md#outputs)).
+([Progressive Ratio experiments](concepts-progressive-ratio.md#outputs)). An optogenetic
+experiment of any type also gets the optogenetic light QC, in `qc/opto/`: was the light
+where the licks were? See [Optogenetic experiments](concepts-optogenetics.md).
 
 **PDF report** on the same panel writes `analysis/experiment_report.pdf`: quality control,
 the type's results with statistics, and the parameters used. See [Reports](reports.md).
 
 ## Look at the QC output before you believe anything
 
-This is the step that is easiest to skip and most expensive to skip. Basic analysis does
-not write QC; open **QC** and click **QC reports** to write the per-DFM integrity checks and
-signal plots into `qc/`, then **Open QC Viewer**.
+This is the step that is easiest to skip and most expensive to skip. Basic analysis skips
+the per-DFM QC, which is the slow part: open **QC** and click **QC reports** to write the
+integrity checks, the two-well crosstalk tables and the signal plots into `qc/`, then
+**Open QC Viewer**.
 
-The viewer shows you the raw and baselined signal per well, with detected events marked.
-What you are checking is whether the events pyflic found are the events *you* would have
-called by eye. If detection looks too eager or too conservative, that is a parameter
+The light QC is the exception. For an optogenetic experiment, basic analysis writes it
+every time, and the QC panel's **Optogenetics** group and the viewer's **Opto Light QC**
+tab show its verdicts. A group whose light had no licks behind it is flagged, not
+excluded; deciding is yours.
+
+The viewer shows you the raw and baselined signal per well, with the detection thresholds
+drawn on the baselined trace, and each well's cumulative licks, which climb only where
+pyflic detected licks. What you are checking is whether the licks pyflic found are the
+ones *you* would have called by eye. If detection looks too eager or too conservative, that is a parameter
 question, not a data question — see [How feeding is detected](concepts-licks-events.md)
 and [Parameter reference](reference-parameters.md).
 
 The QC viewer can recompute with different parameters live, so you can try a value before
-committing it to your configuration file. See [QC Viewer](app-qc-viewer.md).
+committing it to your configuration file. See [QC Viewer](app-qc-viewer.md), and the
+Guides list's *Checking your data* for every check in turn.
 
 ## From here
 

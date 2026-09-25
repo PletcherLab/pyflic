@@ -3106,6 +3106,8 @@ class AnalysisHubWindow(QMainWindow):
                 button.setVisible(optogenetic)
             for button in getattr(self, "_pr_qc_buttons", []):
                 button.setVisible(is_pr)
+            ## Its help button sits beside the first button still shown.
+            opto_group.reflow_title_widget()
         for button in getattr(self, "_two_well_plot_buttons", []):
             button.setVisible(layout != "single_well")
 

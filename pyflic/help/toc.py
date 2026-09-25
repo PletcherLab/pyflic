@@ -141,6 +141,22 @@ GUIDES: tuple[Guide, ...] = (
         ),
     ),
     Guide(
+        "quality-control",
+        "Checking your data",
+        "The QC checks, the QC Viewer, the optogenetic light QC and exclusions",
+        (
+            "app-qc-viewer",
+            "concepts-signal",
+            "concepts-licks-events",
+            "concepts-two-well-pi",
+            "concepts-optogenetics",
+            "concepts-exclusions",
+            "plots-catalog",
+            "reports",
+            "troubleshooting",
+        ),
+    ),
+    Guide(
         "progressive-ratio",
         "Progressive Ratio experiments",
         "Paired and yoked flies, training, the light QC and the breaking point",

@@ -180,6 +180,12 @@ The same topics are readable here on GitHub — they are ordinary markdown in
 | [Creating the configuration file](pyflic/help/content/getting-started-config.md) | Defining your experiment |
 | [Running your first analysis](pyflic/help/content/getting-started-first-run.md) | From load to first plot |
 
+| User guides | |
+|---|---|
+| [Getting Started](docs/GETTING_STARTED.md) | Installing and running pyflic, for someone new to Python |
+| [Checking your data](docs/qc-user-guide.md) | Every quality-control check, table and figure, including the optogenetic light QC |
+| [Analysing a Progressive Ratio assay](docs/progressive-ratio-user-guide.md) | The Progressive Ratio assay end to end: settings, analyses, figures and statistics |
+
 | Core concepts | |
 |---|---|
 | [The raw signal and the baseline](pyflic/help/content/concepts-signal.md) | Baseline subtraction |
