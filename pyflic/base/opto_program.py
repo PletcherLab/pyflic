@@ -673,6 +673,13 @@ class OptoProgram:
     paradigms: dict[str, Paradigm] = field(default_factory=dict)
     #: :data:`GRAMMAR_LEGACY`, :data:`GRAMMAR_V4` or :data:`GRAMMAR_SIMPLE`.
     grammar: str = GRAMMAR_LEGACY
+    #: ``Baseline: Adaptive``: PyMCU kept the baseline up to date during the
+    #: recording, at most ``baseline_rate_per_hour`` counts an hour and within
+    #: ``baseline_cap_counts`` of where it started; the data's Baseline
+    #: columns say what was in force.  ``baseline`` is True then too.
+    adaptive_baseline: bool = False
+    baseline_rate_per_hour: float | None = None
+    baseline_cap_counts: int | None = None
 
     @property
     def skipped(self) -> list[str]:
@@ -776,6 +783,7 @@ _HEADER_KEYS = {
     "default max time on": "max_time_on", "default maxtimeon": "max_time_on",
     "default program type": "program_type",
     "baseline": "baseline",
+    "baselinerateperhour": "baseline_rate", "baselinecapcounts": "baseline_cap",
 }
 _SECTION_KEYS = {
     "linkage": "linkage",
@@ -787,11 +795,13 @@ _SECTION_KEYS = {
 }
 #: The keys a 4.0.0 export writes; the legacy ``Opto …`` defaults have no
 #: meaning beside a ``Paradigms:`` block.
-_V4_HEADER = ("start", "end", "duration", "linkage", "program_type", "baseline")
+_V4_HEADER = ("start", "end", "duration", "linkage", "program_type", "baseline",
+              "baseline_rate", "baseline_cap")
 _V4_SECTION = ("linkage", "program_type")
 #: What an ``***ALL DFM***`` block states.
 _SIMPLE_KEYS = {"start time": "start", "end time": "end", "duration": "duration",
                 "linkage": "linkage", "baseline": "baseline",
+                "baselinerateperhour": "baseline_rate", "baselinecapcounts": "baseline_cap",
                 "program type": "program_type"}
 #: Interval keys the legacy export writes after the thresholds.
 _INTERVAL_KEYS = {"F": "frequency", "P": "pulse_width", "D": "decay", "L": "delay",
@@ -848,6 +858,21 @@ def _parse_yes_no(text: str) -> bool:
     if value in ("no", "n", "false", "off", "0"):
         return False
     raise ValueError(f"expected Yes or No, got {text!r}")
+
+
+#: What a ``Baseline:`` line can say: Yes, No, or PyMCU's Adaptive (a
+#: baseline that is used, and kept up to date).
+BASELINE_ADAPTIVE = "adaptive"
+
+
+def _parse_baseline(text: str) -> bool | str:
+    """True, False or :data:`BASELINE_ADAPTIVE`."""
+    if _norm(text) == BASELINE_ADAPTIVE:
+        return BASELINE_ADAPTIVE
+    try:
+        return _parse_yes_no(text)
+    except ValueError:
+        raise ValueError(f"expected Yes, No or Adaptive, got {text!r}") from None
 
 
 def _parse_program_type(text: str, warnings: list[str], where: str) -> str:
@@ -1250,7 +1275,14 @@ def parse_program(text: str, *, path: str | Path | None = None) -> OptoProgram:
         if end is None:
             warnings.append(f"line {number}: End Time {value!r} not understood")
     duration = header_value("duration", _parse_float, None)
-    baseline = header_value("baseline", _parse_yes_no, True)
+    baseline = header_value("baseline", _parse_baseline, True)
+    adaptive = baseline == BASELINE_ADAPTIVE
+    rate = header_value("baseline_rate", _parse_float, None)
+    cap = header_value("baseline_cap", _parse_int, None)
+    if not adaptive and (rate is not None or cap is not None):
+        warnings.append("BaselineRatePerHour and BaselineCapCounts apply only with "
+                        "Baseline: Adaptive; ignored")
+        rate = cap = None
     default_linkage = header_value("linkage", _parse_linkage, DEFAULT_LINKAGE)
     default_type = "Linear"
     if "program_type" in header:
@@ -1261,7 +1293,8 @@ def parse_program(text: str, *, path: str | Path | None = None) -> OptoProgram:
 
     program = OptoProgram(path=Path(path) if path is not None else None, start=start,
                           end=end, duration_min=duration, baseline=bool(baseline),
-                          warnings=warnings, grammar=grammar)
+                          warnings=warnings, grammar=grammar, adaptive_baseline=adaptive,
+                          baseline_rate_per_hour=rate, baseline_cap_counts=cap)
     if grammar == GRAMMAR_SIMPLE:
         warnings.append(SIMPLE_WARNING)
         return program

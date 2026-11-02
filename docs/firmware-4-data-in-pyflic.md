@@ -51,8 +51,13 @@ the one Paradigm column the firmware fills on every row:
 | Generation | Constant | Written by | Header | `Phase1` | `DFM.training_info` |
 |---|---|---|---|---|---|
 | 1 | `GENERATION_FLAG` | PyMCU 3.x, any older firmware | 27 columns | absent | `flag` |
-| 2 | `GENERATION_EMPTY` | PyMCU 4.0.0, DFM firmware before 4.0.0 | 90 columns | every value `NA` or blank | `none` |
-| 3 | `GENERATION_PARADIGM` | PyMCU 4.0.0, DFM firmware 4.0.0 | 90 columns | any `A` or `M` | `phase` |
+| 2 | `GENERATION_EMPTY` | PyMCU 4.0.0, DFM firmware before 4.0.0 | 90 or 102 columns | every value `NA` or blank | `none` |
+| 3 | `GENERATION_PARADIGM` | PyMCU 4.0.0, DFM firmware 4.0.0 | 90 or 102 columns | any `A` or `M` | `phase` |
+
+102 columns are the released PyMCU 4.0.0: the 90, then `Baseline1`–`Baseline12`
+([The Baseline columns](#the-baseline-columns)). They don't change the
+generation; 90-column files are 4.0.0 development builds from before 1 November
+2026.
 
 `DFM.generation` carries it, and `with_params` copies it. The `version` (2 or
 3) that the file name gives stays as a separate axis. The generation is
@@ -107,6 +112,39 @@ member.
   529b926 a restart is an `Index` gap instead ([DFM restarts](#dfm-restarts)).
 - **A range filter** applies to the Paradigm state as to `raw_df`
   (`ParadigmState.subset`).
+- **The Baseline columns leave `raw_df` too.** `split_baseline_columns` takes
+  `Baseline1`–`Baseline12` off, on every generation, and `DFM.baseline_in_force`
+  holds them as an `(n, 12)` float array, row for row with `raw_df`, `NaN`
+  where the file has `NA`; `None` for a file without them. Repeated records and
+  a range filter drop the same rows from it, and `with_params` shares it.
+
+## The Baseline columns
+
+PyMCU writes `Baseline1`–`Baseline12` after `OnMs12`, on every DFM whatever its
+firmware: the Baseline in force, which PyMCU added to the Program's threshold
+before sending each instruction, so a numeric threshold T meant contact above
+`Baseline + T` (PyMCU's `docs/DataFileColumns.md` and
+`docs/adaptive-baseline-plan.md`). With `Baseline: Yes` they hold the Starting
+baseline from Interval 1 on; with `Baseline: Adaptive` they change when PyMCU
+sent new thresholds (at a new Interval or Cycle, or when a well's tracked
+baseline moved 10 counts or more). They are `NA` in Interval 0, outside the
+Program and with `Baseline: No`.
+
+| pyflic reads it as | Used for | Surfaces in |
+|---|---|---|
+| `DFM.baseline_in_force`, passed to the light QC as `DFMInputs.baseline_in_force` | the Emulated Trigger's baseline row by row, so it is never reconstructed and never *approximate*; the drift and sustained-contact causes told apart; how each well's baseline moved | `opto_light_qc.csv`'s `LikelyCause` (`CAUSE_SUSTAINED_CONTACT`, `CAUSE_DRIFTING_BASELINE`), `qc/opto/opto_baselines.csv`, and a DFM note in `summary.txt` and the report when any baseline moved |
+
+**The cause.** Without the columns, light the firmware's contact explains
+but no pyflic lick or touch does is `CAUSE_DRIFT`, *a drifting baseline or
+sustained contact*. With them, `opto_qc.contact_cause` asks whether most of
+that light fell where one of the group's Trigger Wells rested 10 counts or
+more (`BASELINE_DRIFT_COUNTS`, PyMCU's update step) above its Baseline in
+force, its resting level being the minute's 10th percentile
+(`resting_floor`): if so the cause is *a drifting baseline*
+(`CAUSE_DRIFTING_BASELINE`), otherwise the well rested at its baseline and
+the signal stayed up, *sustained contact* (`CAUSE_SUSTAINED_CONTACT`), such as
+a fly standing on the food, which pyflic's 3-minute running median absorbs.
+`CONTACT_CAUSES` holds all three.
 
 ## The original 27 columns
 
@@ -167,6 +205,12 @@ content (`OptoProgram.grammar`):
 
 `***Env Mon***` is ignored. A `NAME (Type): …` line with a type not among the
 six is a warning, and that Paradigm is dropped.
+
+`Baseline:` is `Yes`, `No` or `Adaptive` (`OptoProgram.baseline` is true for
+`Yes` and `Adaptive`, and `OptoProgram.adaptive_baseline` for `Adaptive`). With
+`Adaptive`, PyMCU writes `BaselineRatePerHour:` and `BaselineCapCounts:` after it,
+read as `baseline_rate_per_hour` and `baseline_cap_counts`; beside `Yes` or `No`
+they are a warning and ignored.
 
 How the program meets the rows on generation 3:
 
@@ -470,6 +514,7 @@ before generation 3.
 | `qc/opto/opto_light_intervals.csv` | `ProgramInterval`, `Cycle`, `Paradigm`, `ParadigmType`, `HoldMs` (was `DecayMs`), `LitSource` |
 | `qc/opto/opto_light_events.csv` | `Well`, `Phase`, `RequirementMet`, `FirmwareEvents`, `Source`; on generation 3 the ledger's `OnsetMs`, `EndMs`, `LitMs`, `Timing`, `Overlap`, `Boundary`, `SinceLastOnsetMs`, `K`, then `Family` and `EndedBy` |
 | `qc/opto/opto_program.csv` | the columns above, on every generation; they replace `F`, `AcclimationEvents`, `P`, `NonFeeding`, `DecayMs`, `Delay` and `MaxTimeOn` |
+| `qc/opto/opto_baselines.csv` | new, only when some DFM's data have the Baseline columns: `opto_qc.OPTO_BASELINE_COLUMNS`, one row per well, its Baseline in force's start, end, lowest, highest, largest move, number of changes, and with `Baseline: Adaptive` the cap and whether it was reached |
 | `qc/integrity/DFM<n>_integrity_report.*` | `generation`, `lost_records`, `repeated_records`, `unknown_instruction_rows`, `late_records`, and on generation 3 `restarts`; the text adds the gaps, the Paradigm sequence, `## DFM restarts`, the No Ack note, the `Messages.csv` errors and its lost-records check |
 | `qc/data_breaks/DFM<n>_data_breaks.csv` | led by `BreakIndex` and `GapSeconds` (were `Index` and `Interval`, which crashed on any version-3 file with a break) |
 | `qc/simultaneous_feeding/DFM<n>_simultaneous_feeding_matrix.csv` | `Both_pre`, `MaxMinSignalAtBoth_pre`, `HigherInCol1AtBoth_pre`, before the dual-feeding correction |
@@ -527,8 +572,8 @@ firmware's own `LEDControl.c` (`tests/v4_fixtures.py`, cross-checked by
 one, has confirmed part of it (below). Diff each new bench recording against
 the fixtures and the loader:
 
-- The header is the 90 columns; every row has 90 fields; missing values are
-  `NA`.
+- The header is the 102 columns (90 before the Baseline columns); every row has
+  as many fields; missing values are `NA`.
 - The lead-in: how many `Interval` 0 rows, their `Paradigm` (`NA`), their
   `Dark`, `OptoFreq` and `OptoPW` (0). Confirmed below.
 - `Interval` changes on the first row the DFM ran the new instruction; its lag

@@ -706,9 +706,22 @@ interval's threshold. Contact the Emulated Trigger sees and pyflic does not —
 a well the firmware read as touched while the baselined signal was flat — is
 the drifting-baseline signature, and it names the likely cause of
 unexplained light. Approximate when the data begin after the baseline window.
+When the data have PyMCU's Baseline columns, the Baseline in force is read
+from each row instead, and is never approximate.
 On a Generation-3 recording the firmware's decisions are recorded, so its
 Activations and Firmware Events take this role and nothing is emulated.
 _Avoid_: simulated firmware, firmware replay.
+
+**Baseline in force**:
+The baseline PyMCU added to a well's threshold before sending the DFM an
+instruction, so a numeric threshold T meant contact above Baseline + T. PyMCU
+writes it on every row as `Baseline1`–`Baseline12`; with `Baseline: Adaptive`
+it follows the well's resting level slowly through the recording. With it the
+contact cause splits in two: a well resting 10 or more counts above its
+Baseline in force is a **drifting baseline**; one resting at it, its signal
+staying up, is **sustained contact**.
+_Avoid_: firmware baseline (it was never on the DFM), Resting Level (that is
+pyflic's per-minute median).
 
 **Generation**:
 Which shape of data file a DFM recording has, decided from the file itself

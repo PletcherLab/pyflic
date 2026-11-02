@@ -13,6 +13,11 @@ file carries, and whether they hold anything, is its **Generation**
   there is no Training information at all;
 * generation 3 (:data:`GENERATION_PARADIGM`): 90 columns, filled.
 
+PyMCU 4.0.0 releases add 12 more, ``Baseline1``-``Baseline12`` (102 columns):
+the Baseline in force behind each record's thresholds, which PyMCU writes for
+every firmware.  They don't change the Generation; :func:`split_baseline_columns`
+takes them off the frame too, and the DFM keeps them as ``baseline_in_force``.
+
 :func:`split_paradigm_columns` takes the 63 columns off the frame the rest of
 pyflic works on, and :class:`ParadigmState` holds them for generation 3 as
 numpy arrays, one row per record, aligned with the DFM's ``raw_df``.  Its
@@ -59,8 +64,8 @@ GENERATION_FLAG, GENERATION_EMPTY, GENERATION_PARADIGM = 1, 2, 3
 #: What each Generation is, in the words ``summary.txt`` uses.
 GENERATION_DESCRIPTIONS: dict[int, str] = {
     GENERATION_FLAG: "27 columns, training flag in the signal",
-    GENERATION_EMPTY: "90 columns, paradigm columns empty: DFM firmware older than 4.0.0",
-    GENERATION_PARADIGM: "90 columns, firmware 4.0.0 paradigm state",
+    GENERATION_EMPTY: "90 or 102 columns, paradigm columns empty: DFM firmware older than 4.0.0",
+    GENERATION_PARADIGM: "90 or 102 columns, firmware 4.0.0 paradigm state",
 }
 
 #: What pyflic says of a generation-2 DFM wherever its Training would show
@@ -77,6 +82,11 @@ _PER_WELL = ("Phase", "Activations", "Requirement", "Progress", "OnMs")
 PARADIGM_COLUMNS: tuple[str, ...] = (
     "Interval", "Cycle", "Paradigm",
     *(f"{name}{w}" for name in _PER_WELL for w in range(1, N_WELLS + 1)))
+
+#: PyMCU's ``StatusPacket.BASELINE_COLUMNS``, after the Paradigm columns: the
+#: Baseline in force (``PyMCU/docs/DataFileColumns.md``), ``NA`` in Interval 0,
+#: outside the Program and with ``Baseline: No``.
+BASELINE_COLUMNS: tuple[str, ...] = tuple(f"Baseline{w}" for w in range(1, N_WELLS + 1))
 
 #: PyMCU's own Paradigm: ClosedLoop with every Well Off, the Paradigm of a
 #: program whose Intervals name none (the simple export) and of the DFM after
@@ -126,6 +136,20 @@ def split_paradigm_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
         return df, None
     present = [c for c in PARADIGM_COLUMNS if c in df.columns]
     return df.drop(columns=present), df[present].copy()
+
+
+def split_baseline_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray | None]:
+    """``(the frame without the Baseline columns, the Baseline in force)``.
+
+    The second item is ``(n, 12)`` float, Wells 1-12 as columns, NaN where the
+    file has ``NA``; ``None`` when the file has no Baseline columns (PyMCU 3.x
+    and 4.0.0 development builds).  The frame keeps its index, row for row.
+    """
+    present = [c for c in BASELINE_COLUMNS if c in df.columns]
+    if not present:
+        return df, None
+    values = np.column_stack([_numbers(df, c, len(df)) for c in BASELINE_COLUMNS])
+    return df.drop(columns=present), values
 
 
 # ---------------------------------------------------------------------------

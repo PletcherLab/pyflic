@@ -19,6 +19,7 @@ from .paradigm_state import (
     RECORD_MS,
     ParadigmState,
     detect_generation,
+    split_baseline_columns,
     split_paradigm_columns,
 )
 from .parameters import Parameters
@@ -186,6 +187,8 @@ class _LoadedDFM:
     generation: int = GENERATION_FLAG
     #: The Paradigm state on generation 3, row for row with *df*; else None.
     paradigm: ParadigmState | None = None
+    #: PyMCU's Baseline columns, row for row with *df*; None without them.
+    baseline_in_force: np.ndarray | None = None
     #: Rows dropped because their ``Index`` was already in the file.
     repeated_records: int = 0
     #: What the loader changed in the data, for the integrity text and
@@ -322,6 +325,9 @@ def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Seque
     ## ParadigmState, which takes the same rows as raw_df below.
     generation = detect_generation(df)
     df, paradigm_columns = split_paradigm_columns(df)
+    ## The Baseline in force (PyMCU's last 12 columns) comes off too, kept
+    ## row for row as an array, like the Paradigm state.
+    df, baseline_in_force = split_baseline_columns(df)
     df = _ensure_minutes_seconds(df)
     state = None
     if generation == GENERATION_PARADIGM and paradigm_columns is not None:
@@ -341,6 +347,8 @@ def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Seque
         df = df[~repeated]
         if state is not None:
             state = state.subset(~repeated)
+        if baseline_in_force is not None:
+            baseline_in_force = baseline_in_force[~repeated]
     minutes = pd.to_numeric(df["Minutes"], errors="coerce")
     recording_end = float(minutes.max()) if len(minutes) else float("nan")
     before = None
@@ -360,10 +368,13 @@ def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Seque
         df = df[keep]
         if state is not None:
             state = state.subset(keep)
+        if baseline_in_force is not None:
+            baseline_in_force = baseline_in_force[keep]
         if df.empty:
             raise EmptyRangeError(dfm_id, recording_end)
     return _LoadedDFM(df=df.reset_index(drop=True), version=version, source_files=files,
-                      generation=generation, paradigm=state, repeated_records=n_repeated,
+                      generation=generation, paradigm=state, baseline_in_force=baseline_in_force,
+                      repeated_records=n_repeated,
                       notes=notes, recording_end=recording_end, before_range=before,
                       training=training)
 
@@ -382,6 +393,11 @@ class DFM:
     #: The firmware's per-row Paradigm state on generation 3, row for row with
     #: ``raw_df``; ``None`` on generations 1 and 2.
     paradigm: ParadigmState | None = None
+    #: The Baseline in force behind the DFM's thresholds, ``(n, 12)`` float
+    #: row for row with ``raw_df``, Wells 1-12 as columns, NaN where PyMCU
+    #: wrote ``NA``: PyMCU's ``Baseline1``-``Baseline12``.  ``None`` for files
+    #: without them (PyMCU 3.x and 4.0.0 development builds).
+    baseline_in_force: np.ndarray | None = None
     #: Where Training is read from: ``"flag"`` (generation 1, the 65536 flag
     #: in the signal), ``"none"`` (generation 2, no Training information) or
     #: ``"phase"`` (generation 3, each well's Phase).
@@ -440,6 +456,7 @@ class DFM:
             source_files=loaded.source_files,
             generation=int(loaded.generation),
             paradigm=loaded.paradigm,
+            baseline_in_force=loaded.baseline_in_force,
             training_info=TRAINING_INFO[int(loaded.generation)],
             repeated_records=int(loaded.repeated_records),
             load_notes=tuple(loaded.notes),
@@ -484,8 +501,10 @@ class DFM:
             version=self.version,
             source_files=self.source_files,
             generation=self.generation,
-            ## Shared, not copied: nothing writes to a ParadigmState.
+            ## Shared, not copied: nothing writes to a ParadigmState or to the
+            ## Baseline in force.
             paradigm=self.paradigm,
+            baseline_in_force=self.baseline_in_force,
             training_info=self.training_info,
             repeated_records=self.repeated_records,
             load_notes=self.load_notes,

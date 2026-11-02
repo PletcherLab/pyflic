@@ -489,7 +489,7 @@ def test_the_experiment_report_has_light_behaviour(each):
     assert headings.index("Light behaviour") > headings.index("Consumption")
     cover = next(b for b in doc.blocks if isinstance(b, rl.KeyValues))
     rows = dict(cover.rows)
-    assert rows["Generation"].startswith("3 — 90 columns, firmware 4.0.0")
+    assert rows["Generation"].startswith("3 — 90 or 102 columns, firmware 4.0.0")
     assert rows["Lit time from"] == "OnMs, exact"
 
 

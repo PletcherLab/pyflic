@@ -1012,7 +1012,16 @@ for r in data["rows"]:
     sp.activationTotals, sp.requirement, sp.progress = r["activations"], r["requirement"], r["progress"]
     sp.interval, sp.cycle, sp.paradigmName = r["interval"], r["cycle"], r["paradigm"]
     sp.isBeforeProgram = r["before"]
-    out.append(sp.GetDataBufferPrintPacket())
+    line = sp.GetDataBufferPrintPacket()
+    # The fixtures are 90-column files, as PyMCU 4.0.0 wrote before its Baseline
+    # columns; a PyMCU that writes them adds 12 more, NA for a record with no
+    # Baseline set, which are checked and left off (test_adaptive_baseline_sim.py
+    # checks the columns themselves against PyMCU's simulator).
+    if hasattr(StatusPacket, "BASELINE_COLUMNS"):
+        line, extra = line.rstrip("\\n").rsplit(",", 12)[0], line.rstrip("\\n").split(",")[-12:]
+        assert extra == ["NA"] * 12, extra
+        line += "\\n"
+    out.append(line)
 messages = MessagesList.MessageList()
 messages.AddMessage(Message.Message(0, start, 0, "Recording started", Enums.MESSAGETYPE.ANNOTATION, -99))
 for dfm, when, sample, text in data.get("errors", []):

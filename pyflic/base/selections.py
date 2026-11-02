@@ -137,7 +137,8 @@ QC_SET: tuple[Item, ...] = (
     _qc("opto_light_qc", "Optogenetics", "Opto light QC tables",
         "Per linkage group: was the light where the licks were?  Writes qc/opto/"
         "opto_light_qc.csv, opto_light_intervals.csv, opto_light_events.csv and "
-        "opto_program.csv, and logs every flagged group.", OPTOGENETIC,
+        "opto_program.csv (and opto_baselines.csv when the data have PyMCU's Baseline "
+        "columns), and logs every flagged group.", OPTOGENETIC,
         "qc/opto/opto_light_qc.csv", "qc/opto/opto_light_intervals.csv",
         "qc/opto/opto_light_events.csv", "qc/opto/opto_program.csv"),
     _qc("opto_light_figures", "Optogenetics", "Light explained by licks",

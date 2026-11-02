@@ -346,6 +346,24 @@ CAUSE_DRIFT = "signal above the firmware threshold with no pyflic activity: a " 
               "drifting baseline or sustained contact"
 CAUSE_HARDWARE = "light without firmware-visible contact: hardware, linkage or " \
                  "program mismatch"
+#: :data:`CAUSE_DRIFT` split in two where the data have PyMCU's Baseline
+#: columns, so the Baseline in force is known: either the well rested at
+#: that baseline and the signal really stayed up (a fly standing on the food,
+#: which pyflic's running median absorbs), or the well's resting level had
+#: drifted :data:`BASELINE_DRIFT_COUNTS` or more above it.
+CAUSE_SUSTAINED_CONTACT = "signal above the firmware threshold with no pyflic activity, " \
+                          "the well resting at the baseline in force: sustained contact"
+CAUSE_DRIFTING_BASELINE = "signal above the firmware threshold with no pyflic activity, " \
+                          "the well resting 10 or more above the baseline in force: a " \
+                          "drifting baseline"
+#: The causes that mean the firmware saw contact that pyflic did not.
+CONTACT_CAUSES = (CAUSE_DRIFT, CAUSE_SUSTAINED_CONTACT, CAUSE_DRIFTING_BASELINE)
+#: PyMCU's update step: a resting level this far above the Baseline in force
+#: is drift PyMCU had not yet followed (``PyMCU/docs/adaptive-baseline-plan.md``).
+BASELINE_DRIFT_COUNTS = 10
+#: The resting level the Baseline in force is compared with: the 10th
+#: percentile of a well's signal in each minute, as PyMCU's Floor.
+FLOOR_QUANTILE = 0.1
 
 #: ``qc/opto/opto_light_qc.csv`` — one row per Linkage Group per DFM.
 #:
@@ -639,6 +657,91 @@ def firmware_baseline(raw: np.ndarray, start: int, samples: int) -> float:
     return float(seg.mean()) if seg.size else 0.0
 
 
+def resting_floor(minutes: np.ndarray, raw: np.ndarray) -> np.ndarray:
+    """Each row's well Floors, ``(n, 12)``: the 10th percentile of the well's
+    signal over the recording minute the row is in."""
+    raw = np.asarray(raw, dtype=float)
+    key = np.floor(np.asarray(minutes, dtype=float))
+    frame = pd.DataFrame(raw)
+    floors = frame.groupby(key).quantile(FLOOR_QUANTILE)
+    return floors.reindex(key).to_numpy(dtype=float)
+
+
+def baseline_drift_rows(recorded: np.ndarray, floor: np.ndarray,
+                        wells: tuple[int, ...] | set[int]) -> np.ndarray:
+    """``(n,)`` bool: rows where any of *wells* (1-12) rested
+    :data:`BASELINE_DRIFT_COUNTS` or more above its Baseline in force."""
+    out = np.zeros(len(recorded), dtype=bool)
+    for w in wells:
+        gap = floor[:, w - 1] - recorded[:, w - 1]
+        out |= np.nan_to_num(gap, nan=-np.inf) >= BASELINE_DRIFT_COUNTS
+    return out
+
+
+def contact_cause(weights: np.ndarray, evidence: np.ndarray,
+                  drift_rows: np.ndarray | None) -> str:
+    """Which of the contact causes the light with firmware-visible contact
+    and no pyflic activity (*evidence*, weighted by *weights*) points to:
+    :data:`CAUSE_DRIFT` without the Baseline columns, otherwise
+    :data:`CAUSE_DRIFTING_BASELINE` when most of it fell where a trigger well
+    rested well above the Baseline in force, and
+    :data:`CAUSE_SUSTAINED_CONTACT` when it did not."""
+    if drift_rows is None:
+        return CAUSE_DRIFT
+    weights = np.asarray(weights, dtype=float)
+    total = float(weights[evidence].sum())
+    drifted = float(weights[evidence & drift_rows].sum())
+    return CAUSE_DRIFTING_BASELINE if total and drifted >= 0.5 * total \
+        else CAUSE_SUSTAINED_CONTACT
+
+
+#: ``qc/opto/opto_baselines.csv``: one row per well of every DFM whose data
+#: have PyMCU's Baseline columns.
+OPTO_BASELINE_COLUMNS: tuple[str, ...] = (
+    "DFM", "Well", "BaselineStart", "BaselineEnd", "BaselineMin", "BaselineMax",
+    "BaselineMaxMove", "Updates", "CapCounts", "ReachedCap")
+
+
+def baseline_rows(dfm_id: int, recorded: np.ndarray | None,
+                  program: op.OptoProgram | None) -> list[dict]:
+    """How each well's Baseline in force moved over the rows that have one:
+    its first, last, lowest and highest value, its largest move from the
+    first, how many times it changed, and whether it reached the Program's
+    ``BaselineCapCounts`` (``Baseline: Adaptive`` only)."""
+    if recorded is None:
+        return []
+    cap = program.baseline_cap_counts if program is not None and program.adaptive_baseline else None
+    rows = []
+    for w in range(1, op.N_WELLS + 1):
+        values = recorded[:, w - 1]
+        values = values[np.isfinite(values)]
+        if not values.size:
+            continue
+        move = float(np.max(np.abs(values - values[0])))
+        rows.append({"DFM": int(dfm_id), "Well": w, "BaselineStart": float(values[0]),
+                     "BaselineEnd": float(values[-1]), "BaselineMin": float(values.min()),
+                     "BaselineMax": float(values.max()), "BaselineMaxMove": move,
+                     "Updates": int(np.count_nonzero(np.diff(values))),
+                     "CapCounts": cap if cap is not None else np.nan,
+                     "ReachedCap": bool(cap is not None and move >= cap)})
+    return rows
+
+
+def baseline_note(rows: list[dict]) -> str | None:
+    """A DFM note when any well's Baseline in force moved, for ``summary.txt``
+    and the report."""
+    moved = [r for r in rows if r["BaselineMaxMove"] > 0]
+    if not moved:
+        return None
+    biggest = max(moved, key=lambda r: r["BaselineMaxMove"])
+    capped = [r["Well"] for r in rows if r["ReachedCap"]]
+    text = (f"the baseline in force moved on {len(moved)} well(s), at most "
+            f"{biggest['BaselineMaxMove']:.0f} counts (well {biggest['Well']})")
+    if capped:
+        text += f"; well(s) {', '.join(str(w) for w in capped)} reached the cap"
+    return text
+
+
 def onset_minute(minutes: np.ndarray, lit: np.ndarray, unexplained: np.ndarray,
                  fraction: float, window_min: float = WINDOW_MIN) -> float:
     """Start minute of the first *window_min*-minute window of the recording in
@@ -700,6 +803,11 @@ class DFMInputs:
     #: captured at the start of the run, not of the Slice.
     start_minutes: np.ndarray | None = None
     start_raw: np.ndarray | None = None
+    #: PyMCU's Baseline columns, ``(n, 12)`` float, NaN where ``NA``: the
+    #: baseline the firmware's thresholds were built on, row by row.  With
+    #: them the Emulated Trigger needs no reconstruction, and the drift and
+    #: sustained-contact causes are told apart.  ``None`` without them.
+    baseline_in_force: np.ndarray | None = None
 
 
 @dataclass
@@ -726,6 +834,9 @@ class DFMOptoResult:
     #: time of Activations whose onset had no pyflic lick or touch.
     timelines: dict = field(default_factory=dict)
     generation: int = GENERATION_FLAG
+    #: :func:`baseline_rows`: how each well's Baseline in force moved, when
+    #: the data have PyMCU's Baseline columns (``opto_baselines.csv``).
+    baselines: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -930,6 +1041,8 @@ def analyze_dfm(inp: DFMInputs, *, program: op.OptoProgram | None, setting: str,
     activity = np.asarray(inp.activity, dtype=bool).reshape(n, op.N_WELLS)
     feeding = np.asarray(inp.feeding).reshape(n, op.N_WELLS)
     raw = None if inp.raw is None else np.asarray(inp.raw, dtype=float).reshape(n, op.N_WELLS)
+    recorded = _recorded_baseline(inp, n)
+    drift_rows_for = _drift_rows_factory(recorded, minutes, raw)
     fallback_decay = decay_samples_for(settings.default_decay_ms, sps)
     decay_by_sample = np.full(n, fallback_decay, dtype=int)
     dfm_flags: list[str] = []
@@ -988,7 +1101,9 @@ def analyze_dfm(inp: DFMInputs, *, program: op.OptoProgram | None, setting: str,
     emulate = section is not None and raw is not None
     approximate = False
     base = np.zeros(op.N_WELLS)
-    if emulate:
+    ## PyMCU's Baseline columns give it row by row, so nothing is reconstructed.
+    use_recorded = emulate and recorded is not None and program.baseline
+    if emulate and not use_recorded:
         n_base = max(1, int(round(BASELINE_SECONDS * sps)))
         ## When the firmware captured its baseline, in recording minutes: at
         ## the program's start, or at the recording's first row when the
@@ -1028,6 +1143,9 @@ def analyze_dfm(inp: DFMInputs, *, program: op.OptoProgram | None, setting: str,
         if program.baseline:
             base = np.array([firmware_baseline(source_raw[:, w], start_idx, n_base)
                              for w in range(op.N_WELLS)])
+    base_rows = np.broadcast_to(base, (n, op.N_WELLS))
+    if use_recorded:
+        base_rows = _filled_baseline(recorded)
 
     ## ---- program versus data ----
     if section is not None:
@@ -1168,7 +1286,7 @@ def analyze_dfm(inp: DFMInputs, *, program: op.OptoProgram | None, setting: str,
                         level = w.interval.threshold(t)
                         if not op.is_trigger(level):
                             continue
-                        contact |= (raw[full, t - 1] - base[t - 1]) > float(level)
+                        contact |= (raw[full, t - 1] - base_rows[full, t - 1]) > float(level)
                     contact_all[full] |= contact
                     act_close = activity_near(tuple(trig), tol, tol)[full]
                     alone = contact & ~act_close
@@ -1204,8 +1322,9 @@ def analyze_dfm(inp: DFMInputs, *, program: op.OptoProgram | None, setting: str,
         cause = ""
         if emulate and unexplained_n and any(f in (UNEXPLAINED, PARTLY_UNEXPLAINED)
                                              for f in flags):
-            cause = (CAUSE_DRIFT if unexplained_with_contact >= 0.5 * unexplained_n
-                     else CAUSE_HARDWARE)
+            cause = (contact_cause(np.ones(n), unexplained & contact_near_all,
+                                   drift_rows_for(triggers_seen))
+                     if unexplained_with_contact >= 0.5 * unexplained_n else CAUSE_HARDWARE)
         ## A fired flag says its own numbers (the table has them as columns);
         ## notes are for what no flag says.
         if off_lit > 0:
@@ -1332,11 +1451,57 @@ def analyze_dfm(inp: DFMInputs, *, program: op.OptoProgram | None, setting: str,
     if not group_rows:
         group_rows.append(_empty_group_row(inp, status))
     _finish_groups(group_rows, dfm_flags)
+    baselines = _baseline_summary(inp, recorded, program, dfm_notes)
     return DFMOptoResult(dfm_id=inp.dfm_id, setting=setting, program_status=status,
                          groups=group_rows, intervals=interval_rows, events=event_rows,
                          flags=dfm_flags, notes=dfm_notes, decay_samples=decay_by_sample,
                          lit_samples=lit_any, timelines=timelines,
-                         generation=int(inp.generation))
+                         generation=int(inp.generation), baselines=baselines)
+
+
+def _recorded_baseline(inp: DFMInputs, n: int) -> np.ndarray | None:
+    """*inp*'s Baseline in force as ``(n, 12)``, or None without one."""
+    if inp.baseline_in_force is None:
+        return None
+    recorded = np.asarray(inp.baseline_in_force, dtype=float)
+    return recorded.reshape(n, op.N_WELLS) if recorded.size == n * op.N_WELLS else None
+
+
+def _filled_baseline(recorded: np.ndarray) -> np.ndarray:
+    """The Baseline in force with its ``NA`` rows (before the first Interval,
+    outside the Program) given each well's first recorded value."""
+    first = np.zeros(op.N_WELLS)
+    for w in range(op.N_WELLS):
+        finite = recorded[:, w][np.isfinite(recorded[:, w])]
+        if finite.size:
+            first[w] = finite[0]
+    return np.where(np.isfinite(recorded), recorded, first)
+
+
+def _drift_rows_factory(recorded: np.ndarray | None, minutes: np.ndarray,
+                        raw: np.ndarray | None):
+    """A function of trigger wells giving :func:`baseline_drift_rows`, or
+    None when the data have no Baseline columns (the causes stay merged).
+    The Floors are computed once, on first use."""
+    cache: dict[str, np.ndarray] = {}
+
+    def rows(wells) -> np.ndarray | None:
+        if recorded is None or raw is None:
+            return None
+        if "floor" not in cache:
+            cache["floor"] = resting_floor(minutes, raw)
+        return baseline_drift_rows(recorded, cache["floor"], tuple(wells))
+    return rows
+
+
+def _baseline_summary(inp: DFMInputs, recorded: np.ndarray | None,
+                      program: op.OptoProgram | None, notes: list[str]) -> list[dict]:
+    """:func:`baseline_rows`, with :func:`baseline_note` added to *notes*."""
+    rows = baseline_rows(inp.dfm_id, recorded, program)
+    note = baseline_note(rows)
+    if note is not None:
+        notes.append(note)
+    return rows
 
 
 #: The QC table's generation-3 columns, ``NA`` on generations 1 and 2.
@@ -1685,6 +1850,9 @@ def _analyze_paradigm_state(inp: DFMInputs, *, program: op.OptoProgram | None,
     phase_a = np.asarray(state.phase_a, dtype=bool).reshape(n, op.N_WELLS)
     activity = np.asarray(inp.activity, dtype=bool).reshape(n, op.N_WELLS)
     feeding = np.asarray(inp.feeding).reshape(n, op.N_WELLS)
+    recorded = _recorded_baseline(inp, n)
+    raw = None if inp.raw is None else np.asarray(inp.raw, dtype=float).reshape(n, op.N_WELLS)
+    drift_rows_for = _drift_rows_factory(recorded, minutes, raw)
     dfm_flags: list[str] = []
     dfm_notes: list[str] = []
 
@@ -2048,8 +2216,8 @@ def _analyze_paradigm_state(inp: DFMInputs, *, program: op.OptoProgram | None,
         cause = ""
         if unexplained_total and any(f in (UNEXPLAINED, PARTLY_UNEXPLAINED,
                                            UNEXPLAINED_NO_PROGRAM) for f in flags):
-            cause = (CAUSE_DRIFT if with_contact_ms >= 0.5 * unexplained_total
-                     else CAUSE_HARDWARE)
+            cause = (contact_cause(unexplained_ms, evidence, drift_rows_for(triggers_seen))
+                     if with_contact_ms >= 0.5 * unexplained_total else CAUSE_HARDWARE)
         off_total = float(off_ms.sum())
         if off_total > 0:
             flags.append(LIGHT_WHILE_OFF)
@@ -2311,11 +2479,12 @@ def _analyze_paradigm_state(inp: DFMInputs, *, program: op.OptoProgram | None,
                            rc.INTERVAL_LAG_COLUMN: interval_lag,
                            rc.RESTARTS_COLUMN: restart_count})
     _finish_groups(group_rows, dfm_flags)
+    baselines = _baseline_summary(inp, recorded, program, dfm_notes)
     return DFMOptoResult(dfm_id=inp.dfm_id, setting=setting, program_status=status,
                          groups=group_rows, intervals=interval_rows, events=event_rows,
                          flags=dfm_flags, notes=dfm_notes, decay_samples=decay_by_sample,
                          lit_samples=lit_any, timelines=timelines,
-                         generation=int(inp.generation))
+                         generation=int(inp.generation), baselines=baselines)
 
 
 @dataclass

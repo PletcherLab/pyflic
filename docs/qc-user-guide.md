@@ -4,12 +4,15 @@ A guide for researchers analysing FLIC recordings with pyflic. It explains
 every quality-control (QC) check pyflic runs, the files and figures each one
 writes, how to read them, and how to decide which chambers to leave out.
 
-Sections 1 to 5 apply to every experiment. Section 6 adds the light QC of
-optogenetic experiments, and section 7 the checks a DFM firmware 4.0.0
-recording adds to it: each Paradigm checked against its own rule. Section 8
-covers the checks of a Progressive Ratio experiment, and section 9 what a
-Project does with its members' QC. Section 10 is a checklist to work through
-for each recording, and section 11 a troubleshooting table.
+Sections 1 to 5 apply to every experiment, and to each Slice of one
+(section 2). Section 6 adds the light QC of optogenetic experiments, and
+section 7 the checks a DFM firmware 4.0.0 recording adds to it: each
+Paradigm checked against its own rule. Section 8 covers the checks of a
+Progressive Ratio experiment, and section 9 what a Project does with its
+members' QC. Section 10 lists every check on one page: whether it removes
+chambers or only flags them, and its default threshold. Section 11 is a
+checklist to work through for each recording, and section 12 a
+troubleshooting table.
 
 You do not need to read code to use it. For installing and starting pyflic,
 see [Getting Started](GETTING_STARTED.md); if you installed it that way, type
@@ -45,9 +48,11 @@ Three rules run through everything:
 
 - **Do QC before statistics.** Once you have seen a result, every exclusion
   looks like a choice made for it.
-- **Most checks flag; you decide.** Only the design's exclusion cutoffs
-  remove chambers on their own. Everything else is information for your
-  judgement.
+- **Most checks flag; you decide.** Only the design's exclusion rules
+  remove chambers on their own: the lick, duration and event cutoffs, a
+  Progressive Ratio group's training and light QC, and the optogenetic light
+  QC once you switch its removal on. Everything else is information for
+  your judgement. Section 10 lists which is which.
 - **Apply one rule to every chamber, whatever its treatment.** A rule
   applied to one treatment only biases the comparison.
 
@@ -72,10 +77,14 @@ in groups:
   *Light explained by licks* and *Program timeline* (sections 6 and 7);
 - **Progressive Ratio**, when the member's Experiment Type includes the
   Progressive Ratio module: *Light QC table*, *Licks per light event* and
-  *Sucrose Well resting level* (section 8).
+  *Sucrose Well resting level* (section 8);
+- **Slices**, when the design declares Slices: one box per Slice (see
+  *Slices* below).
 
 **Run QC** computes the QC once and writes each ticked item: the first two
-groups into `qc/`, the Progressive Ratio group into `analysis/`. Every box
+groups into `qc/`, the Progressive Ratio group into `analysis/`. With
+Slices it then does the same for each ticked Slice, into
+`slices/<name>/`. Every box
 starts ticked, and with every box ticked Run QC writes the whole **QC
 bundle**: the integrity report, the data breaks, the three signal plots, the
 two-well crosstalk tables and, on an optogenetic member, the light QC and the
@@ -123,7 +132,8 @@ holds three buttons:
   Ratio experiment's own light QC) and the report, **whatever the panels'
   ticks**. A Project Script's `run_all_analyses` step, in a Batch Run or
   not, runs the same Basic analysis (the report only when the step asks for
-  it) and does not read the ticks either.
+  it) and does not read the ticks either. Both run the whole recording and
+  then every Slice the design declares.
 - **The QC Viewer**: loading a member on its **Load** tab writes the QC
   bundle. Opened from the Hub, the viewer starts on the member the Hub already
   loaded without writing anything, and **Run QC** in its top bar writes the
@@ -157,7 +167,7 @@ my_experiment/
     simultaneous_feeding/    DFM1_simultaneous_feeding_matrix.csv   (two-well)
     bleeding/                DFM1_bleeding_matrix.csv
                              DFM1_bleeding_alldata.csv               (two-well)
-    opto/                    four tables and opto_light_dfm1.png     (optogenetic)
+    opto/                    the light QC tables and opto_light_dfm1.png (optogenetic)
     program/                 program_timeline_dfm1.png               (optogenetic)
   analysis/
     removed_chambers.csv     what auto-removal took out, and why
@@ -165,6 +175,11 @@ my_experiment/
     experiment_report.pdf    the report, which opens with Quality control
     light_summary.csv, ...   the light table                         (optogenetic)
     pr_light_qc.csv, ...     Progressive Ratio (section 8)
+  slices/
+    first_6h/                one folder per Slice the design declares
+      qc/                    the same QC, for the Slice's minutes only
+      analysis/              its own removed_chambers.csv, summary.txt and report
+      slice.json             the Slice's definition, and where each DFM's data ended
 ```
 
 Every file outside `qc/opto/` and `qc/program/` has one copy per DFM, named `DFM<n>_...`.
@@ -177,6 +192,41 @@ Python by default, from the Project's **Analyze all**, and from the Hub's
 **Run analysis** (and a script's `run_analysis`), which computes it for
 `summary.txt`. A script's `basic_analysis` leaves that section out; the
 report and `qc/` hold the same information.
+
+### Slices: QC of part of a recording
+
+A **Slice** is a named part of the recording, declared in the design under
+`global: slices:` (say `first_6h`, minutes 0 to 360), and analysed as if the
+recording were only those minutes. See *Slices* in the help. For QC it
+means:
+
+- **Every check runs on the Slice's rows alone.** The rows outside it are
+  dropped at load, before the baseline, the thresholds and lick detection.
+  A Slice's integrity report, data breaks, signal plots, crosstalk tables
+  and light QC describe its minutes and nothing else.
+- **Two things are still read from before the Slice**, because they
+  happened there: the firmware's baseline from the run's first ten seconds,
+  for the emulated trigger (section 6.4), and whether light that was on at
+  the Slice's first row had just come on. Light already on there is not
+  judged for up to one Hold plus the tolerance (section 6.3).
+- **Which Slices run.** The QC panel's **Slices** group has one box per
+  Slice, all ticked to begin with. **Run QC** runs the whole recording, then
+  every ticked Slice. The Analyze and Plots panels share these boxes: a tick
+  on one panel ticks the other two (`global.omit.slices`). **Analyze all**
+  runs every Slice, whatever the boxes.
+- **What you see.** The Hub's **Slice** menu, above the members table,
+  chooses which one **View QC plots**, **Open qc folder** and the QC Viewer
+  show. In the QC Viewer, the Load tab's **Slice** menu loads one directly
+  (section 4).
+- **Its own exclusions and cutoffs** (section 5): a chamber excluded while
+  you view a Slice leaves that Slice only.
+- **Coverage.** A member whose recording stops short of a Slice, by more
+  than `slice_tolerance_min` (5 minutes), is left out of that Slice. The Hub
+  marks it *not covered*, and its `slice.json` says why.
+
+A type with the Progressive Ratio module has no Slices: its Training and
+Test are split at each chamber group's own training end, which a Slice
+could cut off.
 
 ---
 
@@ -405,7 +455,7 @@ pyflic qc "path/to/my_experiment"
 
 | Tab | Shows |
 |---|---|
-| **Load** | load an experiment and choose the time range; the log of every step |
+| **Load** | load an experiment and choose the Slice (when the design declares Slices) or the time range; the log of every step |
 | **Feeding Summary** | the per-chamber summary table, with a checkbox per chamber for exclusion |
 | **DFM *n*** | one tab per device: **Integrity** (with the recording's `Messages.csv` below), **Sim. Feeding** and **Bleeding** (two-well), **Raw Signal**, **Baselined** and **Cumulative Licks**, and **Program** for a DFM with a program or firmware 4.0.0 data (section 6.8), with its *Wells* and, on firmware 4.0.0, *Activations* tables (section 7.7); an **Exclude Wells** panel sits beside them |
 | **Opto Light QC** | optogenetic experiments only (sections 6.6 and 7.7) |
@@ -461,7 +511,11 @@ tab's **Exclude Wells** panel, which ticks the chamber a well belongs to.
 **Mark All Excluded** and **Clear All** set every box at once. **Auto Filter**
 ticks the chambers the design's cutoffs would remove, and **View Criteria**
 shows the rules it used and why each chamber was chosen. **Save Exclusions…**
-writes your selection to a named group in the member's `remove_chambers.csv`.
+writes your selection to a named group in the member's `remove_chambers.csv`,
+replacing that group's rows. It offers the loaded analysis's own group: the
+whole recording's, or, with a Slice loaded, the Slice's. Naming the own
+group of another analysis asks first, and says how many of its rows would be
+replaced.
 
 The ticks are only a selection until you save them. Review Auto Filter's
 selection before saving: automatic criteria are a starting point, not a
@@ -490,6 +544,15 @@ one is `general`, unless a Project's design names another with
 `exclusion_group:`. The QC Viewer's **Save Exclusions…** writes this file
 for you.
 
+**Each Slice has its own group**, named after the Slice unless the Slice's
+`exclusion_group:` names another, and it inherits nothing from the whole
+recording's. A chamber whose well dried at hour 10 goes in the whole
+recording's group only: it leaves the 24-hour analysis and stays in
+`first_6h`. To exclude a chamber everywhere, such as a fly dead from the
+start, list it once in a shared group, `dead` say, and name that group under
+`also_exclude:` for the whole recording and for each Slice. An analysis
+excludes the groups `also_exclude:` names, and never writes to them.
+
 To declare many at once, put one exclusion sheet at the project or batch
 folder and apply it; pyflic writes its rows into each member's file. See
 *Excluding chambers in bulk* in the help.
@@ -501,23 +564,41 @@ cutoffs once, before writing any summary. The defaults depend on the experiment 
 (a type your lab built states its own), and the median-duration and events cutoffs apply
 to every two-well type that sets them:
 
-| Setting | Removes a chamber when | Custom | Hedonic, Progressive Ratio |
-|---|---|---|---|
-| (always) | a well produced no usable lick count | yes | yes |
-| `min_untransformed_licks_cutoff` | a well has fewer licks than this over the recording, counted before any transform | off | 20 |
-| `max_med_duration_cutoff` | the median feeding-event duration at either well is above this, a sign of a stuck or bleeding signal (two-well) | off | 13.0 |
-| `max_events_cutoff` | either well has more feeding events than this (two-well) | off | 150000 |
-| `exclude_failed_opto_chambers` | its linkage group failed the optogenetic light QC (sections 6 and 7) | off | off |
+| Setting | Removes | Custom | Hedonic | Progressive Ratio |
+|---|---|---|---|---|
+| (always) | the chamber, when a well produced no usable lick count | yes | yes | yes |
+| `min_untransformed_licks_cutoff` | the chamber, when a well has fewer licks than this over the recording, counted before any transform | off | 20 | 20 |
+| `max_med_duration_cutoff` | the chamber, when the median feeding-event duration at either well is above this many seconds, a sign of a stuck or bleeding signal (two-well) | off | 13.0 | 13.0 |
+| `max_events_cutoff` | the chamber, when either well has more feeding events than this (two-well) | off | 150000 | 150000 |
+| `exclude_failed_opto_chambers` | every chamber of a linkage group that failed the optogenetic light QC (sections 6 and 7) | off | off | off |
+| `require_training_complete` | every chamber of a chamber group whose paired fly never finished training (section 8) | — | — | on |
+| `exclude_failed_pr_groups` | every chamber of a chamber group that failed the Progressive Ratio light QC (section 8) | — | — | on |
 
-*Off* means the cutoff runs only when the design sets a value. In the
+*Off* means the cutoff runs only when the design sets a value, or, for a
+switch, only when the design turns it on. *—* means the type has no such
+rule. In the
 Config Editor and the Project Design dialog each cutoff has a **Use** box:
 ticked with a blank value, it keeps the type's default; ticked with a number,
 it uses that number; unticked, it turns the cutoff off even where the type
 sets one.
 
-A Progressive Ratio experiment adds its own group-level rules (section 8).
+**A chamber or its whole group.** The lick, duration and event cutoffs
+remove only the chamber that fails them. The last three remove every chamber
+of the group, because a group shares one light: a failed linkage group takes
+every chamber it touches, a failed chamber group both chambers of its pair.
+A pair that loses one chamber to a chamber-level cutoff keeps the other in
+the per-chamber tables, but drops out of everything that compares paired
+with yoked.
+
 Set the cutoffs in the Project's design so that every member is judged by
 the same rule.
+
+**A Slice may set four of them** under its own `constants:`, because a
+shorter span needs a lower lick count: `min_untransformed_licks_cutoff`,
+`exclude_failed_opto_chambers`, `opto_unexplained_fail_fraction` and
+`opto_unexplained_min_sec`. Every other setting, the detection parameters
+and the rule checks among them, stays the design's, so a Slice is the same
+analysis of fewer minutes. Its `summary.txt` names the cutoffs it changed.
 
 ### Where exclusions are recorded
 
@@ -529,10 +610,14 @@ the same rule.
 | the report's *Excluded chambers* table | both, marked *by hand* or *automatic*; the cover counts them |
 | `<project>_Excluded.csv` | every member's, in a Project (section 9) |
 
+A Slice keeps its own copies in `slices/<name>/analysis/`.
+
 **Declaring does not change results already on disk.** When a member's
 `remove_chambers.csv` is newer than its saved results, the Hub's Analyzed
-column reads **re-run needed**. Run the member's analysis again (**Run
-analysis**, or the Project's **Analyze all**).
+column reads **re-run needed**. With a Slice chosen in the Hub's Slice menu,
+it also means that the Slice's definition changed since its run. Run the
+member's analysis again (**Run analysis**, or the Project's **Analyze
+all**).
 
 ---
 
@@ -616,6 +701,11 @@ pyflic tells them apart by their content and reads both.
   An old program loaded into PyMCU 4.0.0 appears with generated names such
   as `ClosedLoop-40Hz-8ms-Hold500-MaxOn0`. The `***Env Mon***` section, the
   Environmental Monitor's, is ignored.
+
+  Its `Baseline:` line is `Yes`, `No` or `Adaptive`. With `Adaptive`, PyMCU
+  kept each well's baseline up to date through the recording, within
+  `BaselineRatePerHour:` and `BaselineCapCounts:`, which follow it; pyflic
+  reads both.
 - **The older export** echoes five numbers on each interval line: `F:`,
   `P:`, `D:`, `L:` and `M:`, frequency, pulse width, decay, delay and maximum
   time on. Thresholds are numbers: `0` is open loop and `-1` never triggers.
@@ -644,8 +734,18 @@ reads the shape of each DFM's file once, at load:
 | Generation | Recorded by | What pyflic can read |
 |---|---|---|
 | 1 | PyMCU 3.x, older firmware: 27 columns | the light at each sample (`OptoCol1`); Training as a flag in the signal |
-| 2 | PyMCU 4.0.0 with an un-updated DFM: 90 columns, the new ones empty | the light at each sample; no Training at all |
-| 3 | PyMCU 4.0.0 with DFM firmware 4.0.0: 90 columns, filled | on every row the Program Interval, its Cycle and its Paradigm; for every well its Phase (`A` in Acclimation, `M` after), its Activations, its Requirement and Progress under a ratio Paradigm, and `OnMs`, the milliseconds its light was on |
+| 2 | PyMCU 4.0.0 with an un-updated DFM: 90 or 102 columns, the Paradigm ones empty | the light at each sample; no Training at all |
+| 3 | PyMCU 4.0.0 with DFM firmware 4.0.0: 90 or 102 columns, filled | on every row the Program Interval, its Cycle and its Paradigm; for every well its Phase (`A` in Acclimation, `M` after), its Activations, its Requirement and Progress under a ratio Paradigm, and `OnMs`, the milliseconds its light was on |
+
+**The Baseline columns.** Released PyMCU 4.0.0 writes 102 columns: the 90,
+then `Baseline1` to `Baseline12`, on every DFM, whatever its firmware. They
+hold the **Baseline in force**: the baseline PyMCU added to each well's
+threshold before sending it to the DFM, so a threshold T meant contact above
+Baseline + T. With `Baseline: Adaptive` it follows each well's resting level
+through the recording. They are `NA` before the first Program Interval,
+outside the program, and with `Baseline: No`. They do not change the
+generation. Files with 90 columns are PyMCU 4.0.0 development builds from
+before 1 November 2026. The light QC uses the columns (section 6.4).
 
 On generation 3 the rows are the schedule, so the program's timestamps are
 only a check (*interval started late*, section 7.6), and the light QC reads
@@ -722,8 +822,9 @@ recordings every lit sample of `OptoCol1` is judged with the Hold rule.
 | Check | What it means | Verdict |
 |---|---|---|
 | **Unexplained light** | at least 30% of the group's judged lit time had no lick or touch behind it | **fails** the group |
+| **Unexplained light (no Program.txt)** | the same, on a DFM without its `Program.txt` section, where an open-loop schedule cannot be told from a stuck light | warning |
 | **Partly unexplained light** | at least 10% unexplained | warning |
-| **Light while off** | lit while every well of the group was `Off` (-1), or while the DFM ran PyMCU's idle Paradigm | **fails** the group |
+| **Light while off** | lit at all, for any length of time, while every well of the group was `Off` (-1), or while the DFM ran PyMCU's idle Paradigm | **fails** the group |
 | **No light recorded** | `optogenetics: true`, and no light on the DFM at all | **fails** the DFM |
 | **Broken yoking** | firmware 4.0.0: the group's linked wells' light differs by more than 1 ms in more than 1% of its lit records, or an `Off` well linked to a trigger well counted Activations of its own | **fails** the group |
 | **Paradigm not in program** | firmware 4.0.0: a row names a Paradigm `Program.txt` does not define, so the file is another recording's; those rows are not judged | **fails** every group of the DFM |
@@ -741,15 +842,23 @@ recordings every lit sample of `OptoCol1` is judged with the Hold rule.
 | **No Program.txt for firmware 4.0.0** | a firmware 4.0.0 DFM without its program | warning |
 | **The rule checks** | firmware 4.0.0 with `Program.txt`: each Paradigm's own rule, one Activation at a time (section 7). *Short activations*, *max on exceeded*, *wrong activation length*, *lockout broken* and *requirement series wrong* fail; *contact without activation*, *non-feeding dark*, *interval started late* and *DFM restarted* warn | **fails** the group, or warning |
 
+The numbers in this table are the defaults; section 6.5 names the setting
+behind each, and section 10 lists the fixed values no setting changes.
+
 Neither unexplained-light check is judged until a group has at least 30
 seconds of unexplained light (`opto_unexplained_min_sec`), so a few stray
-samples in a group lit for seconds are not called a fault. The fractions are
-the same for every Paradigm type.
+samples in a group lit for seconds are not called a fault. Below that, a
+group with at least 10% unexplained gets a note instead of a flag. The
+fractions are the same for every Paradigm type.
 
 Some light is not judged at all:
 
 - light at the start of an interval, for one Hold, which belongs to the
   interval before it;
+- on a Slice, light already on at its first row, for up to one Hold plus
+  the tolerance: it came on before the Slice, so whatever explains it is not
+  among the Slice's rows. Light still on after that is judged, so a stuck
+  LED still shows;
 - light outside the program's schedule; on firmware 4.0.0, the baseline rows
   before the program's first instruction, rows under an instruction outside
   the program, and an interval whose Paradigm `Program.txt` does not define;
@@ -772,6 +881,24 @@ Each flagged group gets a **likely cause**:
 - **hardware, linkage or program mismatch**, otherwise: light the firmware
   had no reason to switch on. Check the lid, the linkage and the program.
 
+**With the Baseline columns (section 6.2) the first cause splits in two**,
+because pyflic then knows the baseline the firmware's thresholds were built
+on. It compares each trigger well's resting level, the 10th percentile of
+its signal in each minute, with its Baseline in force:
+
+- **a drifting baseline**, when most of that light fell where a trigger well
+  rested 10 or more counts above its Baseline in force. The well's resting
+  level had drifted up further than PyMCU had followed it, so the firmware
+  read the drift as contact.
+- **sustained contact**, otherwise: the well rested at its baseline, and the
+  signal itself stayed up. A fly standing on the food does this. pyflic's
+  running baseline (3 minutes by default) absorbs a long, steady contact, so
+  pyflic sees no lick where the firmware sees contact.
+
+The difference matters for what you do next. A drifting baseline is the
+sensor: the light did not follow the fly. Sustained contact is the fly: the
+firmware acted on real contact that pyflic's detection did not count.
+
 How pyflic knows where the firmware saw contact depends on the generation.
 
 **On a firmware 4.0.0 recording the firmware's decisions are recorded.** An
@@ -791,7 +918,26 @@ was seeing contact that pyflic's running baseline removed.
 `ContactWithoutActivitySec` is how long that lasted. The emulation is marked
 approximate (`EmulationApproximate`) when the data begin more than two
 seconds after the program started, because the firmware's first ten seconds
-were not recorded.
+were not recorded. A Slice that starts later still reads the baseline from
+the run's first ten seconds, which the load keeps aside; it is approximate
+only when those were not recorded either, and a note says so.
+
+**With the Baseline columns nothing is reconstructed.** The emulated trigger
+takes each row's Baseline in force instead of the mean of the first ten
+seconds, so it follows an adaptive baseline as the firmware's thresholds
+did, and it is never approximate.
+
+**`qc/opto/opto_baselines.csv`** shows how each well's Baseline in force
+moved, one row per well, written only when the data have the columns:
+`BaselineStart` and `BaselineEnd`, `BaselineMin` and `BaselineMax`,
+`BaselineMaxMove` (its largest move from the start, in counts), `Updates`
+(how many times it changed), and, under `Baseline: Adaptive`, `CapCounts`
+and `ReachedCap`. When any well's baseline moved, `summary.txt` and the
+report add a DFM note: *the baseline in force moved on 4 well(s), at most 38
+counts (well 7); well(s) 7 reached the cap*. The table and the note carry no
+verdict. A well that reached the cap may have drifted further than PyMCU
+was allowed to follow, so look at its raw signal and at its group's light
+QC.
 
 ### 6.5 Settings
 
@@ -848,6 +994,7 @@ Basic analysis and the Hub's **Run QC** (with *Opto light QC tables* and
 | `opto_light_intervals.csv` | group and interval | the interval's mode, the Hold it was judged with (`HoldMs`) and trigger wells; on firmware 4.0.0 the `ProgramInterval`, `Cycle`, `Paradigm` and `ParadigmType` the rows recorded; lit, unexplained and contact time; feeding bouts, and those never lit |
 | `opto_light_events.csv` | light event | its well, onset, end and duration; unexplained seconds; `OverrunSec`, the light's time past the last lick plus the Hold; on firmware 4.0.0, where each event is one Activation, its `Phase`, the Requirement it met, the firmware's feeding bouts behind it, its light to the millisecond, its Paradigm Family and what ended it (section 7.7) |
 | `opto_program.csv` | program interval | the program as pyflic read it: each Paradigm's name, type and settings, the linkage and trigger wells, and for an older export the raw `F` and `P` it echoed |
+| `opto_baselines.csv` | well | how its Baseline in force moved (section 6.4); written only when the data have PyMCU's Baseline columns |
 | `opto_light_dfm<n>.png` | DFM | the *Light explained by licks* figure |
 
 **Roles.** `Roles` names what each chamber of the group was to the light, as
@@ -1504,26 +1651,42 @@ described in full in the
 [Progressive Ratio guide](progressive-ratio-user-guide.md), sections 5.1 to
 5.3 and 6. A chamber group is a pair of chambers, one paired and one yoked,
 or in a design without yoked controls a single chamber (a solo group); the
-guide says where the groups come from. In brief:
+guide says where the groups come from. Each check, with its default
+threshold and the setting behind it:
 
-| Check | Verdict |
-|---|---|
-| **Training never completed** | removes the group's chambers (`require_training_complete`) |
-| **No training information**: recorded by PyMCU 4.0.0 from a DFM whose firmware is older than 4.0.0 | nothing removed: each group is one `Recording` facet, with no Test phase and no breaking point |
-| **Self-triggered light**: five or more Test light events in a row with no sucrose lick since the previous one | **fails** the group |
-| **Implausible training**: training completed, with light events, but without one sucrose lick | **fails** the group |
-| **Requirement series wrong** (firmware 4.0.0): a Test light event met a Requirement the Test Paradigm's series does not give | **fails** the group |
-| **No increasing trend** in licks per light event (not judged under a fixed ratio, whose requirement never rises) | warning |
-| **Resting level rise** or **resting level elevated** at the sucrose well | warning |
+| Check | Fires when (default) | Verdict |
+|---|---|---|
+| **Training never completed** | the paired fly's sucrose well never finished training, so the group has no Test phase | **removes** every chamber of the group (`require_training_complete`, on) |
+| **No training information** | recorded by PyMCU 4.0.0 from a DFM whose firmware is older than 4.0.0 | a note; nothing removed: each group is one `Recording` facet, with no Test phase and no breaking point |
+| **Self-triggered light** | `pr_lick_free_run` (5) or more Test light events in a row are lick-free | **fails** the group |
+| **Implausible training** | training completed, with light events, but without a single sucrose lick | **fails** the group |
+| **Requirement series wrong** (firmware 4.0.0) | any one Test light event met a Requirement the Test Paradigm's series does not give | **fails** the group |
+| **No increasing trend** | with at least `pr_trend_min_events` (5) Test light events inside the Test window, Spearman's rho of licks per light event against event number is below `pr_trend_min_rho` (0.3); not judged under a fixed ratio, whose requirement never rises | warning |
+| **Resting level rise** | the sucrose well's resting level (the per-minute median of its raw signal), taken as a 30-minute running median, peaks at least `pr_resting_level_rise` (15) counts above its median over the first 30 minutes | warning |
+| **Resting level elevated** | the sucrose well rests at `pr_resting_level_ratio` (3) or more times the level of the DFM's other sucrose wells, and at least `pr_resting_level_rise` (15) counts above them | warning |
 
 A group that fails leaves the analysis by default
-(`exclude_failed_pr_groups: true`): both chambers of a pair, the one chamber
-of a solo group. A light event is lick-free only when it
+(`exclude_failed_pr_groups`, on): both chambers of a pair, the one chamber
+of a solo group. With the switch off, it is kept, and `pr_light_qc.csv`
+still lists it. Warnings never remove a group. Below the minimums the checks
+say so in a note instead of judging: a group with fewer than 5 Test light
+events in its Test window gets no trend verdict (`pr_trend_min_events` is
+never taken below 3), and a group with no Test light events at all stopped
+before its first Test requirement, which is a breaking point of 0, not a
+failure.
+
+A light event is lick-free only when it
 has no sucrose lick since the previous one and no lick or touch within its
 Hold, so a light the fly touched for is never counted against it. On a
 firmware 4.0.0 recording a light event is the paired sucrose well's own
 Activation, and Training is read from its Phase rather than from a flag in
-the signal.
+the signal. On an older recording a light event that begins on the row
+that clears the training flag is the last Training pairing, not the first
+Test one.
+
+The optogenetic light QC (sections 6 and 7) runs beside these checks, with
+its own switch. A chamber group is a linkage group there, so a group that
+fails it is flagged and kept unless `exclude_failed_opto_chambers` is on.
 
 **Requirement series wrong** is the optogenetic light QC's own check
 (section 7.4), run on the Main Activations of the paired sucrose well inside
@@ -1590,6 +1753,11 @@ cutoffs and the light QC thresholds. Every member inherits them. Set them
 there, once, and keep a DFM's own settings to what its rig requires, such as
 `pi_direction`.
 
+**Each Slice is pooled on its own**, into `slices/<name>/` at the Project
+root, from the members that cover it, with its own `<project>_Excluded.csv`
+and `<project>_LightQC.csv`. A member that does not cover a Slice is named
+there, not pooled for part of it.
+
 Before pooling, compare the exclusion counts per treatment in
 `<project>_Excluded.csv`. If one treatment lost far more chambers than
 another, the chambers that remain may not be comparable. Report the counts.
@@ -1601,7 +1769,162 @@ contributes light measures an older one cannot (section 6.2).
 
 ---
 
-## 10. A QC checklist
+## 10. Every check at a glance: removed or flagged
+
+This section puts every check on one page, with its default threshold. The
+sections it points to explain them. A check has one of four outcomes:
+
+- **Removed.** The chamber leaves every result. Only your own exclusions,
+  in `remove_chambers.csv`, and auto-removal (section 5), whose reasons are
+  in `analysis/removed_chambers.csv`, remove a chamber.
+- **Fails.** The group's verdict is *failed*, and its flags go on its
+  chambers' rows. It is removed only when its switch is on:
+  `exclude_failed_opto_chambers` (off by default) for the optogenetic light
+  QC, `exclude_failed_pr_groups` (on by default) for the Progressive Ratio
+  light QC.
+- **Warning.** Flagged and kept. A warning never removes anything.
+- **Reported.** A count, a table or a figure, with no verdict.
+
+A verdict falls on a linkage group (optogenetic light QC), a chamber group
+(Progressive Ratio), or a DFM. A DFM's flag goes on every group of that DFM.
+Every default below is the shipped one; a type your lab built, or a Slice
+(section 5), may state another.
+
+### 10.1 What removes chambers
+
+| Rule | Default | Removes |
+|---|---|---|
+| your `remove_chambers.csv` | — | the chambers listed in the active group and in any group `also_exclude:` names |
+| no usable lick count | always | the chamber |
+| `min_untransformed_licks_cutoff` | 20 for Hedonic and Progressive Ratio; off for Custom | the chamber, when a well has fewer licks |
+| `max_med_duration_cutoff` | 13.0 s for Hedonic and Progressive Ratio; off for Custom | the chamber, when either well's median event duration is longer (two-well) |
+| `max_events_cutoff` | 150000 for Hedonic and Progressive Ratio; off for Custom | the chamber, when either well has more events (two-well) |
+| `require_training_complete` | on (Progressive Ratio) | every chamber of a chamber group whose paired fly never finished training |
+| `exclude_failed_pr_groups` | on (Progressive Ratio) | every chamber of a chamber group that **fails** the Progressive Ratio light QC (10.4) |
+| `exclude_failed_opto_chambers` | off | every chamber of a linkage group that **fails** the optogenetic light QC (10.3) |
+
+### 10.2 Every experiment: never removes
+
+| Check | Flags when (default) | Outcome |
+|---|---|---|
+| **Data integrity** (3.1) | any data break, firmware error flag, lost record, or an index that does not rise by 1 | warning for the DFM |
+| **Data breaks** (3.2) | a gap between samples longer than 4 sampling intervals (0.8 s at 5 samples per second) | counted; makes the DFM's integrity a warning |
+| **Simultaneous feeding** (3.4, two-well) | — | reported: `Both` and `Both_pre` per chamber |
+| **Bleeding** (3.5, two-well) | a well's mean response, while another well's baselined signal is above 50, exceeds `feeding_threshold` | warning for the DFM |
+
+### 10.3 Optogenetic light QC
+
+*Gen* is the generation the check runs on (section 6.2): *all*, or *3*
+(firmware 4.0.0). The rule checks of section 7 also need the DFM's
+`Program.txt` section, except *DFM restarted*. On a group, *fails* removes
+nothing unless `exclude_failed_opto_chambers` is on.
+
+**Fails:**
+
+| Flag | Fires when (default; setting) | On | Gen |
+|---|---|---|---|
+| **Unexplained light** (6.3) | at least 30% of the judged lit time has no trigger-well lick or touch behind it (`opto_unexplained_fail_fraction`), once at least 30 s are unexplained (`opto_unexplained_min_sec`); needs `Program.txt` | group | all |
+| **Light while off** (6.3) | any light while every well of the group is `Off`, or under PyMCU's idle Paradigm | group | all |
+| **No light recorded** (6.3) | `optogenetics: true`, and no light on the DFM at all | DFM | all |
+| **Broken yoking** (6.3) | linked wells' light differs by more than 1 ms in more than 1% of the group's lit records (`opto_yoking_fail_fraction`), or an `Off` well linked to a trigger well counts Activations | group | 3 |
+| **Paradigm not in program** (6.3) | any row names a Paradigm `Program.txt` does not define | DFM | 3 |
+| **Short activations** (7.3) | more than 5% of judged closed-loop Activations (`opto_activation_length_fail_fraction`) are lit for less than their Hold, or `MaxOnMs` when shorter, less 25 ms (`opto_activation_tolerance_ms`) | group | 3 |
+| **Max on exceeded** (7.3, 7.5) | any one judged Activation lit for longer than `MaxOnMs` plus 25 ms | group | 3 |
+| **Wrong activation length** (7.4) | more than 5% of judged fixed-length Main Activations differ from `ActivationMs` by more than 25 ms | group | 3 |
+| **Lockout broken** (7.4) | more than 2% of judged FixedInterval onset pairs (`opto_lockout_fail_fraction`) are closer than the longer of `LockoutMs` and `ActivationMs`, less 25 ms | group | 3 |
+| **Requirement series wrong** (7.4) | any one Main Activation met a Requirement its series does not give | group | 3 |
+
+A light period timed only to the record gets one record (200 ms) more
+tolerance than the 25 ms above.
+
+**Warns:**
+
+| Flag | Fires when (default; setting) | On | Gen |
+|---|---|---|---|
+| **Partly unexplained light** (6.3) | at least 10% unexplained (`opto_unexplained_warn_fraction`), once at least 30 s are | group | all |
+| **Unexplained light (no Program.txt)** (6.3) | at least 30% unexplained, without the DFM's `Program.txt` section | group | all |
+| **Unlit feeding** (6.3) | at least 50% (`opto_unlit_feeding_fraction`) of the closed-loop and Acclimation feeding bouts at its trigger wells never lit the group, judged from 5 bouts | group | all |
+| **No light events** (6.3) | feeding at its trigger wells under a feeding Paradigm, and never lit | group | all |
+| **Open loop not lit** (7.2) | lit for less than 95% (`opto_open_loop_min_lit_fraction`) of its open-loop time; on generation 3, of any one window | group | all |
+| **Program mismatch** (6.3) | the data's frequency, pulse width or dark setting differ from the program; the data start more than 60 s from its Start Time; or a row names another Paradigm than the program's line | DFM | all |
+| **No program section** (6.3) | `Program.txt` has no usable section for the DFM | DFM | all |
+| **No Program.txt for firmware 4.0.0** (6.2) | a firmware 4.0.0 DFM without its program | DFM | 3 |
+| **Acclimation count mismatch** (6.3) | any completed Acclimation counted a different number of Activations than its Paradigm's `Acclimation` | group | 3 |
+| **Firmware events disagree** (6.3) | under a ratio Paradigm's Main, a trigger well's firmware and pyflic feeding-bout counts differ by more than 25% of the firmware's (`opto_event_disagreement_warn_fraction`), judged from 5 bouts | group | 3 |
+| **Lost records** (6.3) | more than 25 records missing from the index (`opto_lost_records_warn`), not counting a restart's gap | DFM | 3 |
+| **Unknown-instruction rows** (6.3) | more than 1% of the rows after the lead-in (`opto_unknown_rows_warn_fraction`) under an instruction outside the program | DFM | 3 |
+| **Late records** (6.3) | more than 10 records (`opto_late_records_warn`) whose light count exceeds 200 ms | DFM | 3 |
+| **Contact without activation** (7.4) | more than 25% (`opto_missed_contact_warn_fraction`) of free FixedInterval contact runs bring no Activation, judged from 5 runs | group | 3 |
+| **Non-feeding light during feeding** (7.5) | lit through more than 10% (`opto_non_feeding_lit_warn_fraction`) of the feeding at its trigger wells under NonFeeding, once lit at least 30 s of it (`opto_non_feeding_min_sec`) | group | 3 |
+| **Non-feeding dark** (7.5) | dark for more than 10% (`opto_non_feeding_dark_warn_fraction`) of the time the NonFeeding rule says lit, judged once 10 s are expected lit | group | 3 |
+| **Interval started late** (7.6) | a Program Interval begins more than 5 s (`opto_interval_lag_warn_sec`) after its `Program.txt` time, on any Cycle; the first Interval's 5-s lead-in is discounted | DFM | 3 |
+| **DFM restarted** (7.6) | any restart of the DFM during the recording; needs no `Program.txt` | DFM | 3 |
+
+**Reported, no verdict:** `LikelyCause` (6.4); `UnexplainedOnsetMin`
+(6.9); `EmulationApproximate` (6.4); `CutOffs` (7.3); `RelightDelayMs`
+(7.5); the Activations not judged, in the group's notes (7.1); and, with
+PyMCU's Baseline columns, `opto_baselines.csv` and the DFM note on how each
+baseline moved (6.4).
+
+**Fixed values.** No setting changes these:
+
+| Value | Used for |
+|---|---|
+| 5 feeding bouts | the fewest before *unlit feeding* and *firmware events disagree* are judged |
+| 5 free contact runs | the fewest before *contact without activation* is judged |
+| 10 s expected lit | the least before *non-feeding dark* is judged |
+| 1 ms | how far linked wells' light may differ in a record before it counts toward *broken yoking* |
+| 60 s | how far the data's start may be from the program's Start Time before *program mismatch* |
+| 5 s | the first Program Interval's lead-in, discounted by *interval started late* |
+| 200 ms | the extra tolerance of a light period timed only to the record |
+| 10 s | the firmware's baseline window, which the emulated trigger re-creates without the Baseline columns |
+| 2 s | how late the data may begin after the program before the emulation is approximate |
+| 50% | the share of a group's unexplained light that decides its likely cause: where the firmware saw contact (otherwise hardware), and, with the Baseline columns, where a trigger well rested 10 counts above its Baseline in force (otherwise sustained contact) |
+| 10 counts | how far above its Baseline in force a well must rest for the cause to be *a drifting baseline* |
+| 30 minutes | the window of `UnexplainedOnsetMin` |
+
+### 10.4 Progressive Ratio light QC
+
+Section 8 gives the detail. On a failed group, *fails* removes every chamber
+of the group unless `exclude_failed_pr_groups` is off.
+
+| Check | Fires when (default; setting) | Outcome |
+|---|---|---|
+| **Training never completed** | the paired fly never finished training | **removed** (`require_training_complete`, on) |
+| **No training information** | a generation 2 recording | note; nothing removed |
+| **Self-triggered light** | 5 or more lick-free Test light events in a row (`pr_lick_free_run`) | **fails** |
+| **Implausible training** | training completed with light events and no sucrose lick | **fails** |
+| **Requirement series wrong** | any one Test light event off the Test Paradigm's series (generation 3) | **fails** |
+| **No increasing trend** | rho below 0.3 (`pr_trend_min_rho`), with at least 5 Test light events in the Test window (`pr_trend_min_events`); not under a fixed ratio | warning |
+| **Resting level rise** | the sucrose well's resting level peaks at least 15 counts above its first 30 minutes (`pr_resting_level_rise`) | warning |
+| **Resting level elevated** | it rests at 3 or more times the DFM's other sucrose wells (`pr_resting_level_ratio`) and at least 15 counts above them | warning |
+
+### 10.5 Samples pyflic drops or does not judge
+
+Besides whole chambers, some of the recorded samples are dropped or left
+out of a check. None of this removes a chamber.
+
+- **Dropped at load:** repeated records, the second copy of each (3.1), and,
+  in a Slice, every row outside its minutes (section 2).
+- **Moved between wells:** with the dual-feeding correction (on by default
+  in two-well experiments), a sample licked on both wells of a chamber goes
+  to the stronger one (3.4).
+- **Light not judged** by the unexplained-light checks (6.3): the first Hold
+  of each interval; on a Slice, light already on at its first row, for up to
+  one Hold plus the tolerance; light outside the schedule; on firmware 4.0.0,
+  the lead-in before the first instruction, rows under an instruction
+  outside the program or under no instruction after a restart, and an
+  interval whose Paradigm `Program.txt` does not define; and open-loop and
+  NonFeeding light, which have checks of their own.
+- **Activations not judged** by the rule checks (7.1): those merged with
+  other light, and those cut short by an Interval change, a gap in `Index`
+  or the end of the data. The group's notes count them.
+- **Progressive Ratio** (section 8): a DFM restart ends the Test window, and
+  a generation 2 group has no Test at all.
+
+---
+
+## 11. A QC checklist
 
 For each recording, before you look at any result:
 
@@ -1633,8 +1956,13 @@ For each recording, before you look at any result:
 11. **Progressive Ratio**: the training table and the PR light QC (section 8).
 12. **Exclusions**: declare them, click **Run analysis** again, and check
     `removed_chambers.csv` and the report's *Excluded chambers* table
-    (section 5).
-13. **Write the report** (**Run analysis** with *Experiment report (PDF)*
+    (section 5). Know which of your flagged groups stayed in (section 10).
+13. **Slices**: work through the list again for each Slice, with the Hub's
+    Slice menu set to it. A Slice keeps its own exclusions, so a chamber you
+    excluded from the whole recording is still in the Slice until you
+    exclude it there too, or list it in a group `also_exclude:` names
+    (sections 2 and 5).
+14. **Write the report** (**Run analysis** with *Experiment report (PDF)*
     ticked, or `pyflic report`) and read its Quality control section and
     cover before its results.
 
@@ -1643,7 +1971,7 @@ exclusion counts per treatment (section 9).
 
 ---
 
-## 11. Quick troubleshooting
+## 12. Quick troubleshooting
 
 | You see | Likely cause | What to do |
 |---|---|---|
@@ -1663,6 +1991,11 @@ exclusion counts per treatment (section 9).
 | Many chambers removed for too few licks | the flies fed little, or `min_untransformed_licks_cutoff` is high for this assay | check the cumulative licks; set the cutoff in the design, for every member |
 | The Hub says **re-run needed** | exclusions changed after the results were written | run the member's analysis again (**Run analysis**, or the Project's **Analyze all**) |
 | A linkage group failed for **unexplained light** | most of its lit time had no lick or touch behind it | open *Light explained by licks*: orange beside the red is a drifting well; no orange is a light the firmware had no reason to switch on |
+| `LikelyCause` reads *sustained contact* | the firmware saw contact at a well resting at its Baseline in force, and pyflic's running baseline absorbed it: a fly on the food, say | look at the trigger well's raw signal; the firmware acted on real contact pyflic did not count (section 6.4) |
+| `LikelyCause` reads *a drifting baseline* | a trigger well rested 10 or more counts above its Baseline in force, so the firmware read the drift as contact | look at `opto_baselines.csv` and the well's raw signal; the light did not follow the fly (section 6.4) |
+| A well **reached the cap** in `opto_baselines.csv` | under `Baseline: Adaptive`, PyMCU's baseline moved as far as `BaselineCapCounts` allows | look at the well's raw signal for drift beyond the cap, and at its group's light QC |
+| A chamber excluded from the whole recording is still in a Slice | each Slice has its own exclusion group | exclude it while viewing the Slice, or list it in a group the Slice's `also_exclude:` names (section 5) |
+| A member is **not covered** by a Slice | its recording stops more than `slice_tolerance_min` short of the Slice's end | nothing to fix: it is left out of that Slice; `slice.json` says why |
 | Unexplained light only **warns**, never fails | no `Program.txt` in `data/` | copy the MCU's exported `Program.txt` into `data/` and run again |
 | "holds more than one Program.txt" | two program files in `data/` | keep only the one exported for this recording |
 | "does not satisfy experiment_type …: the Opto Program runs ClosedLoop" (or another Paradigm type) | the program runs light the Experiment Type does not expect (section 6.2) | check that `Program.txt` is this recording's; then choose a type that expects that light, or build one in the Experiment Type Editor |

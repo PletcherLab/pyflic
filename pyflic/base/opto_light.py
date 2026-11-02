@@ -35,6 +35,8 @@ QC_FILES: dict[str, str] = {
     "opto_light_intervals": "opto_light_intervals.csv",
     "opto_light_events": "opto_light_events.csv",
     "opto_program": "opto_program.csv",
+    ## Written only when the data have PyMCU's Baseline columns.
+    "opto_baselines": "opto_baselines.csv",
 }
 #: What the light QC adds to every per-chamber summary row of an optogenetic
 #: experiment: the chamber's Linkage Groups' flags and their largest
@@ -160,7 +162,8 @@ def dfm_inputs(dfm) -> oq.DFMInputs:
         data_dark=column("Dark"), generation=generation,
         state=state if generation == GENERATION_PARADIGM else None,
         start_minutes=None if before is None else before.start_minutes,
-        start_raw=None if before is None else before.start_raw)
+        start_raw=None if before is None else before.start_raw,
+        baseline_in_force=getattr(dfm, "baseline_in_force", None))
 
 
 def _split_flags(text: Any) -> list[str]:
@@ -414,6 +417,14 @@ class OptoLightQC:
         covers — ``qc/opto/opto_program.csv`` (:data:`oq.OPTO_PROGRAM_COLUMNS`)."""
         return oq.program_frame(self.program, self.dfm_ids())
 
+    def baselines_table(self) -> pd.DataFrame:
+        """How each well's Baseline in force moved, one row per well of every
+        DFM whose data have PyMCU's Baseline columns —
+        ``qc/opto/opto_baselines.csv`` (:data:`oq.OPTO_BASELINE_COLUMNS`).
+        Empty when no DFM's data have them."""
+        rows = [r for d in self.dfm_ids() for r in self.result(d).baselines]
+        return pd.DataFrame(rows, columns=list(oq.OPTO_BASELINE_COLUMNS))
+
     # ------------------------------------------------------------------
     # Per chamber
     # ------------------------------------------------------------------
@@ -664,7 +675,7 @@ class OptoLightQC:
                 text += f", from minute {r['UnexplainedOnsetMin']:.0f}"
             if r["LikelyCause"]:
                 text += f"; {r['LikelyCause']}"
-            if firmware4 and r["LikelyCause"] == oq.CAUSE_DRIFT:
+            if firmware4 and r["LikelyCause"] in oq.CONTACT_CAUSES:
                 text += (f" ({r['ContactWithoutActivitySec']:.0f} s lit by Activations and "
                          f"{r['FirmwareEventsWithoutActivity']:.0f} Firmware Event(s) "
                          f"with no lick or touch)")
@@ -780,6 +791,10 @@ class OptoLightQC:
             "opto_light_events": self.events_table(),
             "opto_program": self.program_table(),
         }
+        ## The baselines table only when PyMCU wrote Baseline columns.
+        baselines = self.baselines_table()
+        if not baselines.empty:
+            tables["opto_baselines"] = baselines
         written: dict[str, Path] = {}
         for key, frame in tables.items():
             path = out / QC_FILES[key]
