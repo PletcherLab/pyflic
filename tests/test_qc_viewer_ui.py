@@ -446,3 +446,144 @@ def test_a_generation_1_member_has_a_program_sub_tab_only_with_a_program(app, tm
         assert _sub_tabs(win._dfm_tab_widgets[1])[-1] == "Program"
     finally:
         win.close()
+
+
+# ---------------------------------------------------------------------------
+# Sorting the Feeding Summary; colouring Sim. Feeding and Bleeding
+# ---------------------------------------------------------------------------
+
+def _summary():
+    import numpy as np
+    import pandas as pd
+
+    return pd.DataFrame({"DFM": [1, 1, 1, 2], "Chamber": [1, 2, 3, 1],
+                         "Licks": [9.0, 100.0, np.nan, 10.0]})
+
+
+def _column_text(table, header: str) -> list[str]:
+    c = [table.horizontalHeaderItem(i).text() for i in range(table.columnCount())].index(header)
+    return [table.item(r, c).text() for r in range(table.rowCount())]
+
+
+def test_the_feeding_summary_sorts_by_value_with_blanks_last(app):
+    from PyQt6.QtCore import Qt
+
+    tab = qc_viewer.FeedingSummaryTab()
+    try:
+        tab.populate(_summary())
+        table = tab._table
+        assert _column_text(table, "Chamber") == ["1", "2", "3", "1"]   # as given
+        c = [table.horizontalHeaderItem(i).text()
+             for i in range(table.columnCount())].index("Licks")
+        table.sortByColumn(c, Qt.SortOrder.AscendingOrder)
+        assert _column_text(table, "Licks") == ["9", "10", "100", "nan"]
+        table.sortByColumn(c, Qt.SortOrder.DescendingOrder)
+        assert _column_text(table, "Licks") == ["100", "10", "9", "nan"]
+        ## A recompute re-populates the tab; the sort stays.
+        tab.populate(_summary())
+        assert _column_text(tab._table, "Licks") == ["100", "10", "9", "nan"]
+    finally:
+        tab.deleteLater()
+
+
+def test_a_sorted_feeding_summary_excludes_the_chamber_ticked(app):
+    from PyQt6.QtCore import Qt
+
+    tab = qc_viewer.FeedingSummaryTab()
+    try:
+        tab.populate(_summary(), excluded_by_dfm={2: [1]})
+        table = tab._table
+        seen = []
+        tab.exclusion_changed.connect(lambda d, ch, e: seen.append((d, ch, e)))
+        c = [table.horizontalHeaderItem(i).text()
+             for i in range(table.columnCount())].index("Licks")
+        table.sortByColumn(c, Qt.SortOrder.DescendingOrder)
+        table.item(0, 0).setCheckState(Qt.CheckState.Checked)      # 100 licks
+        assert seen == [(1, 2, True)]
+        tab.set_chamber_excluded(1, 3, True)
+        assert table.excluded_dataframe()[["DFM", "Chamber"]].values.tolist() == [
+            [1, 2], [1, 3], [2, 1]]
+        assert table.included_dataframe()[["DFM", "Chamber"]].values.tolist() == [[1, 1]]
+    finally:
+        tab.deleteLater()
+
+
+def test_crosstalk_is_judged_by_its_share_of_the_chambers_lick_samples():
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"Licks1": [1000, 1000, 1000, 1000, 1000], "Licks2": [1000, 1000, 1000, 1000, 0],
+         "Both": [0, 0, 0, 30, 0], "Both_pre": [0, 1, 3, 30, 0]},
+        index=[f"Chamber{i}" for i in range(1, 6)])
+    tiers = qc_viewer.crosstalk_tiers(frame)
+    ## 1 of 2000 lick samples is 0.05%, 3 is 0.15%; 30 of 1970 is 1.5%.
+    assert {r: t for r, (t, _why) in tiers.items()} == {2: "light", 3: "dark"}
+    assert "before the dual-feeding correction" in tiers[2][1]
+    ## Without the _pre columns, Both is what the wells registered.
+    assert qc_viewer.crosstalk_tiers(frame.drop(columns="Both_pre"))[3][0] == "dark"
+
+
+def test_bleeding_is_judged_against_the_responding_wells_thresholds():
+    import pandas as pd
+
+    labels = [f"W{i}" for i in range(1, 4)]
+    matrix = pd.DataFrame([[90.0, 15.0, 25.0], [12.0, 80.0, 5.0], [9.0, 30.0, 70.0]],
+                          index=[f"{w}Sig" for w in labels],
+                          columns=[f"{w}Resp" for w in labels])
+    feeding_max = {1: 20.0, 2: 20.0, 3: 20.0}
+    tiers = qc_viewer.bleeding_tiers(matrix, feeding_max, {1: 10.0, 2: 10.0, 3: 10.0})
+    assert {k: t for k, (t, _why) in tiers.items()} == {
+        (0, 1): "light", (0, 2): "dark", (1, 0): "light", (2, 1): "dark"}
+    assert "W1's signal" in tiers[(0, 2)][1] and "at W3" in tiers[(0, 2)][1]
+    ## A minimum at the threshold has no light tier; an unknown well is not judged.
+    tiers = qc_viewer.bleeding_tiers(matrix, {1: 20.0, 3: 20.0}, {1: 20.0, 3: 20.0})
+    assert {k: t for k, (t, _why) in tiers.items()} == {(0, 2): "dark"}
+
+
+def test_the_dfm_tab_colours_the_problem_cells(app, tmp_path):
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    qc = tmp_path / "qc"
+    (qc / "simultaneous_feeding").mkdir(parents=True)
+    (qc / "bleeding").mkdir()
+    pd.DataFrame({"Licks1": [1000, 1000], "Licks2": [1000, 1000], "Both": [0, 0],
+                  "Both_pre": [0, 40]}, index=["Chamber1", "Chamber2"]).to_csv(
+        qc / "simultaneous_feeding" / "DFM1_simultaneous_feeding_matrix.csv")
+    wells = range(1, 13)
+    bleed = pd.DataFrame(0.0, index=[f"W{i}Sig" for i in wells],
+                         columns=[f"W{i}Resp" for i in wells])
+    bleed.iloc[0, 0], bleed.iloc[0, 1], bleed.iloc[1, 0] = 100.0, 25.0, 12.0
+    bleed.to_csv(qc / "bleeding" / "DFM1_bleeding_matrix.csv")
+    pd.Series(1.0, index=[f"W{i}" for i in wells]).to_csv(
+        qc / "bleeding" / "DFM1_bleeding_alldata.csv", header=True)
+
+    tab = qc_viewer.DfmTab(1, qc)
+    try:
+        labels = [tab._tabs.tabText(i) for i in range(tab._tabs.count())]
+        dark, light = (qc_viewer._TIER_COLORS[t][0] for t in ("dark", "light"))
+
+        def colour(table, r, c):
+            from PyQt6.QtCore import Qt
+
+            brush = table.item(r, c).data(Qt.ItemDataRole.BackgroundRole)
+            return None if brush is None else brush.color().name()
+
+        sim = tab._tabs.widget(labels.index("Sim. Feeding")).findChildren(
+            qc_viewer._DfTableWidget)[0]
+        assert [colour(sim, r, 0) for r in range(2)] == [None, dark]    # 2% of 2000
+        matrix, = (t for t in tab._tabs.widget(labels.index("Bleeding")).findChildren(
+            qc_viewer._DfTableWidget) if t.columnCount() == 12)
+        ## The two-well defaults without an experiment: threshold 20, minimum 10.
+        assert (colour(matrix, 0, 0), colour(matrix, 0, 1), colour(matrix, 1, 0),
+                colour(matrix, 1, 2)) == (None, dark, light, None)
+
+        ## A loaded DFM's own thresholds, per well, win.
+        frame = pd.DataFrame({"FeedingMax": [30.0], "FeedingMin": [15.0]})
+        tab._exp = SimpleNamespace(dfms={1: SimpleNamespace(
+            thresholds={f"W{w}": frame for w in wells}, params=Parameters.two_well())})
+        assert tab._feeding_thresholds(1) == ({w: 30.0 for w in wells},
+                                              {w: 15.0 for w in wells})
+    finally:
+        tab.deleteLater()

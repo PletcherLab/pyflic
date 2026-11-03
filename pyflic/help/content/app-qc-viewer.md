@@ -75,6 +75,11 @@ ticked means excluded. It is kept in step with the Exclude Wells panel of each D
 it opens ticked for the chambers already excluded in `remove_chambers.csv` under the
 experiment's own exclusion group.
 
+**Click a column header** to sort the rows by it, and click it again to reverse them. Numbers
+sort as numbers, and blank values stay at the bottom either way. Sorting by **Excl.** puts the
+ticked chambers together. A tick stays with its chamber wherever the sort moves it, and the
+sort is kept when the Params tab recomputes the table.
+
 The buttons above the table:
 
 - **Mark All Excluded** and **Clear All** set every box at once.
@@ -129,6 +134,12 @@ The counts without `_pre` are after the correction — the licks the analysis co
 correction off, the two sets agree; with it on, the difference is what the correction
 removed.
 
+**The colours.** A chamber's row is **light red** when 0.1% or more of its lick samples
+(`Licks1 + Licks2 − Both`) registered on both wells at once before the correction
+(`Both_pre`). It is **dark red** at 1% or more. Hover a coloured row for its numbers. Crosstalk
+is rare in good recordings, so a coloured row deserves a look at its two wells' **Baselined**
+traces. Nothing is excluded for it.
+
 ### The Bleeding sub-tab
 
 How far each well's signal follows the others' (signal bleeding between wells).
@@ -138,6 +149,19 @@ How far each well's signal follows the others' (signal bleeding between wells).
   well whose row shows large values in other wells' columns is leaking into them.
 - **All data** — each well's mean baselined signal over the whole recording, for
   comparison.
+
+**The colours.** Off the diagonal, a cell is coloured by how it compares with the responding
+well's own thresholds, the loaded DFM's (two-well defaults: feeding minimum 10, feeding
+threshold 20):
+
+- **Light red** means the response is above the feeding minimum, enough to lengthen a feeding
+  event at that well.
+- **Dark red** means it is above the feeding threshold, enough to register as licks. This is
+  the cell the report's *Bleeding between wells* warning names.
+
+Hover a cell for its numbers. A coloured cell in another chamber's column can be flies in the
+two chambers that fed at the same time, not a leak. The responding well's **Baselined** trace,
+at the moments the signalling well was fed from, tells which. Nothing is excluded for it.
 
 ### The signal plot sub-tabs
 

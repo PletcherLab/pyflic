@@ -130,7 +130,10 @@ Before PyMCU 4.0.0 an interval line looked like this:
 ### What pyflic takes from it
 
 - **Linkage**: wells sharing a number form one **linkage group**, lit together whenever any
-  member triggers.
+  member triggers. With the file, the groups always come from its `Linkage:` line, never from
+  the data. The data only check them. On firmware 4.0.0, linked wells whose light differs fail
+*broken yoking*. On older firmware, the group's notes say how long its linked wells were not
+lit together.
 - **Each interval's Paradigm and thresholds**: which wells trigger, which are open loop,
   which are off, and the rule the light followed.
 - **Program type** and the interval timestamps. On generations 1 and 2 these lay the

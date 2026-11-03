@@ -48,6 +48,7 @@ yaml is never written by this app.
 
 from __future__ import annotations
 
+import math
 import re
 import sys
 from pathlib import Path
@@ -105,6 +106,161 @@ def _resolve_cli(name: str, module: str) -> list[str]:
 # Qt helpers (display-only table, CSV widget, text widget, PNG widget)
 # ───────────────────────────────────────────────────────────────────────────
 
+#: The two problem tiers' cell colours, ``(background, text)``.  The same in
+#: both themes, so "light red" and "dark red" in a legend mean what they say
+#: and the text stays readable on either surface.
+_TIER_COLORS: dict[str, tuple[str, str]] = {
+    "light": ("#fecaca", "#7f1d1d"),
+    "dark": ("#b91c1c", "#ffffff"),
+}
+
+
+def _tier_swatch(tier: str) -> str:
+    """*tier*'s colour as rich text, for a legend."""
+    background, text = _TIER_COLORS[tier]
+    return (f'<span style="background-color:{background}; color:{text};">'
+            f"&nbsp;{tier} red&nbsp;</span>")
+
+
+def _tier_legend(text: str) -> QtWidgets.QLabel:
+    """A wrapped rich-text line above a coloured table, saying what its colours mean."""
+    label = QtWidgets.QLabel(text)
+    label.setTextFormat(Qt.TextFormat.RichText)
+    label.setWordWrap(True)
+    return label
+
+
+#: The Sim. Feeding sub-tab's tiers: the share of a chamber's lick samples
+#: that registered on both of its wells at once, before the dual-feeding
+#: correction.  Of 384 chambers in the lab's recordings to November 2026, six
+#: had any, the most 0.8%.
+CROSSTALK_LIGHT_SHARE = 0.001
+CROSSTALK_DARK_SHARE = 0.01
+
+
+def crosstalk_tiers(frame: pd.DataFrame) -> dict[int, tuple[str, str]]:
+    """Row position → ``(tier, why)`` for the chambers of a simultaneous-feeding
+    table whose crosstalk deserves a look: at least :data:`CROSSTALK_LIGHT_SHARE`
+    of the chamber's lick samples on both wells at once (``"light"``), or
+    :data:`CROSSTALK_DARK_SHARE` (``"dark"``).
+
+    Counted before the dual-feeding correction (``Both_pre``), what the wells
+    registered, when the table has it; else ``Both``.  The chamber's lick
+    samples are ``Licks1 + Licks2 - Both``, as the report's share is.
+    """
+    out: dict[int, tuple[str, str]] = {}
+    for r, (_label, row) in enumerate(frame.iterrows()):
+        try:
+            first, second, both = (float(row[c]) for c in ("Licks1", "Licks2", "Both"))
+        except (KeyError, TypeError, ValueError):
+            continue
+        try:
+            before = float(row["Both_pre"])
+        except (KeyError, TypeError, ValueError):
+            before = math.nan
+        count = both if math.isnan(before) else before
+        samples = first + second - both
+        if not (samples > 0 and count > 0):
+            continue
+        share = count / samples
+        if share >= CROSSTALK_DARK_SHARE:
+            tier = "dark"
+        elif share >= CROSSTALK_LIGHT_SHARE:
+            tier = "light"
+        else:
+            continue
+        when = "" if math.isnan(before) else ", before the dual-feeding correction"
+        out[r] = (tier, f"{count:.0f} of this chamber's {samples:.0f} lick samples "
+                        f"({100 * share:.2f}%) registered on both wells at once{when}.  "
+                        f"Look at its two wells' baselined traces.")
+    return out
+
+
+def _well_number(label: object) -> int | None:
+    """The well a bleeding-matrix label names (``W3Sig``, ``W3Resp`` → 3)."""
+    found = re.match(r"W(\d+)", str(label))
+    return int(found.group(1)) if found else None
+
+
+def bleeding_tiers(matrix: pd.DataFrame, feeding_max: dict[int, float],
+                   feeding_min: dict[int, float]) -> dict[tuple[int, int], tuple[str, str]]:
+    """``(row, column)`` position → ``(tier, why)`` for the off-diagonal cells
+    of a bleeding matrix that could change what detection finds at the
+    responding well: above its feeding minimum, enough to lengthen a feeding
+    event there (``"light"``), or above its feeding threshold, enough to
+    register as licks (``"dark"``, the report's bleeding warning).
+
+    *feeding_max* and *feeding_min* map a well number to its threshold and
+    minimum; a well missing from them is not judged.  The diagonal, each
+    well responding to itself, never is.
+    """
+    out: dict[tuple[int, int], tuple[str, str]] = {}
+    for r, row_label in enumerate(matrix.index):
+        signal = _well_number(row_label)
+        for c, column_label in enumerate(matrix.columns):
+            well = _well_number(column_label)
+            if signal is None or well is None or signal == well:
+                continue
+            value = pd.to_numeric(matrix.iat[r, c], errors="coerce")
+            threshold, minimum = feeding_max.get(well), feeding_min.get(well)
+            if pd.isna(value) or threshold is None:
+                continue
+            said = (f"While W{signal}'s signal was above the bleeding cutoff, W{well}'s "
+                    f"averaged {float(value):.1f}")
+            if value > threshold:
+                out[(r, c)] = ("dark", f"{said}: above its feeding threshold "
+                                       f"({threshold:g}), so it would register as licks "
+                                       f"at W{well}.")
+            elif minimum is not None and minimum < threshold and value > minimum:
+                out[(r, c)] = ("light", f"{said}: above its feeding minimum ({minimum:g}), "
+                                        f"enough to lengthen a feeding event at W{well}, "
+                                        f"though below its feeding threshold "
+                                        f"({threshold:g}).")
+    return out
+
+
+def _bleeding_legend(feeding_max: dict[int, float], feeding_min: dict[int, float]) -> str:
+    """What the Bleeding matrix's colours mean, with the thresholds' values
+    when every well shares them."""
+    def value(thresholds: dict[int, float]) -> str:
+        values = set(thresholds.values())
+        return f" ({values.pop():g})" if len(values) == 1 else ""
+
+    if not feeding_max:
+        return ("Not coloured: the feeding thresholds of this DFM's wells are not known "
+                "(load the experiment to see them).")
+    light = [w for w, m in feeding_min.items() if w in feeding_max and m < feeding_max[w]]
+    parts = []
+    if light:
+        parts.append(f"{_tier_swatch('light')} above its feeding minimum"
+                     f"{value({w: feeding_min[w] for w in light})}, enough to lengthen a "
+                     f"feeding event")
+    parts.append(f"{_tier_swatch('dark')} above its feeding threshold{value(feeding_max)}, "
+                 f"so it would register as licks")
+    return ("Off the diagonal, a well's mean signal while another well's is above the "
+            "bleeding cutoff: " + "; ".join(parts) + ".  Hover a coloured cell for its "
+            "numbers.")
+
+
+def _crosstalk_legend() -> str:
+    """What the Sim. Feeding table's colours mean."""
+    return (f"A chamber's lick samples that registered on both wells at once (Both_pre, "
+            f"before the dual-feeding correction): {_tier_swatch('light')} "
+            f"{100 * CROSSTALK_LIGHT_SHARE:g}% or more, worth a look at its baselined "
+            f"traces; {_tier_swatch('dark')} {100 * CROSSTALK_DARK_SHARE:g}% or more.  "
+            f"Hover a coloured row for its numbers.")
+
+
+class _MarkedDelegate(QtWidgets.QStyledItemDelegate):
+    """Lets a coloured cell's own background show on an alternate row: the
+    theme's stylesheet paints alternate rows over it otherwise."""
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt's name
+        super().initStyleOption(option, index)
+        if index.data(Qt.ItemDataRole.BackgroundRole) is not None:
+            option.features &= ~QtWidgets.QStyleOptionViewItem.ViewItemFeature.Alternate
+
+
 class _DfTableWidget(QtWidgets.QTableWidget):
     """Display a pandas DataFrame as a read-only QTableWidget."""
 
@@ -112,7 +268,19 @@ class _DfTableWidget(QtWidgets.QTableWidget):
         super().__init__(parent)
         self.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
+        self.setItemDelegate(_MarkedDelegate(self))
         self._populate(df)
+
+    def mark(self, row: int, column: int | None, tier: str, why: str) -> None:
+        """Colour a cell, or with *column* ``None`` its whole row, *tier* red
+        (:data:`_TIER_COLORS`), with *why* as the tooltip."""
+        background, text = _TIER_COLORS[tier]
+        for c in range(self.columnCount()) if column is None else (column,):
+            item = self.item(row, c)
+            if item is not None:
+                item.setBackground(QColor(background))
+                item.setForeground(QColor(text))
+                item.setToolTip(why)
 
     def _populate(self, df: pd.DataFrame) -> None:
         self.setRowCount(len(df))
@@ -190,6 +358,65 @@ def _png_widget(path: Path) -> QtWidgets.QWidget:
 # Selectable table widget (feeding summary + exclusion checkboxes)
 # ───────────────────────────────────────────────────────────────────────────
 
+#: Where a sortable cell keeps the value it sorts by, and where an Excl.
+#: checkbox keeps its row of the data frame.
+_SORT_ROLE = Qt.ItemDataRole.UserRole
+_ROW_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+def _sort_key(value: object) -> float | str | None:
+    """What a cell sorts by: a number as a number, text case-blind, and
+    ``None`` for a blank (NaN, NA, None or empty text)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.casefold() if value.strip() else None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value).casefold()
+
+
+def _sorting_descending(item: QtWidgets.QTableWidgetItem) -> bool:
+    table = item.tableWidget()
+    return (table is not None and table.horizontalHeader().sortIndicatorOrder()
+            == Qt.SortOrder.DescendingOrder)
+
+
+class _SortItem(QtWidgets.QTableWidgetItem):
+    """A cell that sorts by its value (:func:`_sort_key`), not its text:
+    numbers as numbers, then text, and blanks last in either direction."""
+
+    def __init__(self, text: str, value: object) -> None:
+        super().__init__(text)
+        self.setData(_SORT_ROLE, _sort_key(value))
+
+    def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
+        a, b = self.data(_SORT_ROLE), other.data(_SORT_ROLE)
+        if a is None or b is None:
+            if (a is None) == (b is None):
+                return False
+            ## Qt sorts descending by asking whether other < self, so a blank
+            ## is the smallest then and the largest ascending: last both ways.
+            return (a is None) == _sorting_descending(self)
+        if isinstance(a, str) != isinstance(b, str):
+            return not isinstance(a, str)
+        return a < b
+
+
+class _CheckItem(QtWidgets.QTableWidgetItem):
+    """An Excl. checkbox: it sorts ticked after unticked, and keeps the row
+    of the data frame it belongs to (``_ROW_ROLE``), wherever sorting moves it."""
+
+    def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
+        return (self.checkState() == _Checked) < (other.checkState() == _Checked)
+
+
 class _SelectableTableWidget(QtWidgets.QTableWidget):
     """
     A read-only ``QTableWidget`` that prepends an "Excl." checkbox column.
@@ -198,6 +425,10 @@ class _SelectableTableWidget(QtWidgets.QTableWidget):
     Emits ``row_exclusion_changed(row, is_excluded)`` when the user toggles a
     checkbox.  The programmatic setter :meth:`set_row_excluded` is signal-
     silent (uses ``blockSignals``).
+
+    Clicking a column header sorts the rows by it, and again reverses them.
+    Every *row* this class takes or gives is a row of the data frame, not of
+    the screen, so exclusions follow their chamber wherever sorting moves it.
     """
 
     row_exclusion_changed = pyqtSignal(int, bool)
@@ -211,6 +442,8 @@ class _SelectableTableWidget(QtWidgets.QTableWidget):
         super().__init__(parent)
         self._df = df
         self._pre_checked: set[int] = set(pre_checked or [])
+        ## The Excl. checkbox of each data-frame row, by its position.
+        self._checks: list[QtWidgets.QTableWidgetItem] = []
         self.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -229,16 +462,18 @@ class _SelectableTableWidget(QtWidgets.QTableWidget):
         self.blockSignals(True)
         for r in range(len(self._df)):
             # Col 0: exclusion checkbox
-            chk = QtWidgets.QTableWidgetItem()
+            chk = _CheckItem()
             chk.setFlags(_checkable)
             chk.setCheckState(_Checked if r in self._pre_checked else _Unchecked)
+            chk.setData(_ROW_ROLE, r)
             self.setItem(r, 0, chk)
+            self._checks.append(chk)
 
             # Remaining cols: data (read-only)
             for c, col in enumerate(self._df.columns):
                 val = self._df.iat[r, c]
                 text = f"{val:.4g}" if isinstance(val, float) else str(val)
-                item = QtWidgets.QTableWidgetItem(text)
+                item = _SortItem(text, val)
                 item.setFlags(_readonly)
                 item.setTextAlignment(_align_r)
                 self.setItem(r, c + 1, item)
@@ -247,36 +482,55 @@ class _SelectableTableWidget(QtWidgets.QTableWidget):
         self.resizeColumnsToContents()
         self.resizeRowsToContents()
         self.itemChanged.connect(self._on_item_changed)
+        ## Sorting on, in the order given (DFM, then chamber) until a header
+        ## is clicked: no sort indicator, so enabling it sorts nothing.
+        self.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.setSortingEnabled(True)
 
     # ------------------------------------------------------------------
 
+    def sort_state(self) -> tuple[str, Qt.SortOrder] | None:
+        """The header the rows are sorted by and the order, or ``None``."""
+        section = self.horizontalHeader().sortIndicatorSection()
+        item = self.horizontalHeaderItem(section) if 0 <= section < self.columnCount() else None
+        return None if item is None else (item.text(), self.horizontalHeader().sortIndicatorOrder())
+
+    def sort_by(self, state: tuple[str, Qt.SortOrder] | None) -> None:
+        """Sort by the header :meth:`sort_state` named, if this table has it."""
+        if state is None:
+            return
+        name, order = state
+        for c in range(self.columnCount()):
+            item = self.horizontalHeaderItem(c)
+            if item is not None and item.text() == name:
+                self.sortByColumn(c, order)
+                return
+
     def _on_item_changed(self, item: QtWidgets.QTableWidgetItem) -> None:
         if item.column() == 0:
-            self.row_exclusion_changed.emit(item.row(), item.checkState() == _Checked)
+            row = item.data(_ROW_ROLE)
+            if row is not None:
+                self.row_exclusion_changed.emit(int(row), item.checkState() == _Checked)
 
     def set_row_excluded(self, row: int, excluded: bool) -> None:
-        """Set the exclusion state of *row* without emitting ``row_exclusion_changed``."""
-        item = self.item(row, 0)
-        if item is not None:
+        """Set the exclusion state of data-frame *row* without emitting
+        ``row_exclusion_changed``."""
+        if 0 <= row < len(self._checks):
             self.blockSignals(True)
-            item.setCheckState(_Checked if excluded else _Unchecked)
+            self._checks[row].setCheckState(_Checked if excluded else _Unchecked)
             self.blockSignals(False)
 
     def set_all_checked(self, checked: bool) -> None:
         """Mark all rows as excluded (``True``) or included (``False``) silently."""
         state = _Checked if checked else _Unchecked
         self.blockSignals(True)
-        for r in range(self.rowCount()):
-            item = self.item(r, 0)
-            if item is not None:
-                item.setCheckState(state)
+        for item in self._checks:
+            item.setCheckState(state)
         self.blockSignals(False)
 
     def excluded_rows(self) -> list[int]:
-        return [
-            r for r in range(self.rowCount())
-            if self.item(r, 0) is not None and self.item(r, 0).checkState() == _Checked
-        ]
+        """The data-frame rows ticked, in the frame's order."""
+        return [r for r, item in enumerate(self._checks) if item.checkState() == _Checked]
 
     def excluded_dataframe(self) -> pd.DataFrame:
         return self._df.iloc[self.excluded_rows()].copy()
@@ -779,7 +1033,9 @@ class FeedingSummaryTab(QtWidgets.QWidget):
         df: pd.DataFrame,
         excluded_by_dfm: dict[int, list[int]] | None = None,
     ) -> None:
-        """Populate (or re-populate) the table from *df*."""
+        """Populate (or re-populate) the table from *df*, sorted as the table
+        it replaces was."""
+        sort = self._table.sort_state() if self._table is not None else None
         # Clear any existing content
         while self._root.count():
             item = self._root.takeAt(0)
@@ -804,6 +1060,9 @@ class FeedingSummaryTab(QtWidgets.QWidget):
 
         self._table = _SelectableTableWidget(self._df, pre_checked=pre_checked)
         self._table.row_exclusion_changed.connect(self._on_row_changed)
+        self._table.sort_by(sort)
+        self._table.horizontalHeader().setToolTip(
+            "Click a column header to sort the rows by it; click again to reverse.")
 
         # Button bar
         btn_bar = QtWidgets.QHBoxLayout()
@@ -1131,7 +1390,11 @@ class DfmTab(QtWidgets.QWidget):
             sim_layout.setContentsMargins(8, 8, 8, 8)
             try:
                 df = pd.read_csv(sim_path, index_col=0)
-                sim_layout.addWidget(_DfTableWidget(df))
+                table = _DfTableWidget(df)
+                for r, (tier, why) in crosstalk_tiers(df).items():
+                    table.mark(r, None, tier, why)
+                sim_layout.addWidget(_tier_legend(_crosstalk_legend()))
+                sim_layout.addWidget(table)
             except Exception as exc:
                 sim_layout.addWidget(QtWidgets.QLabel(f"Error reading CSV: {exc}"))
             sim_layout.addStretch()
@@ -1154,7 +1417,13 @@ class DfmTab(QtWidgets.QWidget):
                 top_lay.addWidget(QtWidgets.QLabel("<b>Bleeding matrix:</b>"))
                 try:
                     df = pd.read_csv(bleed_mat, index_col=0)
-                    top_lay.addWidget(_DfTableWidget(df))
+                    table = _DfTableWidget(df)
+                    feeding_max, feeding_min = self._feeding_thresholds(dfm_id)
+                    for (r, c), (tier, why) in bleeding_tiers(
+                            df, feeding_max, feeding_min).items():
+                        table.mark(r, c, tier, why)
+                    top_lay.addWidget(_tier_legend(_bleeding_legend(feeding_max, feeding_min)))
+                    top_lay.addWidget(table)
                 except Exception as exc:
                     top_lay.addWidget(QtWidgets.QLabel(f"Error: {exc}"))
                 splitter.addWidget(top)
@@ -1195,6 +1464,35 @@ class DfmTab(QtWidgets.QWidget):
             if has_timeline(self._exp, dfm_id):
                 self._program_panel = _ProgramPanel(self._exp, dfm_id)
                 tabs.addTab(self._program_panel, "Program")
+
+    def _feeding_thresholds(self, dfm_id: int) -> tuple[dict[int, float], dict[int, float]]:
+        """Each well's feeding threshold and minimum, well number → value, for
+        the Bleeding colours: the loaded DFM's own, as detection used them
+        (per well when the thresholds are proportional), else from its
+        parameters, else the two-well defaults; empty when none is known."""
+        from .parameters import Parameters
+
+        dfms = getattr(self._exp, "dfms", None) if self._exp is not None else None
+        dfm = dfms.get(dfm_id) if isinstance(dfms, dict) else None
+        table = getattr(dfm, "thresholds", None)
+        feeding_max: dict[int, float] = {}
+        feeding_min: dict[int, float] = {}
+        for well in range(1, 13):
+            frame = table.get(f"W{well}") if isinstance(table, dict) else None
+            if isinstance(frame, pd.DataFrame) and len(frame):
+                feeding_max[well] = float(frame["FeedingMax"].iloc[0])
+                feeding_min[well] = float(frame["FeedingMin"].iloc[0])
+        if feeding_max:
+            return feeding_max, feeding_min
+        params = getattr(dfm, "params", None)
+        if not isinstance(params, Parameters):
+            params = Parameters.two_well()
+        ## A negative threshold is a share of each well's largest signal,
+        ## unknown without the data.
+        if params.feeding_threshold < 0:
+            return {}, {}
+        return ({w: float(params.feeding_threshold) for w in range(1, 13)},
+                {w: float(params.feeding_minimum) for w in range(1, 13)})
 
     def _messages_widget(self, dfm_id: int) -> QtWidgets.QWidget | None:
         """The recording's ``Messages.csv`` for this DFM and the MCU (DFM 0),

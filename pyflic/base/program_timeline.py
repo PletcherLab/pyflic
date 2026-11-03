@@ -7,7 +7,11 @@ One figure per DFM (:func:`plot_dfm`), in matplotlib:
 * below it one lane per Well: its Phase ``A`` (Acclimation) shaded, its
   Activation onsets as ticks, and the share of each bin its LED was on as a
   heat strip.  The lane label carries the chamber's **Role**
-  (:mod:`pyflic.base.opto_roles`).
+  (:mod:`pyflic.base.opto_roles`) and, in bold for a Trigger Well, the
+  thresholds the program gives it (:func:`well_thresholds`).  The strip
+  runs to a whole bin lit when the program lights a Well regardless (open
+  loop), and otherwise to the DFM's brightest bin, so the few percent of a
+  bin that feeding-driven light fills still shows.
 
 Generation 3 reads the firmware's own record (``dfm.paradigm``): the band is
 ``ParadigmState.interval_runs`` and the light is ``OnMs``; each Well's lane
@@ -16,7 +20,8 @@ also shades the Program Intervals in which ``Program.txt`` sets it ``On``
 across the figure (decision 15 of ``docs/paradigm-analyses-plan.md``).
 Generations 1 and 2 have no such record; with a ``Program.txt`` section the
 band is the program's clock schedule laid over the recording (approximate,
-as the light QC uses it) and the lanes show ``OptoCol1`` only.  Without
+as the light QC uses it), the strip is ``OptoCol1``, and a Trigger Well's
+ticks are its light coming on.  Without
 either there is nothing to draw, and :func:`plot_dfm` returns a placeholder
 figure.
 
@@ -290,9 +295,65 @@ def _roles(dfm, section: op.DFMProgram | None) -> tuple[dict[int, int], dict[int
     return chamber_of, roles
 
 
+def well_thresholds(section: op.DFMProgram | None) -> tuple[dict[int, tuple[int, ...]], set[int]]:
+    """``(trigger wells → their thresholds, open wells)`` from a program
+    section: the levels a well has under a Paradigm that is not OpenLoop,
+    where its own contact decides (as :meth:`DFMProgram.trigger_wells
+    <pyflic.base.opto_program.DFMProgram.trigger_wells>` counts them), each
+    level once in order of first use; and the wells lit regardless in some
+    Interval, ``On`` or a level under OpenLoop, that are never a trigger.
+    Both empty without a section."""
+    if section is None:
+        return {}, set()
+    levels: dict[int, list[int]] = {}
+    open_: set[int] = set()
+    for interval in section.intervals:
+        if interval.paradigm.type == op.OPEN_LOOP:
+            open_ |= set(interval.trigger_wells())
+        else:
+            for well in interval.trigger_wells():
+                found = levels.setdefault(well, [])
+                if interval.threshold(well) not in found:
+                    found.append(interval.threshold(well))
+        open_ |= set(interval.open_wells())
+    return {w: tuple(v) for w, v in levels.items()}, open_ - set(levels)
+
+
+def _scale_top(share: np.ndarray, full: bool) -> float:
+    """The light strip's top: the whole bin when *full* (the program lights
+    a well regardless, so a lane lit throughout is what to see), else the
+    DFM's brightest bin rounded up to 1, 2 or 5 in its decade, so light that
+    fills a few percent of a bin, as feeding-driven light does, still shows."""
+    peak = float(np.nanmax(share)) if share.size else 0.0
+    if full or not peak > 0.0:
+        return 1.0
+    decade = 10.0 ** np.floor(np.log10(peak))
+    for step in (1.0, 2.0, 5.0, 10.0):
+        if step * decade >= peak * (1 - 1e-9):
+            return min(1.0, step * decade)
+    return 1.0
+
+
+def _onsets(lit: np.ndarray) -> np.ndarray:
+    """The rows a well's light came on: each rise of *lit* (one well's column)."""
+    on = np.asarray(lit, dtype=float) > 0
+    return np.flatnonzero(on & ~np.r_[False, on[:-1]])
+
+
 # ---------------------------------------------------------------------------
 # The figure
 # ---------------------------------------------------------------------------
+
+def _threshold_label(well: int, triggers: dict[int, tuple[int, ...]],
+                     open_wells: set[int]) -> str:
+    """The lane label's last part: ``trigger 20`` for a trigger well, with
+    every level it has (``trigger 20, 40``) or none when unknown; ``On``
+    for a well lit regardless; nothing for a well the program keeps Off."""
+    if well in triggers:
+        levels = triggers[well]
+        return "  trigger" + (" " + ", ".join(str(v) for v in levels) if levels else "")
+    return "  On" if well in open_wells else ""
+
 
 def _placeholder(text: str):
     from matplotlib.figure import Figure
@@ -325,6 +386,7 @@ def plot_dfm(exp, dfm_id: int, *, binsize_min: float = 10.0):
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch, Rectangle
+    from matplotlib.ticker import PercentFormatter
 
     dfm_id = int(dfm_id)
     dfm = exp.dfms[dfm_id]
@@ -352,7 +414,8 @@ def plot_dfm(exp, dfm_id: int, *, binsize_min: float = 10.0):
     else:
         runs = _schedule_runs(dfm, program, section)
         source = (f"Program Intervals from Program.txt's clock schedule (generation "
-                  f"{dfm.generation}, approximate); light from OptoCol1, sampled once a record")
+                  f"{dfm.generation}, approximate); light from OptoCol1, once a record; "
+                  f"ticks are light onsets")
         lights = dfm.lights_df
         lit = (lights[[f"W{w}" for w in range(1, 13)]].to_numpy(dtype=float)
                if lights is not None and len(lights) else np.zeros((minutes.size, 12)))
@@ -360,6 +423,13 @@ def plot_dfm(exp, dfm_id: int, *, binsize_min: float = 10.0):
     edges = _bin_edges(minutes, binsize_min, period)
     share = _lit_share(minutes, lit, record, edges)
     chamber_of, roles = _roles(dfm, section)
+    ## What each Well's threshold makes it: a trigger well at its level(s),
+    ## or lit regardless.  Without a section a generation-3 trigger well is
+    ## one that counted Activations, its level unknown.
+    triggers, open_wells = well_thresholds(section)
+    if section is None and state is not None:
+        triggers = {int(w): () for w in state.wells_with_activations()}
+    top = _scale_top(share, full=bool(open_wells))
     ## Generation 3 only (generations 1 and 2 keep their figure): each Well's
     ## On and Off stretches, and the DFM's restarts.
     states = _well_states(dfm, section, minutes, period) if state is not None else []
@@ -395,8 +465,8 @@ def plot_dfm(exp, dfm_id: int, *, binsize_min: float = 10.0):
         band_ax.spines[side].set_visible(False)
 
     ## The lanes, Well 1 at the top.
-    norm = Normalize(vmin=0.0, vmax=1.0)
-    labels, ticks = [], []
+    norm = Normalize(vmin=0.0, vmax=top)
+    labels, ticks, onset_ticks = [], [], False
     for well, a, b, kind in states:
         a, b = max(a, x0), min(b, x1)
         if b <= a:
@@ -414,20 +484,24 @@ def plot_dfm(exp, dfm_id: int, *, binsize_min: float = 10.0):
         chamber = chamber_of.get(w)
         role = roles.get(chamber, "") if chamber is not None else ""
         labels.append(f"W{w}" + (f"  ch {chamber}" if chamber is not None else "")
-                      + (f"  {role}" if role else ""))
+                      + (f"  {role}" if role else "") + _threshold_label(w, triggers, open_wells))
+        heat = (y - 0.42, y - 0.02)
         if state is not None:
-            heat = (y - 0.42, y - 0.02)
             for i0, i1 in state.acclimation_runs(w):
                 a = float(minutes[i0])
                 b = float(minutes[i1]) if i1 < minutes.size else float(minutes[-1]) + period
                 lane_ax.add_patch(Rectangle((a, y + 0.02), b - a, 0.40, facecolor=_ACCLIMATION_COLOR,
                                             edgecolor="none"))
-            onsets = state.activation_onsets(w)
-            if onsets.size:
-                lane_ax.vlines(minutes[np.unique(onsets)], y + 0.06, y + 0.38,
-                               color=_TICK_COLOR, linewidth=0.6)
+            onsets = np.unique(state.activation_onsets(w))
         else:
-            heat = (y - 0.42, y + 0.42)
+            ## No record of the firmware's Activations: a trigger well's own
+            ## light coming on is the nearest thing, and under a ratio or
+            ## fixed-interval Paradigm each onset is one Activation.
+            onsets = _onsets(lit[:, w - 1]) if w in triggers else np.zeros(0, dtype=int)
+            onset_ticks = onset_ticks or bool(onsets.size)
+        if onsets.size:
+            lane_ax.vlines(minutes[onsets], y + 0.06, y + 0.38,
+                           color=_TICK_COLOR, linewidth=0.6)
         mesh = lane_ax.pcolormesh(edges, np.array(heat), share[:, w - 1][None, :],
                                   cmap=_HEAT_CMAP, norm=norm, shading="flat")
     ## Chamber boundaries.
@@ -436,14 +510,19 @@ def plot_dfm(exp, dfm_id: int, *, binsize_min: float = 10.0):
             lane_ax.axhline(12 - w - 0.5, color="#CCCCCC", linewidth=0.6)
     lane_ax.set_yticks(ticks)
     lane_ax.set_yticklabels(labels, fontsize=8)
+    for w, label in enumerate(lane_ax.get_yticklabels(), start=1):
+        if w in triggers:
+            label.set_fontweight("bold")
     lane_ax.set_ylim(-0.5, 11.5)
     lane_ax.set_xlim(x0, x1)
     lane_ax.set_xlabel("Minutes")
     lane_ax.tick_params(axis="y", length=0)
     for side in ("top", "right"):
         lane_ax.spines[side].set_visible(False)
-    bar = fig.colorbar(mesh, ax=lane_ax, location="right", shrink=0.5, pad=0.01)
-    bar.set_label(f"share of each {float(binsize_min):g}-min bin lit", fontsize=8)
+    bar = fig.colorbar(mesh, ax=lane_ax, location="right", shrink=0.5, pad=0.01,
+                       format=PercentFormatter(xmax=1.0, decimals=None))
+    bar.set_label(f"% of each {float(binsize_min):g}-min bin lit"
+                  + ("" if top >= 1.0 else ", scaled to this DFM"), fontsize=8)
     bar.ax.tick_params(labelsize=7)
 
     ## Each restart: a band over the Intervals and the lanes, at least a
@@ -470,6 +549,9 @@ def plot_dfm(exp, dfm_id: int, *, binsize_min: float = 10.0):
             handles.append(Patch(facecolor=_OFF_COLOR, label="Well Off"))
         if restarts:
             handles.append(Patch(facecolor=_RESTART_COLOR, alpha=0.4, label="DFM restart"))
+    elif onset_ticks:
+        handles.append(Line2D([], [], color=_TICK_COLOR, linewidth=1.0,
+                              label="Light onset at a trigger well"))
     if handles:
         fig.legend(handles=handles, loc="outside lower center", ncols=min(len(handles), 6),
                    fontsize=8, frameon=False)

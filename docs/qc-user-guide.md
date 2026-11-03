@@ -406,6 +406,12 @@ at each well, the samples on both wells **before** and **after** the
 correction, and the count after it as a percentage of the chamber's lick
 samples.
 
+The Viewer colours a chamber's row **light red** when `Both_pre` is 0.1% or
+more of the chamber's lick samples (`Licks1 + Licks2 − Both`), and **dark
+red** at 1% or more. Crosstalk is rare in good recordings: of 384 chambers
+recorded in the Pletcher lab up to November 2026, six had any, and the most
+was 0.8%. The colours mark chambers to look at. They exclude nothing.
+
 **The dual-feeding correction.** `correct_for_dual_feeding`, on by default in
 two-well experiments, gives each such sample to the stronger well and
 detects the licks again. The `_pre` columns are the crosstalk the detection
@@ -436,10 +442,20 @@ whole recording, for comparison.
   table names the largest response off the diagonal. It is a **warning** when
   that response is above `feeding_threshold`, because such a response would
   register as licks that never happened.
+- **The QC Viewer's colours.** The **Bleeding** tab colours each cell off the
+  diagonal against the responding well's own thresholds. **Light red** is
+  above its feeding minimum, enough to lengthen a feeding event there.
+  **Dark red** is above its feeding threshold, the report's warning.
 
 A bleeding warning is a reason to open the baselined plot of the responding
 well and look at the moments the signalling well was fed from. Nothing is
 removed automatically.
+
+The two wells of a chamber rarely show it. In the Pletcher lab's recordings
+up to November 2026, no response between a chamber's own two wells was above
+3. The coloured cells were all in other chambers' wells, and most went one way
+only. That pattern fits flies in two chambers feeding at the same time better
+than it fits a leak. The baselined trace tells which.
 
 ---
 
@@ -752,13 +768,29 @@ only a check (*interval started late*, section 7.6), and the light QC reads
 the firmware's decisions instead of re-creating them. The integrity report, `summary.txt` and the report's cover
 all name each DFM's generation.
 
-**The file is optional, but the check is weaker without it.**
+**The linkage comes from `Program.txt`.** When a DFM has a section in the
+file, pyflic takes its linkage groups from that section's `Linkage:` line,
+the linkage the experiment was programmed with. It never deduces them from
+the data. The data only check the linkage:
 
-- On generations 1 and 2 pyflic infers the linkage from wells lit together,
+- On firmware 4.0.0, linked wells whose light differs fail *broken yoking*
+  (section 6.3).
+- On older firmware, the group's notes say how long its linked wells were not
+  lit together.
+
+The trigger wells and the Roles come from the program in the same way, from
+its thresholds.
+
+**The file is optional, but the check is weaker without it.** Only when
+`data/` holds no `Program.txt`, or the file has no readable section for a
+DFM, does pyflic have to work out from the data what the program would have
+said:
+
+- On generations 1 and 2 pyflic guesses the linkage from wells lit together,
   treats every lit well as a trigger well, and assumes a Hold of
   `opto_default_decay_ms`.
 - On generation 3 the rows name each Paradigm but not its type, settings or
-  thresholds. pyflic takes the linkage from wells whose light matches to the
+  thresholds. pyflic guesses the linkage from wells whose light matches to the
   millisecond and the trigger wells from the Activations, judges every
   Activation against its group's licks within `opto_default_decay_ms`, and
   leaves every type-dependent result `NA`. None of section 7's rule checks
@@ -1002,8 +1034,11 @@ in `1 Paired, 2 Yoked`. The six Roles are Paired (it holds the group's only
 trigger well), Yoked (lit by a partner's trigger well), Mutual (one of
 several chambers with trigger wells in one group), Self (a trigger well whose
 group lights no other chamber), Open (lit regardless) and Unlit. They come
-from the program, or on a firmware 4.0.0 recording from the data; an older
-recording without a program has none.
+from the program's linkage and thresholds. The data decide them only when a
+DFM has no program. A firmware 4.0.0 recording without one takes them from
+the data: the wells that counted Activations are its trigger wells, and wells
+with identical `OnMs` are linked. An older recording without a program has
+no Roles.
 
 Every chamber's rows in the feeding summaries carry `OptoLightQC`, its
 group's flags (empty when the group is ok), and `OptoUnexplainedFraction`,
