@@ -55,11 +55,17 @@ whose light never came on (every well Off) gets none.
   hatched white an instruction outside the program, the palest grey `Idle` (PyMCU's own
   Paradigm, every well `Off`, known without a `Program.txt`), and dark grey a Paradigm whose
   type `Program.txt` does not give.
-- **Below it, one lane per well**, labelled with its chamber and Role. Pale orange shading is
-  Acclimation (Phase `A`), each black tick an Activation, and the blue strip the share of
-  each bin the LED was on, from white (dark) to dark blue (lit throughout). On a firmware
-  4.0.0 recording a lane is also hatched where `Program.txt` sets the well `On`, and grey
-  where it sets it `Off`, Program Interval by Program Interval.
+- **Below it, one lane per well**, labelled with its chamber and Role. A trigger well's label
+  is bold and gives its threshold (*trigger 20*); a well lit regardless says *On*. Pale
+  orange shading is Acclimation (Phase `A`), each black tick an Activation, and the blue
+  strip the share of each bin the LED was on. On a firmware 4.0.0 recording a lane is also
+  hatched where `Program.txt` sets the well `On`, and grey where it sets it `Off`, Program
+  Interval by Program Interval. On an older recording each tick is a trigger well's light
+  coming on, which under a ratio or fixed-interval Paradigm is one Activation.
+- **The strip's scale fits the program.** It runs from 0 to 100% of a bin when the program
+  lights a well open loop, where a lane lit throughout is what to check. Otherwise it runs
+  to the DFM's brightest bin and the colour bar says *scaled to this DFM*, because light
+  that follows the fly fills only a few percent of a bin.
 - **A red band labelled "restart"**, across the band and every lane, marks each restart of
   the DFM (firmware 4.0.0): from the last record before the gap in `Index` to the first row
   under the instruction again. A restart that only `Messages.csv` names has no rows to place

@@ -534,8 +534,15 @@ def test_the_timeline_renders_for_every_spec(tmp_path, name):
         assert len(labels) == 12 and labels[0].startswith("W1  ch 1")
         fig.savefig(io.BytesIO(), format="png", dpi=40)
     if name == "yoked_controls":
-        labels = _lane_labels(pt.plot_dfm(exp, 1))
-        assert labels[0].endswith("Paired") and labels[6].endswith("Yoked")
+        fig = pt.plot_dfm(exp, 1)
+        labels = _lane_labels(fig)
+        ## A trigger well says so, at its threshold, in bold; its yoked partner does not.
+        assert labels[0] == "W1  ch 1  Paired  trigger 20" and labels[6] == "W7  ch 4  Yoked"
+        weights = [t.get_fontweight() for t in fig.axes[1].get_yticklabels()]
+        assert weights[0] == "bold" and weights[6] == "normal"
+    if name == "fixed_ratio":
+        ## No well lit regardless: the strip is scaled to the DFM's brightest bin.
+        assert "scaled to this DFM" in pt.plot_dfm(exp, 1).axes[-1].get_ylabel()
     if name == "repeating_open_loop":
         texts = [t.get_text() for t in pt.plot_dfm(exp, 1).axes[0].texts]
         assert "Open · C1" in texts and "Open · C2" in texts
@@ -548,8 +555,24 @@ def test_the_timeline_of_a_generation_1_recording_with_a_program(tmp_path):
     band, lanes = fig.axes[0], fig.axes[1]
     assert len(band.patches) == 1                       # one interval, the whole hour
     assert "clock schedule" in band.get_title(loc="left")
-    ## OptoCol1 only: a heat strip per lane, no Acclimation and no ticks.
-    assert len(lanes.collections) == 12
+    ## OptoCol1: a heat strip per lane, no Acclimation, and a tick at each
+    ## light onset of a trigger well (the wells with a threshold), whose
+    ## label is bold and names it.
+    from matplotlib.collections import LineCollection, QuadMesh
+
+    triggers, open_wells = pt.well_thresholds(pt._section(exp, 1))
+    assert triggers == {1: (20,), 2: (20,), 3: (20,), 7: (20,)} and open_wells == {5, 6}
+    assert sum(isinstance(c, QuadMesh) for c in lanes.collections) == 12
+    lights = exp.dfms[1].lights_df
+    onsets = sum(len(pt._onsets(lights[f"W{w}"].to_numpy())) for w in triggers)
+    ticks = sum(len(c.get_segments()) for c in lanes.collections if isinstance(c, LineCollection))
+    assert ticks == onsets > 0
+    labels = _lane_labels(fig)
+    assert labels[0] == "W1  ch 1  Self  trigger 20" and labels[4] == "W5  ch 5  Open  On"
+    assert [t.get_fontweight() == "bold" for t in lanes.get_yticklabels()] == \
+        [w in triggers for w in range(1, 13)]
+    ## Wells On: the strip runs to a whole bin lit.
+    assert fig.axes[-1].get_ylabel() == "% of each 10-min bin lit"
     fig.savefig(io.BytesIO(), format="png", dpi=40)
     table = pt.well_table(exp, 1)
     assert list(table.columns) == list(pt.WELL_TABLE_COLUMNS)
@@ -617,3 +640,16 @@ def test_the_script_action_is_gated_on_optogenetic(tmp_path):
     figures = run_experiment_script(
         dark, {"name": "t", "steps": [{"action": "plot_program_timeline"}]}, log=lines.append)
     assert figures == [] and any("[Skip] plot_program_timeline" in line for line in lines)
+
+
+def test_the_light_strip_fits_sparse_light_and_keeps_open_loop_whole():
+    import numpy as np
+
+    ## Feeding-driven light fills a few percent of a bin: rounded up to 1, 2 or 5.
+    assert pt._scale_top(np.array([[0.0, 0.031]]), full=False) == pytest.approx(0.05)
+    assert pt._scale_top(np.array([[0.0, 0.0012]]), full=False) == pytest.approx(0.002)
+    assert pt._scale_top(np.array([[0.0, 0.02]]), full=False) == pytest.approx(0.02)
+    ## Open-loop light, or none at all: the whole bin.
+    assert pt._scale_top(np.array([[0.0, 0.031]]), full=True) == 1.0
+    assert pt._scale_top(np.zeros((3, 12)), full=False) == 1.0
+    assert pt._onsets(np.array([0, 1, 1, 0, 1, 0, 0, 1])).tolist() == [1, 4, 7]

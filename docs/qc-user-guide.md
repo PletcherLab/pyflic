@@ -1123,11 +1123,19 @@ DFM.
   instruction outside the program, and **dark grey** a Paradigm whose type
   `Program.txt` does not give.
 - **One lane per well** follows, labelled with its chamber and the chamber's
-  Role. **Pale orange shading** is Acclimation (Phase `A`), each **black
-  tick** an Activation, and the **blue strip** the share of each bin the
-  light was on. On a firmware 4.0.0 recording a lane is also **hatched**
-  where `Program.txt` sets the well `On` and **grey** where it sets it
-  `Off`, Program Interval by Program Interval.
+  Role. A **trigger well's label is bold** and gives its threshold, as in
+  *trigger 20*. A well the program lights regardless says *On*. **Pale
+  orange shading** is Acclimation (Phase `A`), each **black tick** an
+  Activation, and the **blue strip** the share of each bin the light was on.
+  On a firmware 4.0.0 recording a lane is also **hatched** where
+  `Program.txt` sets the well `On` and **grey** where it sets it `Off`,
+  Program Interval by Program Interval.
+- **The strip's scale fits the program.** When the program lights a well
+  regardless (open loop), the strip runs from 0 to 100% of a bin, because a
+  lane lit throughout is what to check. Otherwise it runs to the DFM's
+  brightest bin, and the colour bar says *scaled to this DFM*. Light that
+  follows the fly (closed loop, fixed interval, a ratio) fills only a few
+  percent of a bin, and on a 0–100% scale it would not show.
 - **A red band labelled *restart*** crosses the band and the lanes wherever
   the DFM restarted (firmware 4.0.0), from the last record before the gap to
   the first row under the instruction again.
@@ -1160,8 +1168,10 @@ lit seconds. **Activations**, on a firmware 4.0.0 recording, lists every
 Activation of the DFM's trigger wells (section 7.7).
 
 On an older recording the band is laid out from the program's clock times
-and is approximate, and the lanes show the sampled light only: no
-Acclimation, no ticks, no `On` and `Off` shading and no restart bands.
+and is approximate. The strip is the light as sampled once a record, and
+each tick is a trigger well's light coming on. Under a ratio or
+fixed-interval Paradigm that is one Activation. There is no Acclimation, no
+`On` and `Off` shading and no restart band.
 
 ### 6.9 Deciding what to exclude
 

@@ -4,6 +4,11 @@
 
 ### New features
 
+- **The Program timeline suits the program it shows** (`program_timeline.plot_dfm`; `docs/qc-user-guide.md` 6.8; help topic *Plots catalog*).
+  - **Trigger wells are marked.** A trigger well's lane label is bold and gives its threshold (*trigger 20*, every level it has), from `program_timeline.well_thresholds`. A well lit regardless says *On*.
+  - **Ticks on older recordings.** On generations 1 and 2 each tick is a trigger well's light coming on, from `OptoCol1`. Under a ratio or fixed-interval Paradigm that is one Activation. Before, these lanes had no ticks, so a progressive-ratio run showed nothing.
+  - **The light strip's scale fits the program.** It is 0–100% of a bin when the program lights a well open loop. Otherwise it runs to the DFM's brightest bin, rounded up to 1, 2 or 5 in its decade, and the colour bar says *scaled to this DFM*. Light that follows the fly fills a few percent of a bin, so on a fixed 0–100% scale it was white.
+
 - **The QC Viewer sorts the Feeding Summary and colours the two-well checks** (help topic *QC Viewer*; `docs/qc-user-guide.md` 3.4 and 3.5).
   - **Sorting.** Click a Feeding Summary column header to sort its rows, and again to reverse them. Numbers sort as numbers, and blanks stay last either way. Each Excl. tick stays with its chamber (`_SelectableTableWidget` takes and gives data-frame rows, not screen rows), and the sort is kept across a Params recompute.
   - **Sim. Feeding.** A chamber's row is light red when `Both_pre` is 0.1% or more of its lick samples, and dark red at 1% (`qc_viewer.crosstalk_tiers`).
