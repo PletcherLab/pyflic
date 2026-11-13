@@ -869,7 +869,7 @@ recordings every lit sample of `OptoCol1` is judged with the Hold rule.
 | **Lost records** | firmware 4.0.0: more than 25 records missing from the DFM's index, not counting the gap of a restart, which *DFM restarted* reports | warning for the DFM |
 | **Unknown-instruction rows** | firmware 4.0.0: more than 1% of the rows after the lead-in (Program Interval 0, `Paradigm` `NA`) recorded under an instruction outside the program; a restart's rows under no instruction count among them | warning for the DFM |
 | **Late records** | firmware 4.0.0: more than 10 records whose light count exceeds the record's 200 ms, so the record came late | warning for the DFM |
-| **Program mismatch** | the data's frequency, pulse width or dark setting differ from the program, the data start more than a minute from its start time, or (firmware 4.0.0) a row names another Paradigm than the program's line for its interval | warning |
+| **Program mismatch** | the data's frequency, pulse width or dark setting differ from the program, the data start more than a minute from its start time (on firmware 4.0.0 only before it: a recording started after it joined the program partway, which is a note), or (firmware 4.0.0) a row names another Paradigm than the program's line for its interval | warning |
 | **No program section** | `Program.txt` has no usable section for this DFM | warning |
 | **No Program.txt for firmware 4.0.0** | a firmware 4.0.0 DFM without its program | warning |
 | **The rule checks** | firmware 4.0.0 with `Program.txt`: each Paradigm's own rule, one Activation at a time (section 7). *Short activations*, *max on exceeded*, *wrong activation length*, *lockout broken* and *requirement series wrong* fail; *contact without activation*, *non-feeding dark*, *interval started late* and *DFM restarted* warn | **fails** the group, or warning |
@@ -1532,9 +1532,11 @@ on-period past `MaxOnMs` fails the group (section 7.3).
   Cycle, against that time. The worst lag is `IntervalLagSec`. The DFM's
   first Interval follows a lead-in: PyMCU sends no instruction until it has
   taken its baseline, which took 4.8 to 5.2 seconds on the bench and in the
-  simulators, so 5 seconds of the first lag are discounted. An Interval
-  `Program.txt` does not print (a Circadian day the program started partway
-  through) is not timed.
+  simulators, so 5 seconds of the first lag are discounted. PyMCU runs a
+  program on the clock, so a recording started after the Start Time joins
+  it partway: its first Interval is timed from the recording's start, not
+  from its `Program.txt` time. An Interval `Program.txt` does not print (a
+  Circadian day the program started partway through) is not timed.
 - **Verdict.** A warning, on every group of the DFM, when a lag is above
   `opto_interval_lag_warn_sec` (default 5). The reason names the Program
   Interval, Cycle, lag and minute, and says when the DFM had just come back

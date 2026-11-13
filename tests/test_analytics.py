@@ -275,3 +275,40 @@ def test_a_lick_difference_says_it_is_on_the_root_scale_when_transformed():
     assert "¼-root scale" in rc.zero_test_table(zero, well_names=names,
                                                transformed=True)[0].frame["Measure"].iloc[0]
     assert "¼-root" not in rc.zero_test_table(zero, well_names=names)[0].frame["Measure"].iloc[0]
+
+
+# ---------------------------------------------------------------------------
+# No spread within any treatment (Jove Females, light behaviour facets)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("values", [
+    {"a": [10.0] * 3, "b": [10.0] * 3},                      # Welch, equal means
+    {"a": [0.0] * 3, "b": [10.0] * 3},                       # Welch, unequal means
+    {"a": [10.0] * 3, "b": [10.0] * 4, "c": [10.0] * 3},     # Tukey, equal means
+    {"a": [0.0] * 3, "b": [10.0] * 4, "c": [5.0] * 3},       # Tukey, unequal means
+])
+def test_no_spread_within_any_treatment_is_not_tested(values, recwarn):
+    """Where every chamber of every treatment has one value (a facet in which
+    the light ran the same in every chamber), the tests divide by a zero
+    pooled spread: nan for equal means, a spurious p = 0 for unequal ones,
+    and a RuntimeWarning in the console.  Nothing is compared and nothing is
+    warned."""
+    from pyflic.base.analytics import treatment_comparisons
+
+    frame = pd.DataFrame({
+        "Treatment": [t for t, v in values.items() for _ in v],
+        "Lit": [x for v in values.values() for x in v],
+    })
+    assert treatment_comparisons([("Test", frame)], ["Lit"]) == []
+    assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
+
+
+def test_one_treatment_with_spread_is_still_tested():
+    """A treatment that varies gives the pooled spread the tests need, even
+    when the others are constant."""
+    from pyflic.base.analytics import treatment_comparisons
+
+    frame = pd.DataFrame({"Treatment": ["a"] * 3 + ["b"] * 3 + ["c"] * 3,
+                          "Lit": [0.0, 0.0, 0.0, 10.0, 10.0, 10.0, 4.0, 5.0, 6.0]})
+    rows = treatment_comparisons([("Test", frame)], ["Lit"])
+    assert len(rows) == 3 and all(np.isfinite(r["p_pooled"]) for r in rows)

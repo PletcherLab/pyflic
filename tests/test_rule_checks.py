@@ -534,6 +534,28 @@ def test_an_interval_taken_up_late_warns(tmp_path):
     assert np.allclose(clean.opto.qc_table()["IntervalLagSec"], 0.2)
 
 
+def test_a_recording_started_after_the_start_time_is_not_late(tmp_path):
+    """PyMCU runs a Program on the clock (``InstructionSet.GetPosition``), so
+    recording started 3 min after the Start Time joins its Interval partway:
+    the DFM takes it up after the usual lead-in, which is not late, and the
+    rows record what ran, so the offset is a note and not a mismatch."""
+    root = tmp_path / "e"
+    load(root, "", spec=vf.fixed_ratio_spec(minutes=10.0))
+    path = root / "data" / "Program.txt"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("Start Time: 10/16/2026 23:34:00", "Start Time: 10/16/2026 23:31:00")
+    text = text.replace("Duration: 10 min", "Duration: 13 min")
+    text = text.replace("(10/16/2026 23:34:00) FR5", "(10/16/2026 23:31:00) FR5")
+    path.write_text(text.replace("20,Off, 10 min", "20,Off, 13 min"), encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()):
+        e = load_experiment_yaml(root, parallel=False, use_disk_cache=False)
+    result = e.opto.result(1)
+    assert oq.INTERVAL_STARTED_LATE not in result.flags
+    assert oq.PROGRAM_MISMATCH not in result.flags
+    assert any("3.0 min after the program's Start Time" in n for n in result.notes)
+    assert (e.opto.qc_table()["IntervalLagSec"] < 1.0).all()
+
+
 def test_the_lag_is_counted_against_each_cycles_time_and_past_the_lead_in():
     """Repeating: Interval k of Cycle c is due a cycle's length later each
     pass; Circadian: on the time of day, Cycle n the n-th calendar day."""

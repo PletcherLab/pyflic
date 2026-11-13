@@ -1742,7 +1742,10 @@ class Project:
                 ## follow as the secondary section.
                 out.append("Paired − yoked difference (primary; one observation "
                            "per chamber group)")
-                out.append(f"Chamber groups pooled : {len(diff)}")
+                ## One row per group per Facet: count the groups.
+                keys = [c for c in ("Experiment", "DFM", "Group") if c in diff.columns]
+                n_groups = len(diff.drop_duplicates(keys)) if keys else len(diff)
+                out.append(f"Chamber groups pooled : {n_groups}")
                 out.append("")
                 if diff_rows:
                     out.extend(_table(diff_rows))

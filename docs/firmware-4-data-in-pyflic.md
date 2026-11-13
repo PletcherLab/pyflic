@@ -464,7 +464,7 @@ wider where `Timing` is `record`.
 | *non-feeding dark* | NonFeeding | warns above `opto_non_feeding_dark_warn_fraction`, from 10 s expected lit |
 | `RelightDelayMs` | NonFeeding | reported |
 | *open loop not lit* | the lowest open-loop window | warns below `opto_open_loop_min_lit_fraction` |
-| *interval started late* | every Program Interval's first row, every Cycle | warns above `opto_interval_lag_warn_sec`; the first Interval allowed `LEAD_IN_SEC` (5 s) |
+| *interval started late* | every Program Interval's first row, every Cycle | warns above `opto_interval_lag_warn_sec`; the first Interval allowed `LEAD_IN_SEC` (5 s), and timed from the recording's start when that came after its `Program.txt` time |
 | *DFM restarted* | each restart | warns |
 
 The Progressive Ratio light QC calls `requirement_series_mismatches` on the

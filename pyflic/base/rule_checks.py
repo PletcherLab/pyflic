@@ -877,7 +877,8 @@ class IntervalLag:
     in Cycle *cycle* began on row *row* (minute *minute*, clock *started*),
     *lag_sec* after its ``Program.txt`` time *scheduled* (past
     :data:`LEAD_IN_SEC` for the DFM's first, *first*).  *after_restart*:
-    the row is a restart's resume row."""
+    the row is a restart's resume row.  *joined*: the recording began after
+    that time, so *scheduled* is the recording's start instead."""
 
     program_interval: int
     cycle: int
@@ -888,6 +889,7 @@ class IntervalLag:
     lag_sec: float
     first: bool = False
     after_restart: bool = False
+    joined: bool = False
 
 
 def _elapsed_starts(section: op.DFMProgram) -> dict[int, timedelta]:
@@ -936,7 +938,10 @@ def interval_lags(state: ParadigmState, section: op.DFMProgram, start: datetime,
     start), its clock time (*origin* plus its ``Minutes``: the row's stamp,
     at its record's end) less :func:`scheduled_start`.  The firmware's own
     lag is one record.  The DFM's first Interval follows PyMCU's lead-in,
-    so its lag is counted past *lead_in_sec* and never below 0."""
+    so its lag is counted past *lead_in_sec* and never below 0.  PyMCU runs
+    a Program on the clock (``InstructionSet.GetPosition``), so a recording
+    started after an Interval's time joins it partway: that first Interval
+    is due when the data begin (*origin*), not at its ``Program.txt`` time."""
     seen: set[tuple[int, int]] = set()
     resumes = {s.resume_row for s in state.restarts()}
     minutes = np.asarray(state.minutes, dtype=float)
@@ -956,13 +961,17 @@ def interval_lags(state: ParadigmState, section: op.DFMProgram, start: datetime,
         when = scheduled_start(section, start, *key)
         if when is None:
             continue
+        joined = is_first and when < origin
+        if joined:
+            when = origin
         started = origin + timedelta(minutes=float(minutes[run.i0]))
         lag = (started - when).total_seconds()
         if is_first:
             lag = max(0.0, lag - float(lead_in_sec))
         out.append(IntervalLag(program_interval=key[0], cycle=key[1], row=int(run.i0),
                                minute=float(minutes[run.i0]), scheduled=when, started=started,
-                               lag_sec=lag, first=is_first, after_restart=run.i0 in resumes))
+                               lag_sec=lag, first=is_first, after_restart=run.i0 in resumes,
+                               joined=joined))
     return out
 
 
@@ -978,7 +987,8 @@ def interval_started_late(lags: Sequence[IntervalLag], *, warn_sec: float) -> Ch
         shown = "; ".join(
             f"Program Interval {g.program_interval} (Cycle {g.cycle}) began {g.lag_sec:.1f} s "
             + ("past the lead-in after " if g.first else "after ")
-            + f"its Program.txt time {g.scheduled:%H:%M:%S}, at minute {g.minute:.1f}"
+            + ("the recording began" if g.joined else "its Program.txt time")
+            + f" {g.scheduled:%H:%M:%S}, at minute {g.minute:.1f}"
             + (", where the DFM came back from a restart" if g.after_restart else "")
             for g in late[:_EXAMPLES])
         more = f"; and {len(late) - _EXAMPLES} more" if len(late) > _EXAMPLES else ""

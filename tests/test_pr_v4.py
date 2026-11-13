@@ -549,6 +549,28 @@ def test_the_faceted_rows_carry_each_windows_light_and_activations(gen3):
     assert set(facet["Role"]) == {"paired", "yoked"}
 
 
+def test_the_facets_split_at_training_end_so_acclimation_ends_in_training(gen3):
+    """The Training window ends on the last Training row and Test begins on
+    the first Main row, as the Light Events split, so the paired Sucrose
+    Well's Acclimation ends in Training, where the whole recording puts it."""
+    e, _results = gen3
+    whole = ls.light_summary(e).set_index(["DFM", "Chamber"])
+    light = ls.light_summary_facet(e).set_index(["Facet", "DFM", "Chamber"])
+    for row in e.training_table().itertuples(index=False):
+        if not row.TrainingComplete:
+            continue
+        minutes = e.dfms[row.DFM].raw_df["Minutes"].to_numpy()
+        last = int(np.flatnonzero(minutes == row.TrainingEndMin)[0])
+        (_, training), (_, test) = e.group_windows(row.DFM, row.Group)
+        assert training[1] == test[0]
+        assert minutes[last] <= training[1] < minutes[last + 1]
+        key = (row.DFM, row.PairedChamber)
+        assert light.loc[("Training", *key), "AcclimationComplete"] == True  # noqa: E712
+        assert light.loc[("Training", *key), "AcclimationEndMin"] == \
+            whole.loc[key, "AcclimationEndMin"]
+        assert pd.isna(light.loc[("Test", *key), "AcclimationEndMin"])
+
+
 # ---------------------------------------------------------------------------
 # Generation 2 (decision 15)
 # ---------------------------------------------------------------------------

@@ -861,7 +861,9 @@ def _check_program_times(program: op.OptoProgram, inp: DFMInputs, origin: dateti
                          dfm_flags: list[str], dfm_notes: list[str], *,
                          settings: OptoQCSettings | None = None) -> float:
     """A data start more than a minute from the program's, and data running
-    past its End Time.
+    past its End Time.  On generation 3 a data start after the program's is
+    a note only: PyMCU runs a Program on the clock, so a recording started
+    late joins it partway, and its rows record each Interval that ran.
 
     On generation 3 (*inp* carries its Paradigm state, and *settings* are
     given) also *interval started late* (decision 18): each Program
@@ -873,10 +875,14 @@ def _check_program_times(program: op.OptoProgram, inp: DFMInputs, origin: dateti
     if program.start is not None and inp.origin is not None:
         lag = (inp.origin - program.start).total_seconds()
         if abs(lag) > START_TOLERANCE_SEC:
-            dfm_flags.append(PROGRAM_MISMATCH)
+            joined = lag > 0 and inp.state is not None
+            if not joined:
+                dfm_flags.append(PROGRAM_MISMATCH)
             dfm_notes.append(f"the data start {abs(lag) / 60.0:.1f} min "
                              f"{'after' if lag > 0 else 'before'} the program's "
-                             f"Start Time")
+                             f"Start Time"
+                             + (": the recording joined the program partway, as its "
+                                "rows record" if joined else ""))
     end = program.resolved_end()
     if end is not None and minutes.size:
         past = (origin + timedelta(minutes=float(minutes[-1])) - end).total_seconds()

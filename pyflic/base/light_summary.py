@@ -845,7 +845,8 @@ def _acclimation(ctx: _DFMLight, w: int, win: _Window, acts: _Activations,
     first row in Main after the window's first run in Phase ``A``, or the
     row of an Acclimation that ran inside one row (:func:`_unseen_acclimation`);
     a well still in ``A`` when the window ends has none and is not
-    complete."""
+    complete.  A run whose last row is the window's last row ended in the
+    window: a Progressive Ratio Training window ends exactly there."""
     if not ctx.type_rows(w, op.ACCLIMATION_PARADIGMS, win, acclimation=True).any():
         return {}
     state = ctx.state
@@ -858,7 +859,7 @@ def _acclimation(ctx: _DFMLight, w: int, win: _Window, acts: _Activations,
         return {"AcclimationActivations": count}
 
     def ended(end: int) -> bool:
-        return end < win.end and end < len(state)
+        return end <= win.end and end < len(state)
 
     first_end = runs[0][1]
     return {

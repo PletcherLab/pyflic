@@ -532,8 +532,9 @@ def treatment_comparisons(
     Two treatments: Welch's t-test; three or more: Tukey HSD on every pair.
     One observation per row of the frame, so a per-chamber summary compares
     chambers and a Paired-Yoked Difference table compares Chamber Groups.
-    Treatments with fewer than two observations are left out, and so is a
-    pair whose p-value is not finite (no usable variance in that window).
+    Treatments with fewer than two observations are left out; so is a window
+    in which no treatment varies within itself (no spread to test against),
+    and a pair whose p-value is not finite.
 
     *mixed_p* ``(data, a, b) -> p | None`` adds the linear-mixed-model p-value
     when the frames span more than one ``Experiment`` (the Project's pooled
@@ -570,6 +571,13 @@ def treatment_comparisons(
             groups = {t: g["Value"].values
                       for t, g in data.groupby("Treatment", sort=False) if len(g) >= 2}
             if len(groups) < 2:
+                continue
+            ## No treatment varies within itself (every chamber the same in
+            ## this window: a facet in which the light ran alike everywhere, a
+            ## tail with no feeding).  Both tests divide by that zero pooled
+            ## spread, giving nan for equal means, a spurious p = 0 for
+            ## unequal ones and a RuntimeWarning either way: nothing to test.
+            if all(np.ptp(v) == 0 for v in groups.values()):
                 continue
             try:
                 if len(groups) == 2:

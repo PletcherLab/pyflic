@@ -497,6 +497,8 @@ def test_project_pools_the_difference_and_makes_it_primary(tmp_path):
     assert {r["metric"] for r in rows} >= {"dLicksA"}
     text = (root / "analysis" / "proj_Stats.txt").read_text(encoding="utf-8")
     assert text.index("Paired − yoked difference (primary") < text.index("Per-chamber metrics (secondary)")
+    ## Groups, not their rows: each has a Training and a Test row.
+    assert "Chamber groups pooled : 11\n" in text
 
     pdf = write_project_report(project, log=lambda *_a, **_k: None)
     assert Path(pdf).is_file()

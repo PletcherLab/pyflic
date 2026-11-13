@@ -1442,10 +1442,13 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
             return [(RECORDING_LABEL, (0.0, float("inf")))]
         if not gt.complete:
             return [(TRAINING_LABEL, (0.0, float("inf")))]
-        ## Rounded to the hundredth of a minute so the FacetRange cell and the
-        ## StartMin/EndMin columns read as a time, not a float dump; both sides
-        ## of the split use the same rounded value, so the partition is exact.
-        end = round(float(gt.training_end), 2)
+        ## Rounded *up* to the thousandth of a minute (0.06 s) so the
+        ## FacetRange cell and the StartMin/EndMin columns read as a time, not
+        ## a float dump, while the split stays between the last Training row
+        ## and the first Main row, 0.2 s later, where the Light Events split.
+        ## Rounding to the hundredth moved it up to three rows either way.
+        last = float(gt.training_end)
+        end = max(float(np.ceil(last * 1000.0)) / 1000.0, last)
         return [(TRAINING_LABEL, (0.0, end)), (TEST_LABEL, (end, float("inf")))]
 
     def feeding_summary_facet(
