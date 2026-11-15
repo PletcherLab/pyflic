@@ -1539,10 +1539,12 @@ def _healthy_dfm(dfm_id: int, intervals: tuple[IntervalSpec, ...], minutes: floa
 
 
 def one_of_each_spec(minutes: float = 30.0, *, seed: int = 7) -> RecordingSpec:
-    """PyMCU's ``ParadigmExamples.txt``: one DFM per Paradigm type, every fly
-    healthy.  DFM 1 OpenLoop (A wells On, Lit), 2 ClosedLoop, 3 FixedInterval,
-    4 NonFeeding, 5 Closed for a twelfth of the run then PR10, 6 FixedRatio;
-    A wells 20 and B wells Off elsewhere."""
+    """One DFM per Paradigm type, every fly healthy, laid out as PyMCU's
+    ``ParadigmExamples.txt`` was before 4.0.1, when its ratio Paradigms
+    counted Events (this simulator counts Events only; the 4.0.1 file counts
+    contact on DFMs 5 to 7).  DFM 1 OpenLoop (A wells On, Lit), 2 ClosedLoop,
+    3 FixedInterval, 4 NonFeeding, 5 Closed for a twelfth of the run then PR10,
+    6 FixedRatio (FR5); A wells 20 and B wells Off elsewhere."""
     def one(name: str, dark: bool = True, thresholds: tuple[int | str, ...] = CHOICE_THRESHOLDS,
             length: float = minutes) -> IntervalSpec:
         return IntervalSpec(name, dark, thresholds, length)
