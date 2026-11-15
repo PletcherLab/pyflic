@@ -107,8 +107,12 @@ ratio Paradigms:
 
 | Paradigm | Each light event needs |
 |---|---|
-| **ProgressiveRatio** | more feeding bouts each time, along its series (Arithmetic or Exponential), up to its `Cap` |
-| **FixedRatio** | the same number of feeding bouts every time, its `Ratio` |
+| **ProgressiveRatio** | more time in contact each time, along its series (Arithmetic or Exponential), up to its `Cap`; with `Counter: Events`, more feeding bouts |
+| **FixedRatio** | the same time in contact every time, its `Ratio`; with `Counter: Events`, the same number of feeding bouts |
+
+What a ratio Paradigm counts is its **Counter**, which `Program.txt` gives on its line:
+`Contact`, milliseconds of contact (PyMCU 4.0.1's default, on DFM firmware 4.0.1), or
+`Events`, feeding bouts (the only kind PyMCU 4.0.0 wrote, which leaves the Counter out).
 
 A FixedRatio experiment is analysed with the same machinery; see
 [Fixed ratio](#fixed-ratio). Without `Program.txt` the Paradigm's type is unknown, and the
@@ -220,7 +224,9 @@ counted for each light event, its **Firmware Events**. Their trend is measured b
 licks' (`TrendRhoFirmware`). The warning stays on pyflic's licks. When the Firmware Events
 rise and the licks do not, the group gets a note instead: *the firmware counted rising
 Events per light event; pyflic's licks did not follow: check detection*. Under a FixedRatio
-Test the requirement never rises, so no trend is judged, and the note says so.
+Test the requirement never rises, so no trend is judged, and the note says so. Under
+`Counter: Contact` the firmware counts milliseconds, not bouts, so there are no Firmware
+Events: `TrendRhoFirmware` is NaN and only the licks' trend is judged.
 
 **The series, on generation 3.** The firmware records the Requirement each light event
 met, and it keeps its program's series exactly: under a ProgressiveRatio the Requirements
@@ -284,8 +290,9 @@ it met. `BreakMin` is the minute, since training end, of the last one counted.
 
 ### The recorded Requirement
 
-A generation-3 recording states the **Requirement** each light event met: how many
-Firmware Events the firmware demanded for it. The breaking point is still the count of
+A generation-3 recording states the **Requirement** each light event met: the milliseconds
+of contact the firmware demanded for it under `Counter: Contact`, or how many Firmware
+Events under `Counter: Events`. The breaking point is still the count of
 lick-backed light events, because a light with no lick is still the drifting-sensor
 signature. The Requirement is reported beside it:
 
@@ -296,8 +303,9 @@ signature. The Requirement is reported beside it:
 | `ParadigmType` | the Test Paradigm's type, `ProgressiveRatio` or `FixedRatio` |
 | `LargestRequirement` | on generation 1, the most sucrose licks credited to one counted event, a description only; on generation 3, the same as `BreakRequirement` |
 
-`BreakRequirement` and `FirmwareEvents` are `NA` before generation 3. The reports show
-`BreakRequirement` beside the breaking point.
+`BreakRequirement` and `FirmwareEvents` are `NA` before generation 3, and `FirmwareEvents`
+is `NA` under `Counter: Contact` too. The reports show `BreakRequirement` beside the
+breaking point.
 
 ### Fixed ratio
 

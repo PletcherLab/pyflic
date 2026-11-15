@@ -40,9 +40,11 @@ The recording has two phases:
    finishes training at its own time, when its paired fly has done so.
 2. **Test.** The firmware demands progressively more feeding for each light
    event. A fly that finds the light rewarding keeps working as the price
-   rises, up to a point. From DFM firmware 4.0.0 the price is counted in
-   feeding bouts, and a fixed ratio, the same price every time, is possible
-   too.
+   rises, up to a point. The price is time in contact with the food, as
+   before firmware 4.0.0, by default from PyMCU 4.0.1 and DFM firmware
+   4.0.1; a Paradigm with `Counter: Events` counts feeding bouts instead,
+   the only kind firmware 4.0.0 counts. A fixed ratio, the same price every
+   time, is possible too.
 
 The analysis asks three questions:
 
@@ -74,8 +76,10 @@ pyflic reads the shape of each DFM's file and calls it its **generation**:
 | Generation | Recorded by | Training is read from | Light events are read from |
 |---|---|---|---|
 | 1 | PyMCU 3.x, DFM firmware before 4.0.0 | a flag inside the sucrose well's signal | onsets of the light in `OptoCol1` |
-| 2 | PyMCU 4.0.0, DFM firmware before 4.0.0 | nowhere: no training information | onsets of the light in `OptoCol1` |
-| 3 | PyMCU 4.0.0, DFM firmware 4.0.0 | the paired sucrose well's Phase column | the paired sucrose well's Activations |
+| 2 | PyMCU 4.0.0 or later, DFM firmware before 4.0.0 | nowhere: no training information | onsets of the light in `OptoCol1` |
+| 3 | PyMCU 4.0.0 or later, DFM firmware 4.0.0 or 4.0.1 | the paired sucrose well's Phase column | the paired sucrose well's Activations |
+
+Where this guide says firmware 4.0.0, it means 4.0.0 or 4.0.1: both write the same rows.
 
 - **Generation 1 needs version-3 DFM files with light data (`OptoCol1`).**
   The training flag and the light state both live there. Without them no
@@ -621,7 +625,9 @@ When the firmware's count rises and pyflic's licks do not, the group gets a
 note instead: *the firmware counted rising Events per light event; pyflic's
 licks did not follow: check detection*. The fly worked to the schedule, and
 pyflic's detection missed some of it. Under a fixed ratio the requirement
-never rises, so no trend is judged at all.
+never rises, so no trend is judged at all. Under `Counter: Contact` the
+firmware counts milliseconds of contact, not bouts, so there are no Firmware
+Events: `TrendRhoFirmware` is NaN and only the licks' trend is judged.
 
 **The requirement series, on firmware 4.0.0.** The firmware records the
 Requirement each light event met, and it keeps its program's series

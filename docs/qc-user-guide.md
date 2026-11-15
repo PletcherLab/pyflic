@@ -750,18 +750,28 @@ reads the shape of each DFM's file once, at load:
 | Generation | Recorded by | What pyflic can read |
 |---|---|---|
 | 1 | PyMCU 3.x, older firmware: 27 columns | the light at each sample (`OptoCol1`); Training as a flag in the signal |
-| 2 | PyMCU 4.0.0 with an un-updated DFM: 90 or 102 columns, the Paradigm ones empty | the light at each sample; no Training at all |
-| 3 | PyMCU 4.0.0 with DFM firmware 4.0.0: 90 or 102 columns, filled | on every row the Program Interval, its Cycle and its Paradigm; for every well its Phase (`A` in Acclimation, `M` after), its Activations, its Requirement and Progress under a ratio Paradigm, and `OnMs`, the milliseconds its light was on |
+| 2 | PyMCU 4.0.0 or later with an un-updated DFM: 90, 91 or 102 columns, the Paradigm ones empty | the light at each sample; no Training at all |
+| 3 | PyMCU 4.0.0 or later with DFM firmware 4.0.0 or 4.0.1: 90, 91 or 102 columns, filled | on every row the Program Interval, its Cycle and its Paradigm; for every well its Phase (`A` in Acclimation, `M` after), its Activations, its Requirement and Progress under a ratio Paradigm, and `OnMs`, the milliseconds its light was on |
 
-**The Baseline columns.** Released PyMCU 4.0.0 writes 102 columns: the 90,
-then `Baseline1` to `Baseline12`, on every DFM, whatever its firmware. They
-hold the **Baseline in force**: the baseline PyMCU added to each well's
-threshold before sending it to the DFM, so a threshold T meant contact above
-Baseline + T. With `Baseline: Adaptive` it follows each well's resting level
-through the recording. They are `NA` before the first Program Interval,
-outside the program, and with `Baseline: No`. They do not change the
-generation. Files with 90 columns are PyMCU 4.0.0 development builds from
-before 1 November 2026. The light QC uses the columns (section 6.4).
+**The Baseline set.** PyMCU 4.0.1 writes 91 columns: the 90, then
+`BaselineSet`, on every DFM, whatever its firmware. It names a row of the
+recording's `Baselines.csv` (copy it into `data/` beside `Program.txt`),
+which holds the **Baseline in force**: the baseline PyMCU added to each
+well's threshold before sending it to the DFM, so a threshold T meant
+contact above Baseline + T. With `Baseline: Adaptive` it follows each well's
+resting level through the recording. It is `NA` before the first Program
+Interval, outside the program, and with `Baseline: No`. Development builds
+of 1 to 15 November 2026 wrote the 12 baselines on every row instead
+(`Baseline1` to `Baseline12`, 102 columns), which pyflic also reads. Neither
+changes the generation. Files with 90 columns are PyMCU 4.0.0, with no
+baselines recorded. The light QC uses the Baseline in force (section 6.4).
+
+**The Counter.** From PyMCU 4.0.1 a ratio Paradigm's line in `Program.txt`
+says `Counter Contact` (the default: its Requirement and Progress are
+milliseconds of contact) or `Counter Events` (feeding bouts, as everything
+PyMCU 4.0.0 wrote). Under Contact the firmware counts no Events, so the
+Firmware Events columns are `NA` and *firmware events disagree* is not
+judged.
 
 On generation 3 the rows are the schedule, so the program's timestamps are
 only a check (*interval started late*, section 7.6), and the light QC reads
@@ -913,7 +923,7 @@ Each flagged group gets a **likely cause**:
 - **hardware, linkage or program mismatch**, otherwise: light the firmware
   had no reason to switch on. Check the lid, the linkage and the program.
 
-**With the Baseline columns (section 6.2) the first cause splits in two**,
+**With the Baseline set (section 6.2) the first cause splits in two**,
 because pyflic then knows the baseline the firmware's thresholds were built
 on. It compares each trigger well's resting level, the 10th percentile of
 its signal in each minute, with its Baseline in force:
@@ -954,7 +964,7 @@ were not recorded. A Slice that starts later still reads the baseline from
 the run's first ten seconds, which the load keeps aside; it is approximate
 only when those were not recorded either, and a note says so.
 
-**With the Baseline columns nothing is reconstructed.** The emulated trigger
+**With the Baseline set nothing is reconstructed.** The emulated trigger
 takes each row's Baseline in force instead of the mean of the first ten
 seconds, so it follows an adaptive baseline as the firmware's thresholds
 did, and it is never approximate.
@@ -1026,7 +1036,7 @@ Basic analysis and the Hub's **Run QC** (with *Opto light QC tables* and
 | `opto_light_intervals.csv` | group and interval | the interval's mode, the Hold it was judged with (`HoldMs`) and trigger wells; on firmware 4.0.0 the `ProgramInterval`, `Cycle`, `Paradigm` and `ParadigmType` the rows recorded; lit, unexplained and contact time; feeding bouts, and those never lit |
 | `opto_light_events.csv` | light event | its well, onset, end and duration; unexplained seconds; `OverrunSec`, the light's time past the last lick plus the Hold; on firmware 4.0.0, where each event is one Activation, its `Phase`, the Requirement it met, the firmware's feeding bouts behind it, its light to the millisecond, its Paradigm Family and what ended it (section 7.7) |
 | `opto_program.csv` | program interval | the program as pyflic read it: each Paradigm's name, type and settings, the linkage and trigger wells, and for an older export the raw `F` and `P` it echoed |
-| `opto_baselines.csv` | well | how its Baseline in force moved (section 6.4); written only when the data have PyMCU's Baseline columns |
+| `opto_baselines.csv` | well | how its Baseline in force moved (section 6.4); written only when the data have PyMCU's Baseline sets |
 | `opto_light_dfm<n>.png` | DFM | the *Light explained by licks* figure |
 
 **Roles.** `Roles` names what each chamber of the group was to the light, as
@@ -1911,7 +1921,7 @@ tolerance than the 25 ms above.
 **Reported, no verdict:** `LikelyCause` (6.4); `UnexplainedOnsetMin`
 (6.9); `EmulationApproximate` (6.4); `CutOffs` (7.3); `RelightDelayMs`
 (7.5); the Activations not judged, in the group's notes (7.1); and, with
-PyMCU's Baseline columns, `opto_baselines.csv` and the DFM note on how each
+PyMCU's Baseline sets, `opto_baselines.csv` and the DFM note on how each
 baseline moved (6.4).
 
 **Fixed values.** No setting changes these:
@@ -1925,9 +1935,9 @@ baseline moved (6.4).
 | 60 s | how far the data's start may be from the program's Start Time before *program mismatch* |
 | 5 s | the first Program Interval's lead-in, discounted by *interval started late* |
 | 200 ms | the extra tolerance of a light period timed only to the record |
-| 10 s | the firmware's baseline window, which the emulated trigger re-creates without the Baseline columns |
+| 10 s | the firmware's baseline window, which the emulated trigger re-creates without the Baseline set |
 | 2 s | how late the data may begin after the program before the emulation is approximate |
-| 50% | the share of a group's unexplained light that decides its likely cause: where the firmware saw contact (otherwise hardware), and, with the Baseline columns, where a trigger well rested 10 counts above its Baseline in force (otherwise sustained contact) |
+| 50% | the share of a group's unexplained light that decides its likely cause: where the firmware saw contact (otherwise hardware), and, with the Baseline set, where a trigger well rested 10 counts above its Baseline in force (otherwise sustained contact) |
 | 10 counts | how far above its Baseline in force a well must rest for the cause to be *a drifting baseline* |
 | 30 minutes | the window of `UnexplainedOnsetMin` |
 

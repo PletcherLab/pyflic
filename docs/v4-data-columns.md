@@ -1,7 +1,7 @@
 # The firmware 4.0.0 data columns, and what pyflic does with them
 
-DFM firmware 4.0.0, recorded with PyMCU 4.0.0, adds 63 columns to every DFM
-data file. They record what each well's light program was doing, every 200 ms:
+DFM firmware 4.0.0 or 4.0.1, recorded with PyMCU 4.0.0 or later, adds 63 columns to
+every DFM data file, and PyMCU 4.0.1 one more, `BaselineSet`. They record what each well's light program was doing, every 200 ms:
 which step of the program was running, whether each fly was still in
 Acclimation, how many light periods it had earned, and exactly how long its LED
 was on. This page explains the new columns and where they show up in pyflic.
@@ -20,8 +20,8 @@ pyflic decides this from each DFM file when it loads, and names it in
 | Generation | What it is | What pyflic can do |
 |---|---|---|
 | **1** | 27 columns, from PyMCU 3.x | Everything it did before. Progressive Ratio training is read from a flag inside the signal. |
-| **2** | 90 columns, the new ones all `NA`: the new PyMCU with a DFM that still runs older firmware | Feeding analysis as usual. There is **no training information** at all, so a Progressive Ratio experiment is analysed as one "Recording" phase and says so. |
-| **3** | 90 columns, filled: firmware 4.0.0 | Everything below. |
+| **2** | 90 columns (91 from PyMCU 4.0.1), the Paradigm ones all `NA`: the new PyMCU with a DFM that still runs older firmware | Feeding analysis as usual. There is **no training information** at all, so a Progressive Ratio experiment is analysed as one "Recording" phase and says so. |
+| **3** | 90 columns (91 from PyMCU 4.0.1), filled: firmware 4.0.0 or 4.0.1 | Everything below. |
 
 Feeding itself is still measured from the well signals, `W1`–`W12`, exactly as
 before. The new columns describe the light.
@@ -39,9 +39,10 @@ Each per-well column has one copy per well, numbered 1–12 like `W1`–`W12`.
 | `Paradigm` | The name of the light rule in force, as written in the program. `NA` on the baseline rows (`Interval` 0) and on rows under no program step. | Looking up the rule's type and settings in `Program.txt`, and so which checks and measures apply. Labels the Program Facets and the Program timeline. |
 | `Phase` | `A` while a well is in Acclimation, `M` (Main) after. | **Progressive Ratio training end**: the paired sucrose well's first Main row under the ratio rule. Also the light table's Acclimation columns and a QC check that each fly got the number of Acclimation light periods it should. |
 | `Activations` | A running count of the light periods each well's own rule started. A well lit only through its partner never counts one. | **Light Events** in Progressive Ratio; the light table's `Activations`; the light QC, which asks whether each light period had a lick behind it and kept its rule; roles (a yoked well has light but no Activations). |
-| `Requirement` | Under a ratio rule, how many feeding bouts the well needs for its next light period. | The ratio each light period met, which a Progressive Ratio breaking point now reports as `BreakRequirement`, and which the light QC checks against the program's series. |
-| `Progress` | Under a ratio rule, how many bouts the well has made toward that Requirement. | **Firmware Events**: the feeding bouts the firmware counted, compared with pyflic's own count of feeding events as a QC check. |
+| `Requirement` | Under a ratio rule, what the well needs for its next light period: milliseconds of contact under `Counter: Contact` (PyMCU 4.0.1's default), or feeding bouts under `Counter: Events`. `Program.txt` gives each ratio Paradigm's Counter; a file without one (PyMCU 4.0.0) counted bouts. | The ratio each light period met, which a Progressive Ratio breaking point now reports as `BreakRequirement`, and which the light QC checks against the program's series. |
+| `Progress` | Under a ratio rule, how much the well has done toward that Requirement, in the same units. | Under `Counter: Events`, **Firmware Events**: the feeding bouts the firmware counted, compared with pyflic's own count of feeding events as a QC check. Under `Counter: Contact` there are none, and pyflic's Firmware Events columns are `NA`. |
 | `OnMs` | How many of the record's 200 ms the well's LED was on, from any cause. | **Exact light time**: `LitSec` in the light table, the `OptoOn_sec` columns of the feeding summary, and the lit time the light QC judges. With `Activations`, it times each light period to the millisecond, so pyflic can check its length against the program. Older files can only sample the light once every 200 ms. |
+| `BaselineSet` | PyMCU 4.0.1, after `OnMs`: which set of baselines the row's thresholds were measured from, a row of the recording's `Baselines.csv` (copy it into `data/` beside `Program.txt`). | Each row's **Baseline in force**: the light QC's emulated trigger on older firmware, and telling a drifting baseline from sustained contact. pyflic drops the column at load and keeps the baselines on the DFM. |
 
 A value that does not apply is written `NA`: for example `Requirement` and
 `Progress` on a well that is not under a ratio rule. `NA` means "not

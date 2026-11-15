@@ -55,8 +55,12 @@ load, and calls it the recording's **Generation**:
 | Generation | Written by | Columns | Training | Light |
 |---|---|---|---|---|
 | 1 | PyMCU 3.x, any older firmware | 27 | a flag inside the signal | `OptoCol1`, sampled five times a second |
-| 2 | PyMCU 4.0.0, DFM firmware older than 4.0.0 | 90, the new ones all `NA` | **none** | `OptoCol1` |
-| 3 | PyMCU 4.0.0, DFM firmware 4.0.0 | 90, filled | each well's `Phase` | `OnMs`, exact to the millisecond |
+| 2 | PyMCU 4.0.0 or later, DFM firmware older than 4.0.0 | 90 (91 from PyMCU 4.0.1), the Paradigm ones all `NA` | **none** | `OptoCol1` |
+| 3 | PyMCU 4.0.0 or later, DFM firmware 4.0.0 or 4.0.1 | 90 (91 from PyMCU 4.0.1), filled | each well's `Phase` | `OnMs`, exact to the millisecond |
+
+Firmware 4.0.1 writes the same rows as 4.0.0, so where this help says firmware 4.0.0 it
+means either. PyMCU 4.0.1 adds a 91st column, `BaselineSet`, naming the set of baselines in
+the recording's `Baselines.csv` that each row's thresholds were measured from.
 
 A generation-3 file records, on every row, the **Program Interval**, **Cycle** and
 **Paradigm** in force, and for each well its **Phase** (`A` in Acclimation, `M` after), its
@@ -75,18 +79,19 @@ carry a `Generation` column.
 ## Program.txt
 
 The MCU writes the program it ran back out as `Program.txt`. Copy that file into the
-member's `data/` folder, beside the DFM CSVs. pyflic reads the exported file only, the one
+member's `data/` folder, beside the DFM CSVs, with `Baselines.csv` when the recording has
+one (PyMCU 4.0.1). pyflic reads the exported file only, the one
 with `***DFM 1***` sections, not the program you authored for the MCU with `[General]`,
 `[Paradigm …]` and `[DFM]` sections.
 
 PyMCU writes two kinds of export. pyflic tells them apart by their content and reads both.
 
-### The PyMCU 4.0.0 export
+### The PyMCU 4.0 export
 
 ```
 Paradigms:
 Closed (ClosedLoop): Frequency 40 Hz, PulseWidth 8 ms, HoldMs 500 ms, MaxOnMs 0 ms, EventGapMs 100 ms
-PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Series Arithmetic, FirstRequirement 1, Step 10, Cap 200, EventGapMs 100 ms, Acclimation 10
+PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Counter Events, Series Arithmetic, FirstRequirement 1, Step 10, Cap 200, EventGapMs 100 ms, Acclimation 10
 
 ***DFM 1***
 Linkage: 1,1,2,2,3,3,4,4,5,5,6,6
@@ -97,10 +102,17 @@ Program Type: Linear
 
 - **The `Paradigms:` block** names every Paradigm, its type in brackets and every setting.
   It is the only place the type and settings appear: a data row carries only the name.
+- **A ratio Paradigm's Counter.** From PyMCU 4.0.1 a ProgressiveRatio or FixedRatio line
+  says `Counter Contact` (the default) or `Counter Events`. Under `Contact` the Requirement
+  settings carry `ms`, and the rows' `Requirement` and `Progress` are milliseconds of
+  contact, so there are no Firmware Events: their counts are `NA`. A line without a
+  Counter (PyMCU 4.0.0) counted Events.
 - **An interval line** gives its start, the Paradigm's name, `Dark` or `Lit`, twelve
   thresholds and its length, in the order of the Program file's Interval line. Earlier
   4.0.0 exports put `Dark` or `Lit` first; pyflic reads both. The k-th line of a DFM's
-  section is its Program Interval k.
+  section is its Program Interval k. A Circadian section lists every interval of the day
+  from PyMCU 4.0.1; an older one can leave out those that start later in the day than the
+  recording lasted, and their hours are judged by the Paradigm's name alone.
 - **A threshold** is a signal level, `On` or `Off`. A level makes the well a **trigger
   well**. `On` keeps it lit regardless (open loop). `Off` never lights it by its own
   behaviour, and such a well runs no Paradigm of its own.
@@ -205,7 +217,11 @@ separately. Acclimation Activations earn no Firmware Event, so the light-events 
 their `FirmwareEvents` empty.
 
 **Same name, same state.** When the next interval names the same Paradigm, every well keeps
-its Phase, Requirement and Progress. A different name starts every well afresh.
+its Phase, Requirement and Progress. A different name starts every well afresh. A well set
+`On` or `Off` runs no Paradigm, so its state waits: one that had no threshold since the
+Paradigm started begins its Acclimation in the first interval that gives it one. An
+Acclimation that fits inside that first record leaves no `A` row; pyflic finds it from
+`Program.txt`.
 
 **A DFM that restarts** on its own mid-recording (a power dip, say) starts afresh too. Its
 `Index` and times carry on across the gap, then come a few rows under no instruction
@@ -347,7 +363,7 @@ Each check writes a flag into the group's `Flags`, in the words below.
 | **non-feeding light during feeding**: under NonFeeding, lit through more than `opto_non_feeding_lit_warn_fraction` (10%) of the feeding at its trigger wells, and for at least `opto_non_feeding_min_sec` (30 s) | warning | 3 |
 | **contact without activation**, **non-feeding dark**, **interval started late**, **DFM restarted**: [below](#each-paradigms-own-rule) | warning | 3 |
 | **acclimation count mismatch**: a trigger well's completed Acclimation counted a different number of Activations than its Paradigm's `Acclimation` | warning | 3 |
-| **firmware events disagree**: under a ratio Paradigm's Main phase, a trigger well's Firmware Events and pyflic's feeding events differ by more than `opto_event_disagreement_warn_fraction` (25%) of the Firmware Events (judged from 5 events). pyflic's count leaves out the feeding events that start while the well's own Activation is lit, after its onset row, as the firmware starts no Event then | warning | 3 |
+| **firmware events disagree**: under a ratio Paradigm's Main phase with `Counter: Events` (not judged under `Counter: Contact`, which has no Firmware Events), a trigger well's Firmware Events and pyflic's feeding events differ by more than `opto_event_disagreement_warn_fraction` (25%) of the Firmware Events (judged from 5 events). pyflic's count leaves out the feeding events that start while the well's own Activation is lit, after its onset row, as the firmware starts no Event then | warning | 3 |
 | **lost records**: more than `opto_lost_records_warn` (25) records missing from the DFM's `Index`, not counting a restart's gap, which **DFM restarted** reports | warning, DFM | 3 |
 | **unknown-instruction rows**: more than `opto_unknown_rows_warn_fraction` (1%) of the rows after the lead-in (Program Interval 0) recorded under an instruction outside the program | warning, DFM | 3 |
 | **late records**: more than `opto_late_records_warn` (10) records with an `OnMs` above 200 ms | warning, DFM | 3 |
@@ -444,11 +460,14 @@ and their columns are `NA`. On generations 1 and 2 none runs: `OptoCol1`, sample
 Each flagged group gets a `LikelyCause`: **a drifting baseline or sustained contact** when
 most of its unexplained light fell where the firmware saw contact and pyflic saw no lick or
 touch, otherwise **hardware, linkage or program mismatch**: light the firmware had no reason
-to switch on.
+to switch on. Where the data name PyMCU's Baseline sets (PyMCU 4.0.1), the baseline each
+threshold was built on is known, and the first cause splits in two: **sustained contact**
+when the well rested at that baseline (a fly standing on the food, which pyflic's running
+median absorbs), and **a drifting baseline** when it rested 10 or more above it.
 
 **Generation 3 reads the firmware's own decisions.** An Activation, or a Firmware Event (a
-rise in `Progress`), with no pyflic lick or touch at its trigger well is the drifting-baseline
-signature itself. On these recordings:
+rise in `Progress` under `Counter: Events`), with no pyflic lick or touch at its trigger well
+is the drifting-baseline signature itself. On these recordings:
 
 - `ContactSec` is the lit time of the trigger wells' Activations: the firmware's contact
   decisions.
@@ -458,7 +477,9 @@ signature itself. On these recordings:
 
 **Generations 1 and 2 emulate the firmware.** With a program, pyflic re-runs the firmware's
 own test on the recorded signal: raw minus the mean of the run's first ten seconds, against
-the interval's threshold. `ContactWithoutActivitySec` is how long that **emulated trigger**
+the interval's threshold. Where the data name Baseline sets (PyMCU 4.0.1), it takes each
+row's baseline from `Baselines.csv` instead, and is never approximate for want of a baseline
+window. `ContactWithoutActivitySec` is how long that **emulated trigger**
 read a trigger well above threshold while pyflic saw no lick or touch.
 `EmulationApproximate` marks it approximate when the data begin more than two seconds after
 the program, so the baseline window was not recorded. A

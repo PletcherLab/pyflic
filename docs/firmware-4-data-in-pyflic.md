@@ -51,8 +51,8 @@ the one Paradigm column the firmware fills on every row:
 | Generation | Constant | Written by | Header | `Phase1` | `DFM.training_info` |
 |---|---|---|---|---|---|
 | 1 | `GENERATION_FLAG` | PyMCU 3.x, any older firmware | 27 columns | absent | `flag` |
-| 2 | `GENERATION_EMPTY` | PyMCU 4.0.0, DFM firmware before 4.0.0 | 90, 91 or 102 columns | every value `NA` or blank | `none` |
-| 3 | `GENERATION_PARADIGM` | PyMCU 4.0.0, DFM firmware 4.0.0 | 90, 91 or 102 columns | any `A` or `M` | `phase` |
+| 2 | `GENERATION_EMPTY` | PyMCU 4.0.0 or later, DFM firmware before 4.0.0 | 90, 91 or 102 columns | every value `NA` or blank | `none` |
+| 3 | `GENERATION_PARADIGM` | PyMCU 4.0.0 or later, DFM firmware 4.0.0 or 4.0.1 | 90, 91 or 102 columns | any `A` or `M` | `phase` |
 
 91 columns are PyMCU 4.0.1: the 90, then `BaselineSet`, the number of a
 Baseline set in the recording's `Baselines.csv` ([The Baseline in force](#the-baseline-in-force)).
