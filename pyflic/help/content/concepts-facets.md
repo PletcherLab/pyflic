@@ -98,9 +98,9 @@ any DFM has, in the order they began.
 the DFM, and rows recorded under an instruction outside the program. Whole-recording tables
 still include them.
 
-**By generation.** A firmware 4.0.0 recording (generation 3) states its Program Interval
-and Cycle on every row, so its Facets are exact. An older recording does not, so its Facets
-are laid out from the program's clock schedule. `summary.txt` notes each such DFM as
+**Exact or approximate.** The recording states its Program Interval and Cycle on every
+row, so its Facets are exact. An older recording (generation 1 or 2) does not, so its
+Facets are laid out from the program's clock schedule. `summary.txt` notes each such DFM as
 *Program Facets from the clock schedule: approximate*, and the report's cover says so.
 
 **Errors.** `pyflic lint` reports each of these, and the loader refuses the config:

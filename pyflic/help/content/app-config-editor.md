@@ -104,9 +104,10 @@ config that states one. What each setting does is in
 Once the experiment is known to be optogenetic — **Optogenetics** is `yes`, or it is `auto`
 and `data/` holds a `Program.txt` or a run has already written its light QC — an
 *Optogenetic light QC* section shows the thresholds, shared by every type, under the same
-rule as the rest: grey defaults, and only what you type is written. Thirteen of them apply
-to firmware 4.0.0 recordings only, eight of those to the checks of each Paradigm's own
-rule. See [Optogenetic experiments](concepts-optogenetics.md#thresholds).
+rule as the rest: grey defaults, and only what you type is written. Thirteen of them use
+the Paradigm columns, so they do not apply to older recordings; eight of those are for the
+checks of each Paradigm's own rule. See
+[Optogenetic experiments](concepts-optogenetics.md#thresholds).
 
 ### Global Parameters
 

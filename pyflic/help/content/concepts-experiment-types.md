@@ -253,9 +253,9 @@ sharing one treatment. In each group the **paired** fly's feeding at the sucrose
 same moments whatever it does, or a single chamber with no yoked control. Per DFM, the
 config names the paired chamber of each pair with `paired_chambers:`, or says
 `chamber_groups: single`, or leaves both out and the linkage of `Program.txt` gives the
-groups. On DFM firmware 4.0.0 the shipped type covers both ratio Paradigms,
-ProgressiveRatio and FixedRatio. Other optogenetic designs — open loop, closed loop, fixed
-interval, non-feeding — are analysed as a Custom experiment or under a lab type that
+groups. The shipped type covers both ratio Paradigms, ProgressiveRatio and FixedRatio.
+Other optogenetic designs — open loop, closed loop, fixed interval, non-feeding — are
+analysed as a Custom experiment or under a lab type that
 expects their light, with the [light table](concepts-optogenetics.md#the-light-table) beside
 the feeding results. A yoked design among them gets a paired − yoked comparison of feeding
 too, in the report's *Paired and yoked* results, under a type with the Paired and yoked
@@ -268,7 +268,7 @@ What the Progressive Ratio module adds:
 - **Paired − yoked differences** per pair, the primary input to its statistics when the
   design has yoked controls.
 - A **light QC** that fails a group whose light followed the sensor rather than the fly,
-  or, on firmware 4.0.0, met a Requirement its program's series does not give.
+  or met a Requirement its program's series does not give.
 - A **breaking point** — the lick-backed light events the paired fly completed before its
   first long pause — and **sucrose persistence**, the same question asked of feeding.
 - Its own constants (`require_training_complete`, `exclude_failed_pr_groups`, the light QC

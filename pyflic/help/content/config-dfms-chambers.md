@@ -91,7 +91,7 @@ inherits. It is a fact about the recording, so it stays free inside a Project. S
 
 On an optogenetic DFM every chamber gets a **Role** — Paired, Yoked, Mutual, Self, Open or
 Unlit — that says what it was to the light. pyflic reads it from `Program.txt`'s linkage and
-thresholds, or on a firmware 4.0.0 recording from the data. You never write it, and it is
+thresholds, or without it from the data. You never write it, and it is
 not a treatment: do not declare it as a design factor. It appears as a `Role` column beside
 `Treatment`. A Progressive Ratio DFM is the one case you may state, with `paired_chambers`
 or `chamber_groups`, and the program is checked against it. See

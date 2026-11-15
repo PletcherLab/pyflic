@@ -97,14 +97,15 @@ open, so you can step through the DFMs comparing like with like.
 - **Integrity** — data continuity and the recording's messages.
 - **Sim. Feeding** and **Bleeding** — two-well experiments only, once QC has run.
 - **Raw Signal**, **Baselined** and **Cumulative Licks** — the saved QC plots.
-- **Program** — for a DFM with firmware 4.0.0 data or a `Program.txt` section.
+- **Program** — the DFM's program and each well's state (on a generation 1 or 2 recording,
+  only with a `Program.txt` section).
 
 ### The Integrity sub-tab
 
 The DFM's integrity report from `qc/integrity/`: the table above, the text report below —
-rows, time span, gaps and data breaks, lost and repeated records, error flags and, on
-firmware 4.0.0 data, the Paradigm sequence and the DFM's restarts. Below the report, the
-recording's `Messages.csv` for this DFM and the MCU, when `data/` holds one.
+rows, time span, gaps and data breaks, lost and repeated records, error flags, the Paradigm
+sequence and the DFM's restarts (these two not on a generation 1 or 2 recording). Below the
+report, the recording's `Messages.csv` for this DFM and the MCU, when `data/` holds one.
 
 ### The messages table
 
@@ -174,9 +175,8 @@ them is under [What to look for](#what-to-look-for).
 
 The [Program timeline](plots-catalog.md#program-timeline) fills the top: the Program
 Intervals coloured by Paradigm type, and per well its Acclimation, its Activations and its
-light, with its `On` and `Off` stretches and the DFM's restarts on firmware 4.0.0 data.
-Below it, two tabs. **Wells** is a table with one row per well at the end of the loaded
-range:
+light, with its `On` and `Off` stretches and the DFM's restarts. Below it, two tabs.
+**Wells** is a table with one row per well at the end of the loaded range:
 
 | Column | What it holds |
 |---|---|
@@ -185,11 +185,11 @@ range:
 | `Phase` | `A` while in Acclimation, `M` after |
 | `AcclimationEndMin` | the minute the well left Acclimation |
 | `Activations` | Activations so far |
-| `Requirement`, `Progress` | under a ratio Paradigm: the Firmware Events the next Activation needs, and how many it has |
+| `Requirement`, `Progress` | under a ratio Paradigm: the milliseconds of contact (with `Counter: Events`, the Firmware Events) the next Activation needs, and how many it has |
 | `LitSec` | seconds its LED was on over the loaded range |
 
-**Activations**, on firmware 4.0.0 data, lists every Activation of the DFM's trigger wells,
-one row each, as `qc/opto/opto_light_events.csv` has them:
+**Activations** lists every Activation of the DFM's trigger wells, one row each, as
+`qc/opto/opto_light_events.csv` has them:
 
 | Column | What it holds |
 |---|---|
@@ -201,8 +201,8 @@ one row each, as `qc/opto/opto_light_events.csv` has them:
 | `RequirementMet` | under a ratio Paradigm, the Requirement it met |
 | `Overlap` | true when other light merged with it, so its length is not its own and the rule checks skip it |
 
-On a recording older than firmware 4.0.0 the timeline is laid out from the program's clock
-times, only `Paradigm`, `Role` and `LitSec` can be filled, and there is no Activations tab.
+On a generation 1 or 2 recording the timeline is laid out from the program's clock times,
+only `Paradigm`, `Role` and `LitSec` can be filled, and there is no Activations tab.
 The sub-tab is computed from the loaded experiment, not read from `qc/`, so a **Params**
 recompute redraws it.
 
@@ -223,11 +223,12 @@ other way round. Nothing is saved until **Save Exclusions…** on the Feeding Su
 Shown for an optogenetic experiment of any type: one row per linkage group, with its
 chambers and their `Roles` (`1 Paired, 2 Yoked`), its lit time, the share of it no
 trigger-well lick or touch explains, the minute that began, the contact with no lick — the
-emulated firmware trigger's, or on firmware 4.0.0 data the light of Activations with no lick
-or touch at their onset — and the verdict, coloured by tone. On firmware 4.0.0 data the rule
+light of Activations with no lick or touch at their onset, or on a generation 1 or 2
+recording the emulated firmware trigger's — and the verdict, coloured by tone. The rule
 checks' columns follow: short, over `MaxOnMs`, cut-offs, wrong length, lockout broken, missed
 contacts, series wrong, non-feeding dark, relight delay, the lowest open-loop lit fraction,
-the interval lag and the restarts, blank where the group's Paradigms have no such rule (see
+the interval lag and the restarts, blank where the group's Paradigms have no such rule and
+on a generation 1 or 2 recording (see
 [Each Paradigm's own rule](concepts-optogenetics.md#each-paradigms-own-rule)). The last
 column, **Likely cause**, is explained under
 [Drift or hardware?](concepts-optogenetics.md#drift-or-hardware). The tab opens on the

@@ -102,7 +102,7 @@ The per-DFM QC figures put three groups to a row, so six single chambers take tw
 
 ## Both ratio Paradigms
 
-From DFM firmware 4.0.0 the program names each interval's Paradigm. This type covers both
+The program names each interval's Paradigm. This type covers both
 ratio Paradigms:
 
 | Paradigm | Each light event needs |
@@ -111,8 +111,8 @@ ratio Paradigms:
 | **FixedRatio** | the same time in contact every time, its `Ratio`; with `Counter: Events`, the same number of feeding bouts |
 
 What a ratio Paradigm counts is its **Counter**, which `Program.txt` gives on its line:
-`Contact`, milliseconds of contact (PyMCU 4.0.1's default, on DFM firmware 4.0.1), or
-`Events`, feeding bouts (the only kind PyMCU 4.0.0 wrote, which leaves the Counter out).
+`Contact`, milliseconds of contact (the default), or `Events`, feeding bouts. A
+`Program.txt` from PyMCU 4.0.0 leaves the Counter out; its ratio Paradigms counted Events.
 
 A FixedRatio experiment is analysed with the same machinery; see
 [Fixed ratio](#fixed-ratio). Without `Program.txt` the Paradigm's type is unknown, and the
@@ -127,8 +127,8 @@ of the paired fly turns the light on. Where the recording says so depends on its
 | Generation | Training is read from | A group's training end |
 |---|---|---|
 | 1 (older firmware, 27 columns) | a flag inside the signal: while a well is in training its raw value is offset by 65536 (any sample above 40000) | the last flagged minute of the paired chamber's sucrose well; a light event that begins on the row that clears the flag is the last Training pairing, not the first Test one |
-| 2 (PyMCU 4.0.0 with an older DFM) | nowhere | none: see [No training information](#no-training-information) |
-| 3 (firmware 4.0.0) | the paired sucrose well's `Phase` | its first row in Phase `M` (Main) under a ratio Paradigm |
+| 2 (PyMCU 4 with firmware 3.x or older) | nowhere | none: see [No training information](#no-training-information) |
+| 3 (firmware 4.0.1) | the paired sucrose well's `Phase` | its first row in Phase `M` (Main) under a ratio Paradigm |
 
 A group's training end differs between groups, because it depends on the fly, and every
 Progressive Ratio time axis runs from it rather than from the start of the recording.
@@ -167,8 +167,8 @@ A group whose paired fly never finishes training has `TrainingComplete = false` 
 
 ### No training information
 
-A generation-2 recording comes from a DFM whose firmware is older than 4.0.0, recorded by
-PyMCU 4.0.0. It carries no training flag and no Phase, so it has no training information at
+A generation-2 recording comes from a DFM with firmware 3.x or older, recorded by
+PyMCU 4. It carries no training flag and no Phase, so it has no training information at
 all. Such a DFM is analysed, not removed:
 
 - each chamber group gets one Facet, `Recording`, which is never pooled into `Test`;
@@ -427,8 +427,8 @@ See [Reports](reports.md) for where each table appears.
 
 The type needs to know where Training ends and when the light came on:
 
-- **Generation 1** needs version-3 DFM files with light data (`OptoCol1`): the training
-  flag and the light state both live there. A version-2 file still loads, but no group ever
+- **Generation 1** needs PyMCU 3.x DFM files with light data (`OptoCol1`): the training
+  flag and the light state both live there. A PyMCU 2.x file still loads, but no group ever
   finishes training — `summary.txt` notes "no training flag on any well" for each — so with
   `require_training_complete` on, every group is auto-removed and there is nothing to
   analyse.

@@ -170,13 +170,13 @@ program.interval_for(1, 2)                   # DFM 1's Program Interval 2
 
 See [Optogenetic experiments](concepts-optogenetics.md).
 
-## Firmware 4.0.0 data
+## Firmware data
 
 A few modules read what the firmware recorded. Each takes a loaded experiment or DFM.
 
-**The Paradigm state.** Every `DFM` has a `generation` (1, 2 or 3) and, on generation 3, a
-`paradigm`: the 63 firmware columns as arrays, one row per `raw_df` row, wells numbered
-1–12. `raw_df` no longer holds them.
+**The Paradigm state.** Every `DFM` has a `generation` (3 on firmware 4.0.1; 1 or 2 on an
+older recording) and, on generation 3, a `paradigm`: the 63 firmware columns as arrays, one
+row per `raw_df` row, wells numbered 1–12. `raw_df` does not hold them.
 
 ```python
 dfm.generation                    # 1, 2 or 3
@@ -199,8 +199,8 @@ circuits and trigger wells, from the program or the data, and
 and `light_wells_facet(exp)` the same per Facet, and `write(exp)` writes all four into
 `analysis/`. `experiment_headline_metrics(exp)` names the metrics tested between
 treatments, those of the Paradigm Families the member's program runs;
-`HEADLINE_METRICS` is the four of before, which a member without a firmware 4.0.0
-recording keeps. `behaviour_rows(frame)` gives the rows those tests use: a chamber whose
+`HEADLINE_METRICS` is the four a member without `Program.txt`, or with an older
+recording, keeps. `behaviour_rows(frame)` gives the rows those tests use: a chamber whose
 Role does not earn light keeps its lit time and loses its Activation measures.
 
 **Paradigm Families** (`pyflic.base.paradigm_families`): `FAMILIES`, `family_of(mode,

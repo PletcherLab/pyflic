@@ -197,7 +197,7 @@ The same topics are readable here on GitHub — they are ordinary markdown in
 | [Getting Started](docs/GETTING_STARTED.md) | Installing and running pyflic, for someone new to Python |
 | [Checking your data](docs/qc-user-guide.md) | Every quality-control check, table and figure, including the optogenetic light QC |
 | [Analysing a Progressive Ratio assay](docs/progressive-ratio-user-guide.md) | The Progressive Ratio assay end to end: settings, analyses, figures and statistics |
-| [The firmware 4.0.0 data columns](docs/v4-data-columns.md) | The 63 columns a firmware 4.0.0 recording adds, and where pyflic uses them |
+| [The firmware 4.0.0 data columns](docs/v4-data-columns.md) | The 63 columns a firmware 4.0.1 recording adds, and where pyflic uses them |
 
 [docs/README.md](docs/README.md) indexes these guides, the developer references, and the
 plans removed once they were built.

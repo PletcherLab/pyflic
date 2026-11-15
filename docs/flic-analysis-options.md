@@ -119,12 +119,12 @@ and Linux, and needs no network connection, database or server.
 - **Optional extras:** a Python library for use in Jupyter notebooks, and an
   optional AI-written summary of a Project's results.
 
-### Features that need version 4.0.0 of PyMCU and the DFM firmware
+### Features that need version 4.0.1 of PyMCU and the DFM firmware
 
 pyflic analyses recordings from current FLIC systems today. The features
-below use the extra information recorded by **version 4.0.0 of PyMCU and the
+below use the extra information recorded by **version 4.0.1 of PyMCU and the
 DFM firmware, which will be released in the first quarter of 2027**. Both the
-MCU and the DFMs must be updated to version 4.0.0 to use them.
+MCU and the DFMs must be updated to version 4.0.1 to use them.
 
 - **Exact light timing:** how long each well's LED was on, to the millisecond,
   in place of samples taken five times a second.
@@ -138,7 +138,7 @@ MCU and the DFMs must be updated to version 4.0.0 to use them.
 - **Rule checks:** a check that each Paradigm behaved as programmed, so that
   you know the flies experienced the light schedule you intended.
 
-**The FLIC R Code will not support the new features of version 4.0.0.**
+**The FLIC R Code will not support the new features of version 4.0.1.**
 These will include:
 
 - **Light rules named explicitly:** each rule (*Paradigm*) is written by
@@ -146,9 +146,10 @@ These will include:
   firmware inferred the rule from combinations of settings. Six are
   available: Open Loop, Closed Loop, Fixed Interval, Non-Feeding, Progressive
   Ratio and Fixed Ratio.
-- **New ratio assays:** Fixed Ratio lights the LED on every *n*-th feeding
-  bout, and Progressive Ratio now counts separate feeding bouts and can
-  follow an arithmetic or an exponential series.
+- **New ratio assays:** Fixed Ratio lights the LED each time the fly has
+  been in contact with the food for a set time, and Progressive Ratio can
+  follow an arithmetic or an exponential series. Either can count separate
+  feeding bouts instead of time in contact.
 - **Acclimation:** Fixed Interval and the ratio rules can start with a set
   number of closed-loop light activations, counted for each well, so every
   fly receives exactly the same number before the main rule begins.

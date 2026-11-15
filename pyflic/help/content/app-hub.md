@@ -31,8 +31,8 @@ recording needs one:
 
 | Note | Means |
 |---|---|
-| *no training information: recorded with DFM firmware older than 4.0.0* | a DFM was recorded by PyMCU 4.0.0 from a DFM whose firmware is older: no Training, so a Progressive Ratio member has one `Recording` Facet and no Test |
 | *DFM n: firmware 4.0.0 recording without Program.txt: Paradigm types and settings unknown* | copy the `Program.txt` PyMCU exported for this recording into `data/` |
+| *no training information: recorded with DFM firmware older than 4.0.0* | an older recording (generation 2): PyMCU 4 recorded a DFM with older firmware, so there is no Training, and a Progressive Ratio member has one `Recording` Facet and no Test |
 
 See [Generations](concepts-optogenetics.md#generations).
 
@@ -267,7 +267,7 @@ none left is not shown. One quiet line under the groups names what is not offere
 for the reasons.
 
 **A greyed box** is one the design allows but the data cannot answer: the Program timeline
-with no `Program.txt` and no firmware 4.0.0 data, the paired and yoked comparison with no
+for an older recording with no `Program.txt`, the paired and yoked comparison with no
 linkage group lighting a Yoked chamber, the Paired-Yoked Difference with every chamber group
 solo. Its tooltip gives the reason, and a run writes nothing for it.
 
@@ -304,7 +304,7 @@ saved, as on Analyze and Plots: see [The ticks are configuration](#the-ticks-are
 
 | Group | Item | Writes | Offered for |
 |---|---|---|---|
-| QC reports | Data integrity | `qc/integrity/DFM<n>_integrity_report.csv` and `.txt`: rows, time span, lost and repeated records and, on firmware 4.0.0, the Paradigm sequence and restarts | every member |
+| QC reports | Data integrity | `qc/integrity/DFM<n>_integrity_report.csv` and `.txt`: rows, time span, lost and repeated records, the Paradigm sequence and restarts | every member |
 | | Data breaks | `qc/data_breaks/DFM<n>_data_breaks.csv`, for a DFM that has a gap | every member |
 | | Raw signal plots | `qc/raw_signal/DFM<n>_raw.png` | every member |
 | | Baselined signal plots | `qc/baselined/DFM<n>_baselined.png`, with the thresholds drawn | every member |
@@ -313,7 +313,7 @@ saved, as on Analyze and Plots: see [The ticks are configuration](#the-ticks-are
 | | Bleeding between wells | `qc/bleeding/DFM<n>_bleeding_matrix.csv` and `DFM<n>_bleeding_alldata.csv` | two-well |
 | Optogenetics | Opto light QC tables | `qc/opto/`: the verdicts, the intervals, every light event and the program as read; the log names every linkage group that failed or warned | optogenetic |
 | | Light explained by licks | `qc/opto/opto_light_dfm<n>.png`, the figure behind the verdict | optogenetic |
-| | Program timeline | `qc/program/program_timeline_dfm<n>.png`: the Program Intervals by Paradigm, each well's Acclimation, Activations and light | optogenetic; greyed when no DFM has a `Program.txt` section or firmware 4.0.0 data |
+| | Program timeline | `qc/program/program_timeline_dfm<n>.png`: the Program Intervals by Paradigm, each well's Acclimation, Activations and light | optogenetic; greyed for an older recording with no `Program.txt` section |
 | Progressive Ratio | Light QC table | `analysis/pr_light_qc.csv` and `pr_light_events.csv`: did the paired fly earn its light? The log names every chamber group that failed or warned | a type with the Progressive Ratio module |
 | | Licks per light event | `analysis/pr_light_events_dfm<n>.png` | Progressive Ratio module |
 | | Sucrose Well resting level | `analysis/pr_resting_level_dfm<n>.png` | Progressive Ratio module |

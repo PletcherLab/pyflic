@@ -20,21 +20,22 @@ control section stands on the chambers that remain.
 | Section | What is in it |
 |---|---|
 | **Cover** | The Experiment Type and layout, with the type's description (none for Custom); what was recorded (DFMs, dates, hours), the **Generation** of each DFM's data file, and for an optogenetic member where its **Lit time** came from; the treatments with their chamber counts, design factors, wells, Facets, whether licks are transformed; **At a glance** — data integrity, exclusions, a missing `Program.txt`, the optogenetic light QC and the type's own QC verdicts as coloured callouts; the contents |
-| **1 Quality control** | Data integrity per DFM; for two-well layouts, simultaneous feeding per chamber and the largest bleeding response between wells; the Program timeline of each DFM that has one; every excluded chamber and why; for an optogenetic experiment, the optogenetic light QC — the program as read, the verdict per linkage group and the figure per DFM, then on a firmware 4.0.0 recording a **Rule check** subsection per Paradigm; then the Experiment Type's own checks |
+| **1 Quality control** | Data integrity per DFM; for two-well layouts, simultaneous feeding per chamber and the largest bleeding response between wells; the Program timeline of each DFM that has one; every excluded chamber and why; for an optogenetic experiment, the optogenetic light QC — the program as read, the verdict per linkage group and the figure per DFM, then a **Rule check** subsection per Paradigm; then the Experiment Type's own checks |
 | **2 Results** | First the type's **control comparisons**, when its definition names any; then the figures the assay is read by, each with its treatment statistics; for an optogenetic member, **Light behaviour** after them, one subsection per Paradigm Family, and **Paired and yoked** when a linkage group yokes chambers to a paired one |
 | **Appendix A** | Every feeding-summary metric by treatment, for reference |
 | **Appendix B** | The detection parameters and the `constants:` block the analysis used |
 
-**The cover.** The **Generation** line says what shape of file each DFM wrote: 1 for 27
-columns from older firmware, 2 for 90 columns with the firmware 4.0.0 columns empty, 3 for
-firmware 4.0.0 data (see [Generations](concepts-optogenetics.md#generations)). DFMs that
-differ are listed separately. **Lit time from** reads *OnMs, exact* for a firmware 4.0.0 DFM
-and *OptoCol1, sampled at 5 Hz* (the DFM's sample rate) otherwise. *At a glance* warns about
-a firmware 4.0.0 recording whose `Program.txt` is missing, and about a recording with no
-training information. Its optogenetic light QC callout counts the linkage groups that failed or
-warned and, for each flag, how many groups raised it (*wrong activation length in 2
-groups, lockout broken in 1 group*); on a firmware 4.0.0 recording with nothing flagged it
-says every group's light was explained by its licks and kept its Paradigm's rule.
+**The cover.** The **Generation** line says what shape of file each DFM wrote: 3 for
+firmware 4.0.1 data, with the Paradigm columns filled (on an older recording, 2 for a
+PyMCU 4 file with those columns empty, 1 for 27 columns from PyMCU 3.x; see
+[Generations](concepts-optogenetics.md#generations)). DFMs that differ are listed
+separately. **Lit time from** reads *OnMs, exact* (on an older recording, *OptoCol1,
+sampled at 5 Hz*, the DFM's sample rate). *At a glance* warns about a recording whose
+`Program.txt` is missing, and about a recording with no training information. Its
+optogenetic light QC callout counts the linkage groups that failed or warned and, for each
+flag, how many groups raised it (*wrong activation length in 2 groups, lockout broken in 1
+group*); with nothing flagged it says every group's light was explained by its licks and
+kept its Paradigm's rule.
 
 **Quality control.**
 
@@ -47,16 +48,16 @@ says every group's light was explained by its licks and kept its Paradigm's rule
 - **Bleeding between wells**, on a two-well layout: per DFM, the largest mean response of
   another well while one well's signal is above the cutoff. It is a *warning* when it is
   above the feeding threshold, since it would register as licks that never happened.
-- **Program timeline**: in an optogenetic experiment, one figure per DFM with a
-  `Program.txt` section or firmware 4.0.0 data. On a firmware 4.0.0 recording each lane is
-  hatched where `Program.txt` sets the well `On`, grey where it sets it `Off`, and each
-  restart of the DFM is a red band. See
+- **Program timeline**: in an optogenetic experiment, one figure per DFM (on an older
+  recording, per DFM with a `Program.txt` section). Each lane is hatched where
+  `Program.txt` sets the well `On`, grey where it sets it `Off`, and each restart of the
+  DFM is a red band. See
   [Program timeline](plots-catalog.md#program-timeline).
 - **Excluded chambers**: every chamber left out, by hand (`remove_chambers.csv`, the active
   exclusion group) or automatically (the design's `constants:` cutoffs), with its reason.
 - **Optogenetic light QC**: the program as read, the verdict per linkage group and the
-  *Light explained by licks* figure per DFM. On a firmware 4.0.0 recording with its
-  `Program.txt`, one **Rule check** subsection follows per Paradigm the program runs, in
+  *Light explained by licks* figure per DFM. With the recording's `Program.txt`, one
+  **Rule check** subsection follows per Paradigm the program runs, in
   family order (open loop, closed loop, fixed length, non-feeding), then by name, each
   titled with the Paradigm, its family and its DFMs: the rule in words with its settings, a
   table of its checks per linkage group (the Activations judged and not judged, and the
@@ -64,8 +65,8 @@ says every group's light was explained by its licks and kept its Paradigm's rule
   rule in red. A Paradigm with Acclimation has a second, closed-loop subsection for its
   Acclimation, and wells set `On` under another Paradigm get a *Wells set On* subsection
   of their own. If the rule subsections cannot be built, one red box says why and the rest
-  of the report stands. On a DFM recorded before firmware 4.0.0, a note names the firmware
-  4.0.0 checks that did not run, and why. See
+  of the report stands. On an older recording, a note names the rule checks that did not
+  run, and why. See
   [Each Paradigm's own rule](concepts-optogenetics.md#each-paradigms-own-rule).
 
 **Control comparisons.** A type whose definition names control comparisons opens the
@@ -93,9 +94,9 @@ yoked difference** in the Test phase (sucrose-well licks, PI and, where measured
 persistence), tested between treatments and against zero within each treatment, and the
 **breaking point**: the lick-backed Test light events each paired fly completed before its
 first pause longer than `pr_break_gap_min`, with the still-responding curve, a dot plot by
-treatment, its per-group table and the per-DFM licks-per-light-period plots. On firmware 4.0.0
-data the table shows `BreakRequirement`, the Requirement the last counted event met, beside
-it. When every group's Test Paradigm is a FixedRatio the section is titled **Fixed ratio:
+treatment, its per-group table and the per-DFM licks-per-light-period plots. The table
+shows `BreakRequirement`, the Requirement the last counted event met, beside it. When
+every group's Test Paradigm is a FixedRatio the section is titled **Fixed ratio:
 activations earned**, and the progressive-only wording (the estimated requirement, "a
 working progressive ratio climbs") appears only for groups whose Test Paradigm is
 progressive. A design whose chamber groups are single chambers has no yoked controls: one
@@ -117,8 +118,8 @@ subsection has is left out and named; a metric the same in every chamber, such a
 open-loop chamber's lit time, is named once as *the same in every chamber, so not compared
 between treatments*. The Activation measures compare only the chambers that earn light
 (Paired, Self, Mutual); a Yoked chamber keeps its lit time beside its partner's. A
-Progressive Ratio member compares its paired chambers only. A member without a firmware
-4.0.0 recording or a program keeps one section with the four metrics of before:
+Progressive Ratio member compares its paired chambers only. A member without
+`Program.txt`, or with an older recording, keeps one section with four metrics:
 Activations, lit time, Firmware Events and the end of Acclimation.
 
 **Paired and yoked.** When a linkage group lights one Paired chamber by its fly's feeding
@@ -163,16 +164,15 @@ builds the Combined Analysis first when there is none.
 
 The **Generation** column is read from each member's saved outputs, so it needs no load. The
 **Note** column appears only when some member needs one: *no training information*, for a
-member recorded with DFM firmware older than 4.0.0.
+member recorded with older DFM firmware (generation 2).
 
 **Light behaviour** pools every optogenetic member's light table
 (`<project>_LightSummary.csv`) the way the feeding metrics are pooled, one subsection per
-Paradigm Family the members' programs run (each member's `data/Program.txt`, for the DFMs
-its light table records as firmware 4.0.0): a faceted figure per headline metric of the
-family, open loop's *Feeding in light and dark* (with the Light and dark module), and the
-treatment comparisons, per chamber, pooled test beside the mixed model. Members recorded
-before firmware 4.0.0 contribute lit time only; a Project with no firmware 4.0.0 member keeps
-the four metrics of before.
+Paradigm Family the members' programs run (each member's `data/Program.txt`): a faceted
+figure per headline metric of the family, open loop's *Feeding in light and dark* (with the
+Light and dark module), and the treatment comparisons, per chamber, pooled test beside the
+mixed model. Members with older recordings contribute lit time only. A Project whose
+members' programs give no family keeps one section with four metrics, as a member does.
 
 **Paired and yoked** pools the members' yoked comparisons
 (`<project>_YokedComparison.csv`): the differences by treatment against zero and between

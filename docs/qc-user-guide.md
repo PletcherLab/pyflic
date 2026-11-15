@@ -6,13 +6,16 @@ writes, how to read them, and how to decide which chambers to leave out.
 
 Sections 1 to 5 apply to every experiment, and to each Slice of one
 (section 2). Section 6 adds the light QC of optogenetic experiments, and
-section 7 the checks a DFM firmware 4.0.0 recording adds to it: each
-Paradigm checked against its own rule. Section 8 covers the checks of a
-Progressive Ratio experiment, and section 9 what a Project does with its
-members' QC. Section 10 lists every check on one page: whether it removes
-chambers or only flags them, and its default threshold. Section 11 is a
-checklist to work through for each recording, and section 12 a
-troubleshooting table.
+section 7 its rule checks: each Paradigm checked against its own rule.
+Section 8 covers the checks of a Progressive Ratio experiment, and section 9
+what a Project does with its members' QC. Section 10 lists every check on
+one page: whether it removes chambers or only flags them, and its default
+threshold. Section 11 is a checklist to work through for each recording,
+and section 12 a troubleshooting table.
+
+This guide describes recordings from DFM firmware 4.0.1 or later, which
+pyflic calls **generation 3** (section 6.2). pyflic still reads older
+recordings, which hold less; where they differ, a short note says so.
 
 You do not need to read code to use it. For installing and starting pyflic,
 see [Getting Started](GETTING_STARTED.md); if you installed it that way, type
@@ -42,7 +45,7 @@ QC asks six questions:
 | Are the two wells of a chamber independent? | simultaneous feeding and bleeding (two-well) | 3.4, 3.5 |
 | Is each chamber a usable fly? | the exclusion cutoffs and your own inspection | 5 |
 | Was the light where the licks were? | the optogenetic light QC | 6 |
-| Did the light follow its program's rule? | the rule checks (firmware 4.0.0) | 7 |
+| Did the light follow its program's rule? | the rule checks | 7 |
 
 Three rules run through everything:
 
@@ -101,8 +104,8 @@ light QC comes on top.
   check on a single-well layout. One line under the groups names what is not
   offered; hover over it for the reasons.
 - **A greyed box** is an item the data cannot answer: *Program timeline*
-  when no DFM has a `Program.txt` section or firmware 4.0.0 data. Its
-  tooltip gives the reason.
+  when no DFM has one to draw, as on an older recording with no
+  `Program.txt` section (section 6.8). Its tooltip gives the reason.
 - **The log states what a run left out**, and, apart from that, what did not
   apply.
 - **No run removes a file.** An item you untick keeps whatever an earlier run
@@ -128,8 +131,8 @@ holds three buttons:
   them the light table. It writes nothing into `qc/`.
 - **Hub → Project → Analyze all** writes, for every member, the QC bundle,
   Basic analysis (the optogenetic light QC, the light table, the Program
-  timeline of each firmware 4.0.0 DFM of an optogenetic member, a Progressive
-  Ratio experiment's own light QC) and the report, **whatever the panels'
+  timeline of each DFM of an optogenetic member, a Progressive Ratio
+  experiment's own light QC) and the report, **whatever the panels'
   ticks**. A Project Script's `run_all_analyses` step, in a Batch Run or
   not, runs the same Basic analysis (the report only when the step asks for
   it) and does not read the ticks either. Both run the whole recording and
@@ -144,7 +147,8 @@ holds three buttons:
 - **Scripts**: `run_qc` writes the ticked items, as the Hub's Run QC does.
   `basic_analysis` leaves the QC bundle out, but still writes the
   optogenetic light QC into `qc/opto/` and the Program timeline of each
-  firmware 4.0.0 DFM, as Basic analysis always does.
+  DFM, as Basic analysis always does (not on an older recording, whose
+  timeline only the QC bundle draws: section 6.8).
 
 From Python, `execute_basic_analysis()` writes the QC bundle too, unless you
 pass `skip_qc=True`.
@@ -246,17 +250,21 @@ For each DFM, the integrity report states:
 | Index check | whether the device's record index rises by exactly 1 from each row to the next |
 | Lost records | records missing from the index: how many, and for each gap the index before it, its minute and its length in seconds |
 | Repeated records | records written twice, and dropped at load |
-| Paradigm state | generation 3 only: the baseline rows before the program's first instruction (the lead-in: Program Interval 0, `Paradigm` `NA`), the rows under an instruction outside the program, the late records, and the Paradigm sequence — each Paradigm with its first and last minute and its rows |
-| DFM restarts | generation 3 only: each time the DFM restarted on its own during the recording (below) |
-| `Messages.csv` errors | the error messages the MCU logged for this DFM and for itself, when `data/` holds its `Messages.csv`; on generation 3, its lost-record count checked against the data |
+| Paradigm state | the baseline rows before the program's first instruction (the lead-in: Program Interval 0, `Paradigm` `NA`), the rows under an instruction outside the program, the late records, and the Paradigm sequence — each Paradigm with its first and last minute and its rows |
+| DFM restarts | each time the DFM restarted on its own during the recording (below) |
+| `Messages.csv` errors | the error messages the MCU logged for this DFM and for itself, when `data/` holds its `Messages.csv`, and its lost-record count checked against the data |
 
-**The error kinds depend on the generation.** The firmware's error byte has
-eight bits, and the meaning of the two lowest changed:
+**The error kinds.** The firmware's error byte has eight bits:
 
-| Bit | Generation 1 | Generations 2 and 3 |
-|---|---|---|
-| 0x01 and 0x02 | counted together as *No ACK / overflow*: the two firmware 2.0.0 builds used them differently, and the file does not say which wrote it | 0x01 *No Ack*: a request came before the last reply was acknowledged, and records were sent again; 0x02 *Overflow*: the DFM's record buffer overflowed and records were lost |
-| 0x04 to 0x80 | PacketType, DMA_TX, DMA_RX, PacketSize, AIInterrupt and OInterrupt Error | the same |
+| Bit | Meaning |
+|---|---|
+| 0x01 | *No Ack*: a request came before the last reply was acknowledged, and records were sent again |
+| 0x02 | *Overflow*: the DFM's record buffer overflowed and records were lost |
+| 0x04 to 0x80 | PacketType, DMA_TX, DMA_RX, PacketSize, AIInterrupt and OInterrupt Error |
+
+On a generation 1 recording 0x01 and 0x02 are counted together as *No ACK /
+overflow*: the two firmware 2.0.0 builds used them differently, and the file
+does not say which wrote it.
 
 **Lost and repeated records.** The DFM numbers its records from 1, one per
 200 ms. A gap in that index is records the DFM could not keep while the MCU
@@ -266,7 +274,7 @@ index with the same time is a block PyMCU wrote twice after a failed file
 write: pyflic keeps the first copy, drops the second at load, and
 `summary.txt` and the integrity report say how many.
 
-**DFM restarts (firmware 4.0.0).** A DFM can restart on its own in the middle
+**DFM restarts.** A DFM can restart on its own in the middle
 of a recording, after a power dip or a loose cable, say. PyMCU keeps `Index`
 and the times running across the outage, so the records the DFM did not make
 are a gap in `Index`. A few rows under no instruction (`Interval` `NA`)
@@ -286,7 +294,7 @@ The integrity report's *Lost records* still counts every gap, a restart's
 among them. The light QC's own *lost records* check leaves a restart's gap
 out, because *DFM restarted* reports it.
 
-**Two more lines on a firmware 4.0.0 recording.**
+**Two more lines.**
 
 - **The No Ack note.** When *No Ack* is counted with nothing lost or
   repeated, the error section adds: *No Ack with nothing lost or repeated:
@@ -298,6 +306,9 @@ out, because *DFM restarted* reports it.
   restarts show*, or a sentence giving the difference. A difference means
   the file and the data disagree about what went missing; the data's gaps
   are what the analysis stands on.
+
+An older recording's integrity report (generation 1 or 2) has no Paradigm
+state, no DFM restarts and neither of these two lines.
 
 **Where to look.** `qc/integrity/DFM<n>_integrity_report.txt` holds the full
 text and the `.csv` beside it one row of numbers, the generation and the
@@ -473,7 +484,7 @@ pyflic qc "path/to/my_experiment"
 |---|---|
 | **Load** | load an experiment and choose the Slice (when the design declares Slices) or the time range; the log of every step |
 | **Feeding Summary** | the per-chamber summary table, with a checkbox per chamber for exclusion |
-| **DFM *n*** | one tab per device: **Integrity** (with the recording's `Messages.csv` below), **Sim. Feeding** and **Bleeding** (two-well), **Raw Signal**, **Baselined** and **Cumulative Licks**, and **Program** for a DFM with a program or firmware 4.0.0 data (section 6.8), with its *Wells* and, on firmware 4.0.0, *Activations* tables (section 7.7); an **Exclude Wells** panel sits beside them |
+| **DFM *n*** | one tab per device: **Integrity** (with the recording's `Messages.csv` below), **Sim. Feeding** and **Bleeding** (two-well), **Raw Signal**, **Baselined** and **Cumulative Licks**, and **Program** (section 6.8), with its *Wells* and *Activations* tables (section 7.7; on an older recording, only with a program, and without *Activations*); an **Exclude Wells** panel sits beside them |
 | **Opto Light QC** | optogenetic experiments only (sections 6.6 and 7.7) |
 | **Params** | the detection parameters, with a live recompute |
 
@@ -655,13 +666,13 @@ over the whole recording, for any experiment type.
 A short tail of light after the last lick is normal: that is the Hold. Long
 stretches of light with no lick are not.
 
-What pyflic can see depends on the recording. Older firmware records only
-`OptoCol1`, which LEDs were lit at each sample. DFM firmware 4.0.0 also
-records, on every row, the Paradigm in force and each well's own decisions:
-its Activations, its Acclimation, and the milliseconds its light was on.
-Section 6.2 explains the difference. Because those records time every light
-period to the millisecond, a firmware 4.0.0 recording also gets the rule
-checks of section 7: each Paradigm checked against its own rule.
+The firmware records, on every row, the Paradigm in force and each well's
+own decisions: its Activations, its Acclimation, and the milliseconds its
+light was on. Because those records time every light period to the
+millisecond, the light QC also runs the rule checks of section 7: each
+Paradigm checked against its own rule. An older recording (generation 1 or
+2) records only `OptoCol1`, which LEDs were lit at each sample, and gets
+the checks of section 6 alone; section 6.2 explains the difference.
 
 ### 6.1 Turning it on
 
@@ -694,29 +705,26 @@ into the member's `data/` folder**, beside the DFM files. Use the exported
 file, the one with `***DFM 1***` sections, not the program you wrote for the
 MCU.
 
-**Two exports.** PyMCU 4.0.0 writes a new kind; older PyMCU wrote another.
-pyflic tells them apart by their content and reads both.
+**Two exports.** pyflic reads PyMCU's current export and the older one of
+PyMCU 3.x, and tells them apart by their content.
 
-- **The PyMCU 4.0.0 export** opens with a `Paradigms:` block that names every
+- **The current export** opens with a `Paradigms:` block that names every
   **Paradigm**, its type and every setting:
 
   ```
-  PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Series Arithmetic, FirstRequirement 1, Step 10, Cap 200, EventGapMs 100 ms, Acclimation 10
+  PRContact (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Counter Contact, Series Arithmetic, FirstRequirement 1000 ms, Step 1000 ms, Cap 655350 ms, EventGapMs 100 ms, Acclimation 10
   ```
 
   Each interval line then names its Paradigm, with a threshold per well that
   is a level, `On` or `Off`:
 
   ```
-  (10/12/2026 20:30:00) PR10, Dark, 20,Off,20,Off,20,Off,20,Off,20,Off,20,Off, 330 min
+  (10/12/2026 20:30:00) PRContact, Dark, 20,Off,20,Off,20,Off,20,Off,20,Off,20,Off, 330 min
   ```
 
-  Earlier 4.0.0 exports put `Dark` or `Lit` before the Paradigm's name;
-  pyflic reads both orders.
-
-  An old program loaded into PyMCU 4.0.0 appears with generated names such
-  as `ClosedLoop-40Hz-8ms-Hold500-MaxOn0`. The `***Env Mon***` section, the
-  Environmental Monitor's, is ignored.
+  An old program loaded into the current PyMCU appears with generated names
+  such as `ClosedLoop-40Hz-8ms-Hold500-MaxOn0`. The `***Env Mon***` section,
+  the Environmental Monitor's, is ignored.
 
   Its `Baseline:` line is `Yes`, `No` or `Adaptive`. With `Adaptive`, PyMCU
   kept each well's baseline up to date through the recording, within
@@ -745,48 +753,49 @@ From either, pyflic learns for each DFM and each interval of the program:
 - **the schedule**: the program type and the interval timestamps.
 
 **The generations.** No data file states its firmware version, so pyflic
-reads the shape of each DFM's file once, at load:
+reads the shape of each DFM's file once, at load, and calls it the file's
+**generation**. A recording from DFM firmware 4.0.1 is generation 3; the
+other two are older recordings, which hold less:
 
 | Generation | Recorded by | What pyflic can read |
 |---|---|---|
-| 1 | PyMCU 3.x, older firmware: 27 columns | the light at each sample (`OptoCol1`); Training as a flag in the signal |
-| 2 | PyMCU 4.0.0 or later with an un-updated DFM: 90, 91 or 102 columns, the Paradigm ones empty | the light at each sample; no Training at all |
-| 3 | PyMCU 4.0.0 or later with DFM firmware 4.0.0 or 4.0.1: 90, 91 or 102 columns, filled | on every row the Program Interval, its Cycle and its Paradigm; for every well its Phase (`A` in Acclimation, `M` after), its Activations, its Requirement and Progress under a ratio Paradigm, and `OnMs`, the milliseconds its light was on |
+| 3 | PyMCU 4 with DFM firmware 4.0.1: 91 columns (below), filled | on every row the Program Interval, its Cycle and its Paradigm; for every well its Phase (`A` in Acclimation, `M` after), its Activations, its Requirement and Progress under a ratio Paradigm, and `OnMs`, the milliseconds its light was on |
+| 2 | PyMCU 4 with DFM firmware 3.x or older: 91 columns, the Paradigm ones empty | the light at each sample (`OptoCol1`); no Training at all |
+| 1 | PyMCU 3.x: 27 columns | the light at each sample (`OptoCol1`); Training as a flag in the signal |
 
-**The Baseline set.** PyMCU 4.0.1 writes 91 columns: the 90, then
-`BaselineSet`, on every DFM, whatever its firmware. It names a row of the
-recording's `Baselines.csv` (copy it into `data/` beside `Program.txt`),
-which holds the **Baseline in force**: the baseline PyMCU added to each
-well's threshold before sending it to the DFM, so a threshold T meant
-contact above Baseline + T. With `Baseline: Adaptive` it follows each well's
+**The Baseline set.** The last of the 91 columns, `BaselineSet`, is written
+on every DFM, whatever its firmware. It names a row of the recording's
+`Baselines.csv` (copy it into `data/` beside `Program.txt`), which holds
+the **Baseline in force**: the baseline PyMCU added to each well's
+threshold before sending it to the DFM, so a threshold T meant contact
+above Baseline + T. With `Baseline: Adaptive` it follows each well's
 resting level through the recording. It is `NA` before the first Program
-Interval, outside the program, and with `Baseline: No`. Development builds
-of 1 to 15 November 2026 wrote the 12 baselines on every row instead
-(`Baseline1` to `Baseline12`, 102 columns), which pyflic also reads. Neither
-changes the generation. Files with 90 columns are PyMCU 4.0.0, with no
-baselines recorded. The light QC uses the Baseline in force (section 6.4).
+Interval, outside the program, and with `Baseline: No`. A file with 90
+columns has no baselines recorded, and one with 102 (`Baseline1` to
+`Baseline12`, from development builds) is read too; neither changes the
+generation. The light QC uses the Baseline in force (section 6.4).
 
-**The Counter.** From PyMCU 4.0.1 a ratio Paradigm's line in `Program.txt`
-says `Counter Contact` (the default: its Requirement and Progress are
-milliseconds of contact) or `Counter Events` (feeding bouts, as everything
-PyMCU 4.0.0 wrote). Under Contact the firmware counts no Events, so the
-Firmware Events columns are `NA` and *firmware events disagree* is not
-judged.
+**The Counter.** A ratio Paradigm's line in `Program.txt` says `Counter
+Contact` (the default: its Requirement and Progress are milliseconds of
+contact) or `Counter Events` (feeding bouts). Under Contact the firmware
+counts no Events, so the Firmware Events columns are `NA` and *firmware
+events disagree* is not judged. The rows do not say which: without
+`Program.txt` a ratio Paradigm is read as counting Events. A ratio line with
+no Counter came from PyMCU 4.0.0 and counted Events.
 
-On generation 3 the rows are the schedule, so the program's timestamps are
-only a check (*interval started late*, section 7.6), and the light QC reads
-the firmware's decisions instead of re-creating them. The integrity report, `summary.txt` and the report's cover
-all name each DFM's generation.
+The rows are the schedule, so the program's timestamps are only a check
+(*interval started late*, section 7.6), and the light QC reads the
+firmware's decisions instead of re-creating them. (On an older recording
+the timestamps lay the intervals out, and the light QC re-creates the
+firmware's decisions, section 6.4.) The integrity report, `summary.txt` and
+the report's cover all name each DFM's generation.
 
 **The linkage comes from `Program.txt`.** When a DFM has a section in the
 file, pyflic takes its linkage groups from that section's `Linkage:` line,
 the linkage the experiment was programmed with. It never deduces them from
-the data. The data only check the linkage:
-
-- On firmware 4.0.0, linked wells whose light differs fail *broken yoking*
-  (section 6.3).
-- On older firmware, the group's notes say how long its linked wells were not
-  lit together.
+the data. The data only check the linkage: linked wells whose light differs
+fail *broken yoking* (section 6.3). On an older recording, the group's
+notes say instead how long its linked wells were not lit together.
 
 The trigger wells and the Roles come from the program in the same way, from
 its thresholds.
@@ -796,11 +805,8 @@ its thresholds.
 DFM, does pyflic have to work out from the data what the program would have
 said:
 
-- On generations 1 and 2 pyflic guesses the linkage from wells lit together,
-  treats every lit well as a trigger well, and assumes a Hold of
-  `opto_default_decay_ms`.
-- On generation 3 the rows name each Paradigm but not its type, settings or
-  thresholds. pyflic guesses the linkage from wells whose light matches to the
+- The rows name each Paradigm but not its type, settings or thresholds.
+  pyflic guesses the linkage from wells whose light matches to the
   millisecond and the trigger wells from the Activations, judges every
   Activation against its group's licks within `opto_default_decay_ms`, and
   leaves every type-dependent result `NA`. None of section 7's rule checks
@@ -809,6 +815,9 @@ said:
   *At a glance* and the Hub's **Loaded** line say *DFM n: firmware 4.0.0
   recording without Program.txt: Paradigm types and settings unknown*, and
   the light QC flags *no Program.txt for firmware 4.0.0*.
+- On an older recording pyflic guesses the linkage from wells lit together,
+  treats every lit well as a trigger well, and assumes a Hold of
+  `opto_default_decay_ms`.
 
 Either way unexplained light can then warn but never fail, because without
 the program an open-loop schedule looks exactly like a stuck light.
@@ -832,10 +841,9 @@ the light always follows the Paradigms that ran, whatever the type.
 
 The unit of judgement is the **linkage group**, because its light is one
 circuit. Every verdict passes to each chamber the group touches. Each group
-is judged interval by interval, under that interval's Paradigm: on
-generations 1 and 2 the intervals are laid out by clock time from the
-program, and on generation 3 each run of rows under one Program Interval and
-Cycle is an interval.
+is judged interval by interval, under that interval's Paradigm: each run of
+rows under one Program Interval and Cycle is an interval. (On an older
+recording the intervals are laid out by clock time from the program.)
 
 **Explained light.** Light is **explained** when one of its group's trigger
 wells had a feeding lick, or a tasting-level touch, behind it. Touches count
@@ -848,14 +856,14 @@ brief touch it acts on often reads below pyflic's feeding threshold. What
 | **ClosedLoop** | a lick or touch at a trigger well from the Hold before it until just after it |
 | **FixedInterval**, **ProgressiveRatio**, **FixedRatio** | the trigger well had a lick or touch at the Activation's onset: then its whole `ActivationMs` of light is explained. Feeding during a FixedInterval lockout, which earns no light, is expected |
 | **Acclimation** | the ClosedLoop rule, with `ActivationMs` as the Hold |
-| **NonFeeding** | not judged this way: the light is meant to be on while the fly does *not* feed. Firmware 4.0.0 recordings are checked for light that stayed on through feeding instead, and for light that stayed off when the fly did not feed (section 7.5) |
+| **NonFeeding** | not judged this way: the light is meant to be on while the fly does *not* feed. It is checked instead for light that stayed on through feeding, and for light that stayed off when the fly did not feed (section 7.5) |
 | **OpenLoop** | not judged this way: open-loop intervals get their lit-fraction check |
 
 Two samples of slack each side (`opto_decay_tolerance_samples`) absorb the
 difference in timing between the firmware's decisions and the samples.
 
-**On a firmware 4.0.0 recording the light belongs to Activations.** Lit time
-is `OnMs`, exact to the millisecond. Each Activation of a trigger well owns
+**The light belongs to Activations.** Lit time is `OnMs`, exact to the
+millisecond. Each Activation of a trigger well owns
 its group's light from its onset to the next Activation, the light going out
 or the end of its interval plus the Hold. Unexplained light is the lit time
 of the Activations whose onset had no lick or touch at their well. On older
@@ -868,24 +876,29 @@ recordings every lit sample of `OptoCol1` is judged with the Hold rule.
 | **Partly unexplained light** | at least 10% unexplained | warning |
 | **Light while off** | lit at all, for any length of time, while every well of the group was `Off` (-1), or while the DFM ran PyMCU's idle Paradigm | **fails** the group |
 | **No light recorded** | `optogenetics: true`, and no light on the DFM at all | **fails** the DFM |
-| **Broken yoking** | firmware 4.0.0: the group's linked wells' light differs by more than 1 ms in more than 1% of its lit records, or an `Off` well linked to a trigger well counted Activations of its own | **fails** the group |
-| **Paradigm not in program** | firmware 4.0.0: a row names a Paradigm `Program.txt` does not define, so the file is another recording's; those rows are not judged | **fails** every group of the DFM |
+| **Broken yoking** | the group's linked wells' light differs by more than 1 ms in more than 1% of its lit records, or an `Off` well linked to a trigger well counted Activations of its own | **fails** the group |
+| **Paradigm not in program** | a row names a Paradigm `Program.txt` does not define, so the file is another recording's; those rows are not judged | **fails** every group of the DFM |
 | **Unlit feeding** | at least half of the feeding bouts at its trigger wells under closed loop, or in Acclimation, never lit the group (at least 5 bouts) | warning |
 | **No light events** | feeding at its trigger wells, and never lit | warning |
-| **Open loop not lit** | lit for less than 95% of its open-loop time; on firmware 4.0.0, of any one open-loop Program Interval or pass (section 7.2) | warning |
-| **Non-feeding light during feeding** | firmware 4.0.0: under NonFeeding, lit through more than 10% of the feeding at its trigger wells, and for at least 30 seconds (section 7.5) | warning |
-| **Acclimation count mismatch** | firmware 4.0.0: a trigger well's completed Acclimation counted a different number of Activations than its Paradigm's `Acclimation` | warning |
-| **Firmware events disagree** | firmware 4.0.0: under a ratio Paradigm's Main phase, the feeding bouts the firmware counted at a trigger well and the ones pyflic counted differ by more than 25% of the firmware's (judged from 5 bouts) | warning |
-| **Lost records** | firmware 4.0.0: more than 25 records missing from the DFM's index, not counting the gap of a restart, which *DFM restarted* reports | warning for the DFM |
-| **Unknown-instruction rows** | firmware 4.0.0: more than 1% of the rows after the lead-in (Program Interval 0, `Paradigm` `NA`) recorded under an instruction outside the program; a restart's rows under no instruction count among them | warning for the DFM |
-| **Late records** | firmware 4.0.0: more than 10 records whose light count exceeds the record's 200 ms, so the record came late | warning for the DFM |
-| **Program mismatch** | the data's frequency, pulse width or dark setting differ from the program, the data start more than a minute from its start time (on firmware 4.0.0 only before it: a recording started after it joined the program partway, which is a note), or (firmware 4.0.0) a row names another Paradigm than the program's line for its interval | warning |
+| **Open loop not lit** | lit for less than 95% of any one open-loop Program Interval or pass (section 7.2) | warning |
+| **Non-feeding light during feeding** | under NonFeeding, lit through more than 10% of the feeding at its trigger wells, and for at least 30 seconds (section 7.5) | warning |
+| **Acclimation count mismatch** | a trigger well's completed Acclimation counted a different number of Activations than its Paradigm's `Acclimation` | warning |
+| **Firmware events disagree** | under a ratio Paradigm's Main phase with `Counter: Events`, the feeding bouts the firmware counted at a trigger well and the ones pyflic counted differ by more than 25% of the firmware's (judged from 5 bouts); not judged under `Counter: Contact`, the default, which counts no feeding bouts | warning |
+| **Lost records** | more than 25 records missing from the DFM's index, not counting the gap of a restart, which *DFM restarted* reports | warning for the DFM |
+| **Unknown-instruction rows** | more than 1% of the rows after the lead-in (Program Interval 0, `Paradigm` `NA`) recorded under an instruction outside the program; a restart's rows under no instruction count among them | warning for the DFM |
+| **Late records** | more than 10 records whose light count exceeds the record's 200 ms, so the record came late | warning for the DFM |
+| **Program mismatch** | the data's frequency, pulse width or dark setting differ from the program, the data start more than a minute before its start time (a recording started after it joined the program partway, which is a note), or a row names another Paradigm than the program's line for its interval | warning |
 | **No program section** | `Program.txt` has no usable section for this DFM | warning |
-| **No Program.txt for firmware 4.0.0** | a firmware 4.0.0 DFM without its program | warning |
-| **The rule checks** | firmware 4.0.0 with `Program.txt`: each Paradigm's own rule, one Activation at a time (section 7). *Short activations*, *max on exceeded*, *wrong activation length*, *lockout broken* and *requirement series wrong* fail; *contact without activation*, *non-feeding dark*, *interval started late* and *DFM restarted* warn | **fails** the group, or warning |
+| **No Program.txt for firmware 4.0.0** | a DFM without its program | warning |
+| **The rule checks** | with `Program.txt`: each Paradigm's own rule, one Activation at a time (section 7). *Short activations*, *max on exceeded*, *wrong activation length*, *lockout broken* and *requirement series wrong* fail; *contact without activation*, *non-feeding dark*, *interval started late* and *DFM restarted* warn | **fails** the group, or warning |
 
 The numbers in this table are the defaults; section 6.5 names the setting
 behind each, and section 10 lists the fixed values no setting changes.
+
+An older recording (generation 1 or 2) gets only the checks that do not
+need the Paradigm columns; section 10.3 marks which. On it, *open loop not
+lit* judges the group's open-loop time as a whole, and *program mismatch*
+warns about a start more than a minute either side of the program's.
 
 Neither unexplained-light check is judged until a group has at least 30
 seconds of unexplained light (`opto_unexplained_min_sec`), so a few stray
@@ -901,16 +914,16 @@ Some light is not judged at all:
   the tolerance: it came on before the Slice, so whatever explains it is not
   among the Slice's rows. Light still on after that is judged, so a stuck
   LED still shows;
-- light outside the program's schedule; on firmware 4.0.0, the baseline rows
-  before the program's first instruction, rows under an instruction outside
-  the program, and an interval whose Paradigm `Program.txt` does not define;
+- light outside the program's schedule; the baseline rows before the
+  program's first instruction, rows under an instruction outside the
+  program, and an interval whose Paradigm `Program.txt` does not define;
 - **open-loop** light and **NonFeeding** light, where the light is not meant
   to follow feeding. They get their own checks instead.
 
-The firmware 4.0.0 checks in this table read the file's own bookkeeping.
-Their thresholds (section 6.5) were set before any real firmware 4.0.0
-recording existed, and the rule checks' were calibrated on simulated
-recordings only (section 7.1). Bench recordings of each Paradigm type will
+The checks in this table that need the Paradigm columns read the file's
+own bookkeeping. Their thresholds (section 6.5) were set before any real
+recording with those columns existed, and the rule checks' were calibrated
+on simulated recordings only (section 7.1). Bench recordings of each Paradigm type will
 revisit them, so treat a warning from one as a reason to look.
 
 ### 6.4 Drift or hardware?
@@ -941,17 +954,17 @@ The difference matters for what you do next. A drifting baseline is the
 sensor: the light did not follow the fly. Sustained contact is the fly: the
 firmware acted on real contact that pyflic's detection did not count.
 
-How pyflic knows where the firmware saw contact depends on the generation.
+**Where the firmware saw contact is recorded.** An Activation with no
+pyflic lick or touch at its trigger well is the drifting-baseline signature
+itself, and so, under `Counter: Events`, is a feeding bout the firmware
+counted toward a Requirement with none. In `opto_light_qc.csv`, `ContactSec`
+is the lit time of the trigger wells' Activations,
+`ContactWithoutActivitySec` the lit time of the ones whose onset had no lick
+or touch, and `FirmwareEventsWithoutActivity` the firmware's feeding bouts
+with none either (0 under `Counter: Contact`, the default, which counts no
+bouts). Nothing is emulated.
 
-**On a firmware 4.0.0 recording the firmware's decisions are recorded.** An
-Activation, or a feeding bout the firmware counted toward a Requirement, with
-no pyflic lick or touch at its trigger well is the drifting-baseline
-signature itself. In `opto_light_qc.csv`, `ContactSec` is the lit time of the
-trigger wells' Activations, `ContactWithoutActivitySec` the lit time of the
-ones whose onset had no lick or touch, and `FirmwareEventsWithoutActivity`
-the firmware's feeding bouts with none either. Nothing is emulated.
-
-**On older recordings pyflic emulates the firmware.** With a program, it
+**On an older recording pyflic emulates the firmware.** With a program, it
 re-runs the firmware's own test on the recorded signal: the firmware
 subtracts the mean of the run's first ten seconds and compares each sample
 with the interval's threshold. Wherever this **emulated trigger** reads a
@@ -997,33 +1010,31 @@ only for a reason you can state.
 | `opto_decay_tolerance_samples` | 2 | samples of slack around the Hold |
 | `opto_unlit_feeding_fraction` | 0.50 | unlit share of closed-loop feeding bouts that warns |
 | `opto_open_loop_min_lit_fraction` | 0.95 | lit share an open-loop interval needs |
-| `opto_event_disagreement_warn_fraction` | 0.25 | firmware 4.0.0: a trigger well whose firmware and pyflic feeding-bout counts differ by more than this share of the firmware's warns |
-| `opto_yoking_fail_fraction` | 0.01 | firmware 4.0.0: share of a group's lit records in which its linked wells' light differs by more than 1 ms, above which the group fails |
-| `opto_lost_records_warn` | 25 | firmware 4.0.0: records missing from the index (5 seconds) above which the DFM warns |
-| `opto_unknown_rows_warn_fraction` | 0.01 | firmware 4.0.0: share of rows under an instruction outside the program above which the DFM warns |
-| `opto_late_records_warn` | 10 | firmware 4.0.0: late records above which the DFM warns |
-| `opto_activation_tolerance_ms` | 25 | firmware 4.0.0: how far a light period may differ from its Hold, `ActivationMs` or `MaxOnMs`, or two onsets from the lockout, and still keep the rule; one record (200 ms) more for a period timed only to the record |
-| `opto_activation_length_fail_fraction` | 0.05 | firmware 4.0.0: share of judged Activations breaking their length rule (*wrong activation length*, *short activations*) above which the group fails |
-| `opto_lockout_fail_fraction` | 0.02 | firmware 4.0.0: share of judged FixedInterval onsets closer than the lockout (*lockout broken*) above which the group fails |
-| `opto_missed_contact_warn_fraction` | 0.25 | firmware 4.0.0: share of free FixedInterval contact runs that brought no Activation (*contact without activation*) above which the group warns |
-| `opto_non_feeding_lit_warn_fraction` | 0.10 | firmware 4.0.0: share of a NonFeeding group's feeding during which it was lit (*non-feeding light during feeding*) above which it warns |
-| `opto_non_feeding_min_sec` | 30 | firmware 4.0.0: seconds of that light needed before it is judged |
-| `opto_non_feeding_dark_warn_fraction` | 0.10 | firmware 4.0.0: share of the time a NonFeeding rule says lit that the light was dark (*non-feeding dark*) above which the group warns |
-| `opto_interval_lag_warn_sec` | 5 | firmware 4.0.0: seconds a Program Interval may begin after its `Program.txt` time (*interval started late*) before the DFM warns |
+| `opto_event_disagreement_warn_fraction` | 0.25 | under `Counter: Events`, a trigger well whose firmware and pyflic feeding-bout counts differ by more than this share of the firmware's warns |
+| `opto_yoking_fail_fraction` | 0.01 | share of a group's lit records in which its linked wells' light differs by more than 1 ms, above which the group fails |
+| `opto_lost_records_warn` | 25 | records missing from the index (5 seconds) above which the DFM warns |
+| `opto_unknown_rows_warn_fraction` | 0.01 | share of rows under an instruction outside the program above which the DFM warns |
+| `opto_late_records_warn` | 10 | late records above which the DFM warns |
+| `opto_activation_tolerance_ms` | 25 | how far a light period may differ from its Hold, `ActivationMs` or `MaxOnMs`, or two onsets from the lockout, and still keep the rule; one record (200 ms) more for a period timed only to the record |
+| `opto_activation_length_fail_fraction` | 0.05 | share of judged Activations breaking their length rule (*wrong activation length*, *short activations*) above which the group fails |
+| `opto_lockout_fail_fraction` | 0.02 | share of judged FixedInterval onsets closer than the lockout (*lockout broken*) above which the group fails |
+| `opto_missed_contact_warn_fraction` | 0.25 | share of free FixedInterval contact runs that brought no Activation (*contact without activation*) above which the group warns |
+| `opto_non_feeding_lit_warn_fraction` | 0.10 | share of a NonFeeding group's feeding during which it was lit (*non-feeding light during feeding*) above which it warns |
+| `opto_non_feeding_min_sec` | 30 | seconds of that light needed before it is judged |
+| `opto_non_feeding_dark_warn_fraction` | 0.10 | share of the time a NonFeeding rule says lit that the light was dark (*non-feeding dark*) above which the group warns |
+| `opto_interval_lag_warn_sec` | 5 | seconds a Program Interval may begin after its `Program.txt` time (*interval started late*) before the DFM warns |
 
-The last thirteen apply only to firmware 4.0.0 recordings. The five that read
-the file's bookkeeping (`opto_event_disagreement_warn_fraction` to
-`opto_late_records_warn`) were set before any real recording existed. The
-last eight belong to the rule checks of section 7, which describes what each
-one decides; how they were calibrated is in section 7.1. All of them will be
-revisited once bench recordings of each Paradigm type exist.
+The last thirteen use the Paradigm columns, so they don't apply to older
+recordings. The five that read the file's bookkeeping
+(`opto_event_disagreement_warn_fraction` to `opto_late_records_warn`) were
+set before any real recording existed. The last eight belong to the rule
+checks of section 7, which describes what each one decides; how they were
+calibrated is in section 7.1. All of them will be revisited once bench
+recordings of each Paradigm type exist.
 
-*Non-feeding light during feeding* used to borrow
-`opto_unexplained_warn_fraction` and `opto_unexplained_min_sec`. It now reads
-`opto_non_feeding_lit_warn_fraction` and `opto_non_feeding_min_sec`, whose
-defaults are the values it borrowed, so its results are unchanged. If your
-design changed the unexplained-light settings to tune this check, set the new
-two instead.
+*Non-feeding light during feeding* has its own two settings,
+`opto_non_feeding_lit_warn_fraction` and `opto_non_feeding_min_sec`. To tune
+it, set those, not the unexplained-light ones; their defaults are the same.
 
 ### 6.6 Where to look
 
@@ -1032,12 +1043,15 @@ Basic analysis and the Hub's **Run QC** (with *Opto light QC tables* and
 
 | File | One row per | Holds |
 |---|---|---|
-| `opto_light_qc.csv` | linkage group | its `Generation`; its wells, trigger wells, chambers, their `Roles` and treatment; lit and unexplained time; the onset; the contact evidence (section 6.4); on firmware 4.0.0, the firmware's and pyflic's feeding-bout counts, the Acclimation counted and expected, and a column per rule check (section 7.7); `LikelyCause`, `Flags`, `Verdict`, `Excluded`, `Notes` |
-| `opto_light_intervals.csv` | group and interval | the interval's mode, the Hold it was judged with (`HoldMs`) and trigger wells; on firmware 4.0.0 the `ProgramInterval`, `Cycle`, `Paradigm` and `ParadigmType` the rows recorded; lit, unexplained and contact time; feeding bouts, and those never lit |
-| `opto_light_events.csv` | light event | its well, onset, end and duration; unexplained seconds; `OverrunSec`, the light's time past the last lick plus the Hold; on firmware 4.0.0, where each event is one Activation, its `Phase`, the Requirement it met, the firmware's feeding bouts behind it, its light to the millisecond, its Paradigm Family and what ended it (section 7.7) |
+| `opto_light_qc.csv` | linkage group | its `Generation`; its wells, trigger wells, chambers, their `Roles` and treatment; lit and unexplained time; the onset; the contact evidence (section 6.4); pyflic's feeding-bout count and, under `Counter: Events`, the firmware's; the Acclimation counted and expected, and a column per rule check (section 7.7); `LikelyCause`, `Flags`, `Verdict`, `Excluded`, `Notes` |
+| `opto_light_intervals.csv` | group and interval | the interval's mode, the Hold it was judged with (`HoldMs`) and trigger wells; the `ProgramInterval`, `Cycle`, `Paradigm` and `ParadigmType` the rows recorded; lit, unexplained and contact time; feeding bouts, and those never lit |
+| `opto_light_events.csv` | light event, which is one Activation | its well, onset, end and duration; unexplained seconds; `OverrunSec`, the light's time past the last lick plus the Hold; its `Phase`, the Requirement it met, under `Counter: Events` the firmware's feeding bouts behind it, its light to the millisecond, its Paradigm Family and what ended it (section 7.7) |
 | `opto_program.csv` | program interval | the program as pyflic read it: each Paradigm's name, type and settings, the linkage and trigger wells, and for an older export the raw `F` and `P` it echoed |
 | `opto_baselines.csv` | well | how its Baseline in force moved (section 6.4); written only when the data have PyMCU's Baseline sets |
 | `opto_light_dfm<n>.png` | DFM | the *Light explained by licks* figure |
+
+On an older recording a light event is an onset of the light in
+`OptoCol1`, and the columns read from the Paradigm columns are `NA`.
 
 **Roles.** `Roles` names what each chamber of the group was to the light, as
 in `1 Paired, 2 Yoked`. The six Roles are Paired (it holds the group's only
@@ -1045,26 +1059,25 @@ trigger well), Yoked (lit by a partner's trigger well), Mutual (one of
 several chambers with trigger wells in one group), Self (a trigger well whose
 group lights no other chamber), Open (lit regardless) and Unlit. They come
 from the program's linkage and thresholds. The data decide them only when a
-DFM has no program. A firmware 4.0.0 recording without one takes them from
-the data: the wells that counted Activations are its trigger wells, and wells
-with identical `OnMs` are linked. An older recording without a program has
-no Roles.
+DFM has no program: the wells that counted Activations are its trigger
+wells, and wells with identical `OnMs` are linked. An older recording
+without a program has no Roles.
 
 Every chamber's rows in the feeding summaries carry `OptoLightQC`, its
 group's flags (empty when the group is ok), and `OptoUnexplainedFraction`,
 and on an optogenetic member its `Role`, `LitSec` and `Activations`.
 `summary.txt` has an *Optogenetic light QC* section, and the report has one
-in Quality control, with the program, the verdicts and the figure, and on
-firmware 4.0.0 a *Rule check* subsection per Paradigm (section 7.7).
+in Quality control, with the program, the verdicts and the figure, and a
+*Rule check* subsection per Paradigm (section 7.7).
 
 Beside the QC, basic analysis, and the Hub's Run analysis with *Light tables* ticked,
 write the **light table**,
 `analysis/light_summary.csv` (per chamber) and `light_wells.csv` (per well):
 what the light did, with the feeding summary's treatment and factor columns,
-and on firmware 4.0.0 each Paradigm Family's own measures. It is a result,
-not a check; the report's *Light behaviour* section compares treatments on
-it, on firmware 4.0.0 one subsection per family. See *Optogenetic
-experiments* in the help.
+and each Paradigm Family's own measures. It is a result, not a check; the
+report's *Light behaviour* section compares treatments on it, with
+`Program.txt` one subsection per family. (On an older recording it is one
+section, of lit time only.) See *Optogenetic experiments* in the help.
 
 **On the Hub**, the QC panel shows an **Optogenetics** group whenever the
 loaded member is optogenetic, and **Run QC** writes what is ticked in it:
@@ -1075,8 +1088,8 @@ Analyze panel's **Light tables**.
 
 **In the QC Viewer**, the **Opto Light QC** tab lists every linkage group with
 its chambers' Roles, lit time, unexplained share, onset, contact with no lick
-and verdict, and on firmware 4.0.0 the rule checks' columns (section 7.7),
-and opens on the worst group. Selecting a group shows why it got
+and verdict, and the rule checks' columns (section 7.7), and opens on the
+worst group. Selecting a group shows why it got
 its verdict, its intervals, light events and program, and its panels of the
 figure; a column empty on every row is hidden. The tab is computed from the
 loaded experiment, so a **Params** recompute updates its verdicts at once.
@@ -1093,13 +1106,13 @@ Hub's Run QC and the QC Viewer draw it in 10-minute bins.
   where a trigger-well lick or touch explains it, **red** where nothing
   does, **purple** where the group was lit while every threshold was `Off`
   (-1), and **light grey** where the light is not judged by licks (open
-  loop, NonFeeding). On a firmware 4.0.0 recording the lit time is `OnMs`.
-- **The right panel** is **orange**. On an older recording, when
-  `Program.txt` allows the emulated trigger, it is the time the firmware
-  would have read a trigger well above threshold while pyflic saw no lick or
-  touch. On a firmware 4.0.0 recording, titled *firmware events, no lick*,
-  it is the light of the Activations the firmware counted with no lick or
-  touch at their onset.
+  loop, NonFeeding). The lit time is `OnMs`.
+- **The right panel** is **orange**, titled *firmware events, no lick*: the
+  light of the Activations the firmware counted with no lick or touch at
+  their onset. (On an older recording, titled *firmware contact, no lick*
+  and drawn when `Program.txt` allows the emulated trigger, it is the time
+  the firmware would have read a trigger well above threshold while pyflic
+  saw no lick or touch.)
 
 How to read a row:
 
@@ -1117,11 +1130,11 @@ How to read a row:
 ### 6.8 Reading the Program timeline
 
 The **Program timeline** (`qc/program/program_timeline_dfm<n>.png`) shows,
-for one DFM, what its program ran and what each well did. Run QC, and the
-QC bundle of basic analysis, draw it for every DFM with a `Program.txt`
-section or firmware 4.0.0 data; basic analysis without its QC bundle (a
-script's `basic_analysis`) still draws it for every firmware 4.0.0 DFM. All
-of them draw it in 10-minute bins. It is in the report's Quality control
+for one DFM, what its program ran and what each well did. Run QC, and basic
+analysis with or without its QC bundle (a script's `basic_analysis`), draw
+it for every DFM, in 10-minute bins. (On an older recording only a DFM with
+a `Program.txt` section has one, and only Run QC and the QC bundle draw
+it.) It is in the report's Quality control
 section, behind the QC panel's **Program timeline** box, among the Hub's
 **View QC plots** tabs, and in the QC Viewer's **Program** sub-tab of each
 DFM.
@@ -1137,9 +1150,8 @@ DFM.
   *trigger 20*. A well the program lights regardless says *On*. **Pale
   orange shading** is Acclimation (Phase `A`), each **black tick** an
   Activation, and the **blue strip** the share of each bin the light was on.
-  On a firmware 4.0.0 recording a lane is also **hatched** where
-  `Program.txt` sets the well `On` and **grey** where it sets it `Off`,
-  Program Interval by Program Interval.
+  A lane is also **hatched** where `Program.txt` sets the well `On` and
+  **grey** where it sets it `Off`, Program Interval by Program Interval.
 - **The strip's scale fits the program.** When the program lights a well
   regardless (open loop), the strip runs from 0 to 100% of a bin, because a
   lane lit throughout is what to check. Otherwise it runs to the DFM's
@@ -1147,8 +1159,8 @@ DFM.
   follows the fly (closed loop, fixed interval, a ratio) fills only a few
   percent of a bin, and on a 0–100% scale it would not show.
 - **A red band labelled *restart*** crosses the band and the lanes wherever
-  the DFM restarted (firmware 4.0.0), from the last record before the gap to
-  the first row under the instruction again.
+  the DFM restarted, from the last record before the gap to the first row
+  under the instruction again.
 
 How to read it:
 
@@ -1174,14 +1186,14 @@ How to read it:
 In the QC Viewer the timeline sits above two tables. **Wells** gives each
 well at the end of the loaded range: its Paradigm, its Phase, the minute its
 Acclimation ended, its Activations, its Requirement and Progress, and its
-lit seconds. **Activations**, on a firmware 4.0.0 recording, lists every
-Activation of the DFM's trigger wells (section 7.7).
+lit seconds. **Activations** lists every Activation of the DFM's trigger
+wells (section 7.7).
 
 On an older recording the band is laid out from the program's clock times
 and is approximate. The strip is the light as sampled once a record, and
 each tick is a trigger well's light coming on. Under a ratio or
 fixed-interval Paradigm that is one Activation. There is no Acclimation, no
-`On` and `Off` shading and no restart band.
+`On` and `Off` shading, no restart band and no **Activations** table.
 
 ### 6.9 Deciding what to exclude
 

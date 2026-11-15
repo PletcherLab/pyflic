@@ -50,26 +50,21 @@ light QC* group below it.
 ## Generations
 
 No data file states its firmware version. pyflic reads the shape of each DFM's file once, at
-load, and calls it the recording's **Generation**:
-
-| Generation | Written by | Columns | Training | Light |
-|---|---|---|---|---|
-| 1 | PyMCU 3.x, any older firmware | 27 | a flag inside the signal | `OptoCol1`, sampled five times a second |
-| 2 | PyMCU 4.0.0 or later, DFM firmware older than 4.0.0 | 90 (91 from PyMCU 4.0.1), the Paradigm ones all `NA` | **none** | `OptoCol1` |
-| 3 | PyMCU 4.0.0 or later, DFM firmware 4.0.0 or 4.0.1 | 90 (91 from PyMCU 4.0.1), filled | each well's `Phase` | `OnMs`, exact to the millisecond |
-
-Firmware 4.0.1 writes the same rows as 4.0.0, so where this help says firmware 4.0.0 it
-means either. PyMCU 4.0.1 adds a 91st column, `BaselineSet`, naming the set of baselines in
-the recording's `Baselines.csv` that each row's thresholds were measured from.
-
-A generation-3 file records, on every row, the **Program Interval**, **Cycle** and
+load, and calls it the recording's **Generation**. A recording from DFM firmware 4.0.1 is
+**generation 3**. It records, on every row, the **Program Interval**, **Cycle** and
 **Paradigm** in force, and for each well its **Phase** (`A` in Acclimation, `M` after), its
 running **Activations**, its **Requirement** and **Progress** under a ratio Paradigm, and
 the milliseconds its LED was on (`OnMs`). The light QC reads those decisions instead of
-reconstructing them.
+reconstructing them. A `BaselineSet` column names the set of baselines in the recording's
+`Baselines.csv` that each row's thresholds were measured from.
 
-A generation-2 file comes from a lab with an updated MCU and an un-updated DFM. It has light
-but no training information at all, and pyflic says so wherever training would show.
+Older recordings hold less, and this help notes where they differ:
+
+- **Generation 1** (PyMCU 3.x, 27 columns): training is a flag inside the signal, and the
+  light is `OptoCol1`, sampled five times a second.
+- **Generation 2** (PyMCU 4 with a DFM on firmware 3.x or older): the Paradigm columns are
+  all `NA`, so the light is `OptoCol1` and there is no training information at all. pyflic
+  says so wherever training would show.
 
 `summary.txt` names each DFM's generation and where its light seconds came from. The
 report's cover has a **Generation** line and, for an optogenetic member, a **Lit time from**
@@ -80,9 +75,8 @@ carry a `Generation` column.
 
 The MCU writes the program it ran back out as `Program.txt`. Copy that file into the
 member's `data/` folder, beside the DFM CSVs, with `Baselines.csv` when the recording has
-one (PyMCU 4.0.1). pyflic reads the exported file only, the one
-with `***DFM 1***` sections, not the program you authored for the MCU with `[General]`,
-`[Paradigm …]` and `[DFM]` sections.
+one. pyflic reads the exported file only, the one with `***DFM 1***` sections, not the
+program you authored for the MCU with `[General]`, `[Paradigm …]` and `[DFM]` sections.
 
 PyMCU writes two kinds of export. pyflic tells them apart by their content and reads both.
 
@@ -91,40 +85,40 @@ PyMCU writes two kinds of export. pyflic tells them apart by their content and r
 ```
 Paradigms:
 Closed (ClosedLoop): Frequency 40 Hz, PulseWidth 8 ms, HoldMs 500 ms, MaxOnMs 0 ms, EventGapMs 100 ms
-PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Counter Events, Series Arithmetic, FirstRequirement 1, Step 10, Cap 200, EventGapMs 100 ms, Acclimation 10
+PRContact (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Counter Contact, Series Arithmetic, FirstRequirement 1000 ms, Step 1000 ms, Cap 655350 ms, EventGapMs 100 ms, Acclimation 10
 
 ***DFM 1***
 Linkage: 1,1,2,2,3,3,4,4,5,5,6,6
 Program Type: Linear
 (10/12/2026 20:00:00) Closed, Dark, 20,Off,20,Off,20,Off,20,Off,20,Off,20,Off, 30 min
-(10/12/2026 20:30:00) PR10, Dark, 20,Off,20,Off,20,Off,20,Off,20,Off,20,Off, 330 min
+(10/12/2026 20:30:00) PRContact, Dark, 20,Off,20,Off,20,Off,20,Off,20,Off,20,Off, 330 min
 ```
 
 - **The `Paradigms:` block** names every Paradigm, its type in brackets and every setting.
   It is the only place the type and settings appear: a data row carries only the name.
-- **A ratio Paradigm's Counter.** From PyMCU 4.0.1 a ProgressiveRatio or FixedRatio line
-  says `Counter Contact` (the default) or `Counter Events`. Under `Contact` the Requirement
+- **A ratio Paradigm's Counter.** A ProgressiveRatio or FixedRatio line says
+  `Counter Contact` (the default) or `Counter Events`. Under `Contact` the Requirement
   settings carry `ms`, and the rows' `Requirement` and `Progress` are milliseconds of
   contact, so there are no Firmware Events: their counts are `NA`. A line without a
-  Counter (PyMCU 4.0.0) counted Events.
+  Counter is from PyMCU 4.0.0, and counted Events.
 - **An interval line** gives its start, the Paradigm's name, `Dark` or `Lit`, twelve
-  thresholds and its length, in the order of the Program file's Interval line. Earlier
-  4.0.0 exports put `Dark` or `Lit` first; pyflic reads both. The k-th line of a DFM's
-  section is its Program Interval k. A Circadian section lists every interval of the day
-  from PyMCU 4.0.1; an older one can leave out those that start later in the day than the
-  recording lasted, and their hours are judged by the Paradigm's name alone.
+  thresholds and its length, in the order of the Program file's Interval line (an earlier
+  export put `Dark` or `Lit` first; pyflic reads both). The k-th line of a DFM's section is
+  its Program Interval k. A Circadian section lists every interval of the day. (An earlier
+  export can leave out those that start later in the day than the recording lasted; their
+  hours are judged by the Paradigm's name alone.)
 - **A threshold** is a signal level, `On` or `Off`. A level makes the well a **trigger
   well**. `On` keeps it lit regardless (open loop). `Off` never lights it by its own
   behaviour, and such a well runs no Paradigm of its own.
 - **`***Env Mon***`** is the Environmental Monitor's section. pyflic ignores it.
 - **`***ALL DFM***`** is what PyMCU writes for a recording started without a Program. pyflic
   reads it as every well `Off` for the whole recording, so any light is a fault.
-- **An old program loaded into PyMCU 4.0.0** is exported with generated Paradigm names that
-  describe its settings, such as `ClosedLoop-40Hz-8ms-Hold500-MaxOn0`.
+- **A program in the old format**, loaded into PyMCU 4, is exported with generated Paradigm
+  names that describe its settings, such as `ClosedLoop-40Hz-8ms-Hold500-MaxOn0`.
 
 ### The older export
 
-Before PyMCU 4.0.0 an interval line looked like this:
+PyMCU 3.x wrote an interval line like this:
 
 ```
 (07/28/2025 12:01:00) Dark Off,20,-1,-1,-1,20,-1,-1,-1,20,-1,-1,-1,F:5160,P:8,D:500,L:1000,M:1000000000000,1440.0min.
@@ -143,33 +137,33 @@ Before PyMCU 4.0.0 an interval line looked like this:
 
 - **Linkage**: wells sharing a number form one **linkage group**, lit together whenever any
   member triggers. With the file, the groups always come from its `Linkage:` line, never from
-  the data. The data only check them. On firmware 4.0.0, linked wells whose light differs fail
-*broken yoking*. On older firmware, the group's notes say how long its linked wells were not
-lit together.
+  the data. The data only check them: linked wells whose light differs fail *broken
+  yoking*. (On generations 1 and 2, the group's notes say how long its linked wells were not
+  lit together.)
 - **Each interval's Paradigm and thresholds**: which wells trigger, which are open loop,
   which are off, and the rule the light followed.
-- **Program type** and the interval timestamps. On generations 1 and 2 these lay the
-  intervals out over the run: Linear holds its last interval to the end, Repeating and
-  Circadian start over, and Constant runs its first interval throughout. A generation-3
-  file records its own schedule row by row, so the timestamps are used only as a check.
+- **Program type** and the interval timestamps. A generation-3 file records its own
+  schedule row by row, so the timestamps are used only as a check. On generations 1 and 2
+  they lay the intervals out over the run: Linear holds its last interval to the end,
+  Repeating and Circadian start over, and Constant runs its first interval throughout.
 - **Baseline**, the start time and the duration.
 
 ### Without it
 
 **The file is optional.** Without it the light QC still runs, but it is limited:
 
-- **Generations 1 and 2.** Linkage is inferred from wells lit together, every lit well
-  counts as a trigger well, and the Hold is taken as `opto_default_decay_ms`.
 - **Generation 3.** The rows name each Paradigm but not its type, settings or thresholds.
   Linkage comes from wells whose `OnMs` match exactly, and the trigger wells are the ones
   that counted Activations. Every Activation is judged against its group's licks within
   `opto_default_decay_ms`. The checks that need the Paradigm's type are not made, and every
   type-dependent column is `NA`.
+- **Generations 1 and 2.** Linkage is inferred from wells lit together, every lit well
+  counts as a trigger well, and the Hold is taken as `opto_default_decay_ms`.
 
 Either way, unexplained light can warn but not fail, because without the program an
 open-loop schedule is indistinguishable from a stuck light.
 
-A firmware 4.0.0 recording without its program is warned about loudly, because the file it
+A generation-3 recording without its program is warned about loudly, because the file it
 needs was simply not copied. `pyflic lint`, the report's *At a glance* and the Hub's
 **Loaded** line all say:
 
@@ -200,13 +194,15 @@ explains light with it.
 | **ClosedLoop** | during contact, and for the Hold after it ends; one on-period is cut off at `MaxOnMs` | `HoldMs` | `MaxOnMs`, `EventGapMs` |
 | **FixedInterval** | contact starts an Activation of exactly `ActivationMs`; the next cannot start until the last one has ended and `LockoutMs` has passed since it started | `ActivationMs` | `LockoutMs`, `EventGapMs`, `Acclimation` |
 | **NonFeeding** | on at the start, off during contact, on again `OnDelayMs` after contact ends, for at most `MaxOnMs` | none | `OnDelayMs`, `MaxOnMs` |
-| **ProgressiveRatio** | the feeding bout that meets the **Requirement** starts an Activation of exactly `ActivationMs`; the Requirement then rises along its series | `ActivationMs` | `Series`, `FirstRequirement` and `Step`, or `Scale` and `Rate`; `Cap`, `EventGapMs`, `Acclimation` |
-| **FixedRatio** | every `Ratio`-th feeding bout starts an Activation of exactly `ActivationMs` | `ActivationMs` | `Ratio`, `EventGapMs`, `Acclimation` |
+| **ProgressiveRatio** | contact that adds up to the **Requirement**, in milliseconds (with `Counter: Events`, the feeding bout that meets it), starts an Activation of exactly `ActivationMs`; the Requirement then rises along its series | `ActivationMs` | `Counter`, `Series`, `FirstRequirement` and `Step`, or `Scale` and `Rate`; `Cap`, `EventGapMs`, `Acclimation` |
+| **FixedRatio** | every `Ratio` ms of contact (with `Counter: Events`, every `Ratio`-th feeding bout) starts an Activation of exactly `ActivationMs` | `ActivationMs` | `Counter`, `Ratio`, `EventGapMs`, `Acclimation` |
 
 The firmware counts a feeding bout of its own, a **Firmware Event**: contact that ends once
 the signal has stayed below the threshold for `EventGapMs`. It is a different detector from
 pyflic's feeding events, on the same signal. The two agree in the main and differ at the
-edges.
+edges. A ratio Paradigm counts Firmware Events toward its Requirement only with
+`Counter: Events`. Under `Counter: Contact`, the default, it counts milliseconds of contact,
+and the data hold no Firmware Events.
 
 **Acclimation.** A FixedInterval or ratio Paradigm with `Acclimation: N` starts each well
 with N closed-loop Activations: contact lights the LED, and it stays lit for `ActivationMs`
@@ -247,7 +243,7 @@ type gets a check of its own only where it has a setting its family lacks: `MaxO
 - **Fixed length**: FixedInterval, ProgressiveRatio and FixedRatio after Acclimation. An
   earned Activation lasts exactly `ActivationMs`. Its *interval* branch (FixedInterval) is
   earned by contact once the lockout has passed; its *ratio* branch (the two ratio types)
-  by the Firmware Event that meets the Requirement.
+  by the contact (with `Counter: Events`, the Firmware Event) that meets the Requirement.
 - **Non-feeding**: NonFeeding. Dark while the fly feeds, lit `OnDelayMs` after it stops.
 
 A well's family follows its Phase: a FixedInterval well in Acclimation is closed loop until
@@ -291,13 +287,13 @@ passed on to each chamber the group touches.
 
 Each group is judged interval by interval, under that interval's Paradigm.
 
-- **Generations 1 and 2.** The intervals are laid out by clock time from the program.
 - **Generation 3.** The rows are the schedule: each run of rows under one Program Interval
   and Cycle is a window. The baseline rows before the first instruction (Program Interval 0)
   and rows under an instruction outside the program are not judged. A Program Interval
   beyond the lines `Program.txt` prints (it omits intervals past the duration and lists a
   Repeating program's first pass only) is judged by its Paradigm's name, with the trigger
   wells read from the Activations.
+- **Generations 1 and 2.** The intervals are laid out by clock time from the program.
 
 A group's mode in a window comes from its members' thresholds: any member `On` is open loop,
 every member `Off` is off, and otherwise the Paradigm's type rules.
@@ -371,7 +367,7 @@ Each check writes a flag into the group's `Flags`, in the words below.
 | **no program section**: `Program.txt` has no usable section for the DFM | warning | 1, 2 |
 | **no Program.txt for firmware 4.0.0**: a generation-3 DFM without its program | warning | 3 |
 
-The firmware 4.0.0 checks with constants read the file's own bookkeeping. Their defaults
+The generation-3 checks with constants read the file's own bookkeeping. Their defaults
 were set on simulated recordings and on PyMCU's own simulator, and are to be revisited on
 bench recordings of each Paradigm type. Treat a warning from one as a reason to look, and
 see [Thresholds](#thresholds).
@@ -460,10 +456,10 @@ and their columns are `NA`. On generations 1 and 2 none runs: `OptoCol1`, sample
 Each flagged group gets a `LikelyCause`: **a drifting baseline or sustained contact** when
 most of its unexplained light fell where the firmware saw contact and pyflic saw no lick or
 touch, otherwise **hardware, linkage or program mismatch**: light the firmware had no reason
-to switch on. Where the data name PyMCU's Baseline sets (PyMCU 4.0.1), the baseline each
-threshold was built on is known, and the first cause splits in two: **sustained contact**
-when the well rested at that baseline (a fly standing on the food, which pyflic's running
-median absorbs), and **a drifting baseline** when it rested 10 or more above it.
+to switch on. Where the data name PyMCU's Baseline sets, the baseline each threshold was
+built on is known, and the first cause splits in two: **sustained contact** when the well
+rested at that baseline (a fly standing on the food, which pyflic's running median
+absorbs), and **a drifting baseline** when it rested 10 or more above it.
 
 **Generation 3 reads the firmware's own decisions.** An Activation, or a Firmware Event (a
 rise in `Progress` under `Counter: Events`), with no pyflic lick or touch at its trigger well
@@ -473,19 +469,19 @@ is the drifting-baseline signature itself. On these recordings:
   decisions.
 - `ContactWithoutActivitySec` is the lit time of the Activations whose onset had no pyflic
   lick or touch at their well.
-- `FirmwareEventsWithoutActivity` counts the Firmware Events with none either.
+- `FirmwareEventsWithoutActivity` counts the Firmware Events with none either. Under
+  `Counter: Contact` there are no Firmware Events to count.
 
 **Generations 1 and 2 emulate the firmware.** With a program, pyflic re-runs the firmware's
 own test on the recorded signal: raw minus the mean of the run's first ten seconds, against
-the interval's threshold. Where the data name Baseline sets (PyMCU 4.0.1), it takes each
-row's baseline from `Baselines.csv` instead, and is never approximate for want of a baseline
-window. `ContactWithoutActivitySec` is how long that **emulated trigger**
-read a trigger well above threshold while pyflic saw no lick or touch.
-`EmulationApproximate` marks it approximate when the data begin more than two seconds after
-the program, so the baseline window was not recorded. A
-[Slice](concepts-slices.md) that starts later still reads the baseline from the run's first
-ten seconds, which the load keeps aside; only without them is it approximate, with a note. On generation 3 nothing is emulated and
-the column is `NA`.
+the interval's threshold. Where the data name Baseline sets, it takes each row's baseline
+from `Baselines.csv` instead, and is never approximate for want of a baseline window.
+`ContactWithoutActivitySec` is how long that **emulated trigger** read a trigger well above
+threshold while pyflic saw no lick or touch. `EmulationApproximate` marks it approximate
+when the data begin more than two seconds after the program, so the baseline window was not
+recorded. A [Slice](concepts-slices.md) that starts later still reads the baseline from the
+run's first ten seconds, which the load keeps aside; only without them is it approximate,
+with a note. On generation 3 nothing is emulated and the column is `NA`.
 
 ## Thresholds
 
@@ -504,25 +500,24 @@ a `Program.txt` in `data/`, or light QC files from a run).
 | `opto_decay_tolerance_samples` | 2 | samples of slack around the Hold |
 | `opto_unlit_feeding_fraction` | 0.50 | unlit share of closed-loop feeding bouts that warns |
 | `opto_open_loop_min_lit_fraction` | 0.95 | lit share an open-loop interval needs |
-| `opto_event_disagreement_warn_fraction` | 0.25 | firmware 4.0.0: a trigger well whose Firmware Events and pyflic feeding events differ by more than this share of the Firmware Events warns |
-| `opto_yoking_fail_fraction` | 0.01 | firmware 4.0.0: share of a group's lit records in which its linked wells' `OnMs` differ by more than 1 ms, above which the group fails |
-| `opto_lost_records_warn` | 25 | firmware 4.0.0: records missing from `Index` (5 s at 5 Hz), outside restarts, above which the DFM warns |
-| `opto_unknown_rows_warn_fraction` | 0.01 | firmware 4.0.0: share of the rows after the lead-in under an unknown instruction above which the DFM warns |
-| `opto_late_records_warn` | 10 | firmware 4.0.0: records with an `OnMs` above 200 ms above which the DFM warns |
-| `opto_activation_tolerance_ms` | 25 | firmware 4.0.0: how far a light period may differ from its Hold, `ActivationMs` or `MaxOnMs`, or two onsets from the lockout, and still keep the rule (one record more for a period timed to the record) |
-| `opto_activation_length_fail_fraction` | 0.05 | firmware 4.0.0: share of judged Activations that break their length rule (*wrong activation length*, *short activations*) above which the group fails |
-| `opto_lockout_fail_fraction` | 0.02 | firmware 4.0.0: share of judged FixedInterval Main Activations started inside the lockout above which the group fails |
-| `opto_missed_contact_warn_fraction` | 0.25 | firmware 4.0.0: share of at least 5 free FixedInterval contact runs that brought no Activation above which the group warns |
-| `opto_non_feeding_lit_warn_fraction` | 0.10 | firmware 4.0.0: share of the feeding under NonFeeding that was lit above which the group warns |
-| `opto_non_feeding_min_sec` | 30 | firmware 4.0.0: seconds of NonFeeding light during feeding needed before it is judged |
-| `opto_non_feeding_dark_warn_fraction` | 0.10 | firmware 4.0.0: share of the time a NonFeeding rule says lit that was dark above which the group warns |
-| `opto_interval_lag_warn_sec` | 5 | firmware 4.0.0: seconds a Program Interval may start after its `Program.txt` time before its DFM warns |
+| `opto_event_disagreement_warn_fraction` | 0.25 | under `Counter: Events`, a trigger well whose Firmware Events and pyflic feeding events differ by more than this share of the Firmware Events warns |
+| `opto_yoking_fail_fraction` | 0.01 | share of a group's lit records in which its linked wells' `OnMs` differ by more than 1 ms, above which the group fails |
+| `opto_lost_records_warn` | 25 | records missing from `Index` (5 s at 5 Hz), outside restarts, above which the DFM warns |
+| `opto_unknown_rows_warn_fraction` | 0.01 | share of the rows after the lead-in under an unknown instruction above which the DFM warns |
+| `opto_late_records_warn` | 10 | records with an `OnMs` above 200 ms above which the DFM warns |
+| `opto_activation_tolerance_ms` | 25 | how far a light period may differ from its Hold, `ActivationMs` or `MaxOnMs`, or two onsets from the lockout, and still keep the rule (one record more for a period timed to the record) |
+| `opto_activation_length_fail_fraction` | 0.05 | share of judged Activations that break their length rule (*wrong activation length*, *short activations*) above which the group fails |
+| `opto_lockout_fail_fraction` | 0.02 | share of judged FixedInterval Main Activations started inside the lockout above which the group fails |
+| `opto_missed_contact_warn_fraction` | 0.25 | share of at least 5 free FixedInterval contact runs that brought no Activation above which the group warns |
+| `opto_non_feeding_lit_warn_fraction` | 0.10 | share of the feeding under NonFeeding that was lit above which the group warns |
+| `opto_non_feeding_min_sec` | 30 | seconds of NonFeeding light during feeding needed before it is judged |
+| `opto_non_feeding_dark_warn_fraction` | 0.10 | share of the time a NonFeeding rule says lit that was dark above which the group warns |
+| `opto_interval_lag_warn_sec` | 5 | seconds a Program Interval may start after its `Program.txt` time before its DFM warns |
 
-The last thirteen apply only to firmware 4.0.0 recordings. *Non-feeding light during
-feeding* has its own two constants, whose defaults are the unexplained-light values it used
-to borrow, so its results are unchanged. The defaults of the eight rule-check constants
-were set on simulated recordings, where clean data stayed far inside them, and are to be
-revisited on bench recordings of each Paradigm type.
+The last thirteen use the Paradigm columns, so they don't apply to generation 1 or 2
+recordings. The defaults of the eight rule-check constants were set on simulated
+recordings, where clean data stayed far inside them, and are to be revisited on bench
+recordings of each Paradigm type.
 
 **Failures are flagged, not excluded, by default.** A faulty light does not invalidate the
 feeding record, so a failed group stays in every result with its flags on its chambers'
@@ -536,18 +531,17 @@ tables are Run QC's *Opto light QC tables* item, the figure its *Light explained
 
 | File | One row per | Holds |
 |---|---|---|
-| `opto_light_qc.csv` | linkage group | `Generation`, wells, trigger wells, chambers, their `Roles`, treatment, lit and unexplained time, onset, the contact evidence, `FirmwareEvents` and `PyflicEvents` under a ratio Paradigm, `AcclimationActivations` and `AcclimationExpected`, the rule checks' columns (below), `LikelyCause`, `Flags`, `Verdict`, `Excluded` |
+| `opto_light_qc.csv` | linkage group | `Generation`, wells, trigger wells, chambers, their `Roles`, treatment, lit and unexplained time, onset, the contact evidence, `FirmwareEvents` and `PyflicEvents` under a ratio Paradigm (`FirmwareEvents` `NA` under `Counter: Contact`), `AcclimationActivations` and `AcclimationExpected`, the rule checks' columns (below), `LikelyCause`, `Flags`, `Verdict`, `Excluded` |
 | `opto_light_intervals.csv` | group × window | the window's printed `Interval`, and on generation 3, as the rows recorded it, `ProgramInterval`, `Cycle`, `Paradigm` and `ParadigmType`; its mode, the `HoldMs` it was judged with, its trigger wells, `LitSource`; lit, unexplained and contact time; feeding bouts and unlit ones |
-| `opto_light_events.csv` | light event | its `Well`, onset, end and duration, interval, `Phase`, the `RequirementMet` and `FirmwareEvents` behind it, `UnexplainedSec`, `Explained`, `OverrunSec` (the light's time past the last lick plus the Hold), its `Source`, and on generation 3 the ledger's columns (below) |
-| `opto_program.csv` | program interval | the program as read: the Paradigm's name and type (`ParadigmType`, as PyMCU spells it) with its settings (`HoldMs`, `ActivationMs`, `LockoutMs`, `Acclimation`, the Requirement series …, `NA` where the type has none), linkage, trigger wells, and for an export older than PyMCU 4.0.0 the raw `F` and `P` it echoed (`LegacyF`, `LegacyP`) |
+| `opto_light_events.csv` | light event | its `Well`, onset, end and duration, interval, `Phase`, the `RequirementMet` and `FirmwareEvents` behind it (`FirmwareEvents` `NA` under `Counter: Contact`), `UnexplainedSec`, `Explained`, `OverrunSec` (the light's time past the last lick plus the Hold), its `Source`, and on generation 3 the ledger's columns (below) |
+| `opto_program.csv` | program interval | the program as read: the Paradigm's name and type (`ParadigmType`, as PyMCU spells it) with its settings (`HoldMs`, `ActivationMs`, `LockoutMs`, `Acclimation`, the Requirement series …, `NA` where the type has none), linkage, trigger wells, and for a PyMCU 3.x export the raw `F` and `P` it echoed (`LegacyF`, `LegacyP`) |
 | `opto_light_dfm<id>.png` | DFM | the QC figure, below |
 
-A light event is a lit run of `OptoCol1` on generations 1 and 2 (`Source` = `optocol1`), and
-one Activation of a trigger well on generation 3 (`activations`). The firmware columns are
-`NA` before generation 3.
+A light event is one Activation of a trigger well (`Source` = `activations`). On generations
+1 and 2 it is a lit run of `OptoCol1` (`optocol1`), and the firmware columns are `NA`.
 
 **The rule checks' columns** in `opto_light_qc.csv`, summed over the group's Paradigms, `NA`
-outside their family, without `Program.txt` and before generation 3:
+outside their family, without `Program.txt` and on generations 1 and 2:
 
 - `ShortActivations`, `OverMaxOnActivations`, `WrongLengthActivations`,
   `LockoutViolations`, `SeriesMismatches`: the judged Activations that broke the rule;
@@ -583,9 +577,9 @@ Acclimation has a closed-loop subsection for its Acclimation as well, and wells 
 under another Paradigm one of their own. See [the rule figures](plots-catalog.md#rule-figures).
 
 The figure, **Light explained by licks**, gives each group a row: its lit time per bin,
-explained and unexplained, and beside it the contact with no lick — the emulated trigger's
-on generations 1 and 2, the light of Activations with no lick or touch on generation 3
-(titled *firmware events, no lick*). The report's cover counts the groups that failed or
+explained and unexplained, and beside it the contact with no lick: the light of Activations
+with no lick or touch (titled *firmware events, no lick*), or on generations 1 and 2 the
+emulated trigger's. The report's cover counts the groups that failed or
 warned, and how many groups raised each flag. A Project's Combined Analysis stacks every
 member's verdicts into `<project>_LightQC.csv` with `Source` = `Opto`.
 
@@ -618,11 +612,11 @@ Each row carries the Treatment, the design factors, the `Role` and the `Generati
 | Columns | What they hold |
 |---|---|
 | `Paradigm`, `ParadigmType`, `ProgramInterval`, `Cycle` | what ran over the window, or `mixed` |
-| `WindowMinutes`, `LitSec`, `LitFraction`, `LitSource` | the light received: from `OnMs` on generation 3, from `OptoCol1` samples before |
+| `WindowMinutes`, `LitSec`, `LitFraction`, `LitSource` | the light received: from `OnMs` (on generations 1 and 2, from `OptoCol1` samples) |
 | `LightOnsets` | times the light came on; on generation 1 the nearest thing to an Activation count |
 | `Activations`, `ActivationsPerHour` | on-periods the well's own Paradigm started |
 | `AcclimationActivations`, `AcclimationEndMin`, `AcclimationComplete`, `MainActivations` | FixedInterval and ratio Paradigms with Acclimation: the Activations in Acclimation and after it, which add up to `Activations` |
-| `FirmwareEvents`, `LastRequirementMet`, `ProgressAtEnd`, `EventsPerActivation` | ratio Paradigms |
+| `FirmwareEvents`, `LastRequirementMet`, `ProgressAtEnd`, `EventsPerActivation` | ratio Paradigms. Under `Counter: Contact`, the default, the Requirement and Progress are milliseconds of contact, and `FirmwareEvents` and `EventsPerActivation` are `NA` |
 | `MedianActivationSec`, `CutOffs` | closed loop (ClosedLoop, and Acclimation): the median judged Activation's lit time; with `MaxOnMs`, the Activations it cut off |
 | `MaxActivations`, `RewardEfficiency`, `MedianReturnSec`, `LockedOutContactSec` | FixedInterval: the most Activations its Main time allowed (that time over the longer of `LockoutMs` and `ActivationMs`); the Main Activations earned as a share of that; the median wait, once the lockout was over, before the next Activation; and the fly's lick time while its own lockout ran and its own light was off |
 | `UnlitSec`, `Suppressions`, `MedianSuppressionSec` | NonFeeding: time dark; the light periods the fly's contact ended (not those `MaxOnMs` ended); and the median dark time from one of those to the light coming back |
@@ -650,7 +644,8 @@ Activation as the [rule checks](#each-paradigms-own-rule) do, with
 - closed loop: `Activations`, `LitSec`, `MedianActivationSec`, and `CutOffs` when a
   ClosedLoop runs with `MaxOnMs`;
 - fixed length, interval: `Activations`, `RewardEfficiency`, `MedianReturnSec`;
-- fixed length, ratio: `Activations`, `LastRequirementMet`, `FirmwareEvents`;
+- fixed length, ratio: `Activations`, `LastRequirementMet` and, under `Counter: Events`,
+  `FirmwareEvents`;
 - non-feeding: `LitFraction`, `Suppressions`;
 - Acclimation, when a Paradigm has one: `AcclimationEndMin`.
 
@@ -659,9 +654,10 @@ program runs, each with its own metrics, from the chambers whose window ran that
 chamber that ran several shows under each. Open loop adds *Feeding in light and dark* under
 a type with the Light and dark [module](concepts-experiment-types.md#analysis-modules)
 (Custom and ProgressiveRatio include it). A Project pools the members' tables the same way.
-A member without a firmware 4.0.0 recording or a program keeps the four metrics of before in
-one section: `Activations`, `LitSec`, `FirmwareEvents` and `AcclimationEndMin`
-(`light_summary.HEADLINE_METRICS`). See [Light behaviour plots](plots-catalog.md#light-behaviour-plots).
+A member without a generation-3 recording or a program keeps four metrics in one section:
+`Activations`, `LitSec`, `FirmwareEvents` and `AcclimationEndMin`
+(`light_summary.HEADLINE_METRICS`). See
+[Light behaviour plots](plots-catalog.md#light-behaviour-plots).
 Each numeric column is also a faceted Publication Figure in the
 [Plot Editor](app-plot-editor.md), offered once the Project's Combined Analysis has a light
 table.
@@ -674,7 +670,7 @@ seen beside its partner's, and lose every Activation measure: `Activations` and 
 Acclimation, ratio, closed-loop and FixedInterval columns, `Suppressions` and
 `MedianSuppressionSec`. Paired, Self and Mutual chambers keep them, and so does a chamber
 whose Role is blank, since nothing says its light is not its own. A Progressive Ratio
-experiment compares its paired chambers only, as before. A metric that is the same in every
+experiment compares its paired chambers only. A metric that is the same in every
 chamber, such as an open-loop chamber's lit time, is named once as not compared.
 
 Every optogenetic `feeding_summary.csv` row also carries its chamber's `Role`, `LitSec` and

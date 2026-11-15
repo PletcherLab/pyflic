@@ -135,27 +135,21 @@ is easy to miss.
 
 ### Every chamber group was removed
 
-Look at the training table in `summary.txt` or the report. "no training flag on any well"
-means the recording carries no training flag — a version-2 file, or firmware that did not
-mark training — so no group ever finished training and `require_training_complete`
-removed them all. A recording from older firmware needs version-3 files with light data
-(`OptoCol1`). See [Progressive Ratio experiments](concepts-progressive-ratio.md#requirements).
+Look at the training table in `summary.txt` or the report. A group whose paired fly never
+finished training has no Test phase, and `require_training_complete` removes it. Its note
+says why: the paired sucrose well *never ran a ratio Paradigm*, *never reached Phase M under
+a ratio Paradigm*, or *was still in Acclimation (Phase A) when the recording ended*.
 
-### "no training information: recorded with DFM firmware older than 4.0.0"
-
-The recording was made by PyMCU 4.0.0 from a DFM whose firmware is older than 4.0.0. Such a
-file has the new columns, all empty, and no training flag either: there is no record of
-Training at all. Nothing is removed. Each chamber group gets one `Recording` Facet, with no
-Test phase, no breaking point and no sucrose persistence, and the member says so on the
-Hub's Loaded line, in the report and in the Project Report. Update the DFM's firmware for
-the next recording; this one cannot gain what it did not record. See
-[No training information](concepts-progressive-ratio.md#no-training-information).
+On an older recording (generation 1), "no training flag on any well" means the file carries
+no training flag — a PyMCU 2.x file, or firmware that did not mark training. It needs
+PyMCU 3.x files with light data (`OptoCol1`). See
+[Progressive Ratio experiments](concepts-progressive-ratio.md#requirements).
 
 ### A group I expected to keep was excluded
 
 Check its light QC verdict in `pr_light_qc.csv`. **Self-triggered light** (a run of
-lick-free light events), **implausible training** and, on firmware 4.0.0,
-**requirement series wrong** fail a group, and with `exclude_failed_pr_groups` on, every
+lick-free light events), **implausible training** and **requirement series wrong** fail a
+group, and with `exclude_failed_pr_groups` on, every
 chamber of it leaves the analysis. The licks-per-event and resting-level figures on the QC
 panel show why. *Requirement series wrong* means a light event met a Requirement the Test
 Paradigm's series does not give: check that `Program.txt` is this recording's. See
@@ -179,11 +173,13 @@ report. Nothing is lost by it but the Test after the restart.
 
 ### "the firmware counted rising Events per light event; pyflic's licks did not follow"
 
-A note on a firmware 4.0.0 recording: the firmware counted more feeding bouts for each light
-event as the requirement rose, as a working progressive ratio should, while pyflic's licks
-per light event did not rise. The fly worked to the schedule and pyflic's detection missed
-some of it. Look at the baselined trace of the paired sucrose well, and the detection
-parameters, before trusting the *no increasing trend* warning beside it.
+A note under a ratio Paradigm with `Counter: Events`: the firmware counted more feeding
+bouts for each light event as the requirement rose, as a working progressive ratio should,
+while pyflic's licks per light event did not rise. The fly worked to the schedule and
+pyflic's detection missed some of it. Look at the baselined trace of the paired sucrose
+well, and the detection parameters, before trusting the *no increasing trend* warning beside
+it. Under `Counter: Contact`, the default, the firmware counts milliseconds of contact, not
+bouts, so this note never appears.
 
 ### Most breaking points are censored
 
@@ -205,6 +201,16 @@ is left out rather than guessed at: it was analysed before the breaking point ex
 with *Breaking point* unticked. Count the chamber groups pooled in the Project Report against
 what you expect. Re-run that member's analysis — **Run analysis** with *Breaking point*
 ticked, or the Project's **Analyze all** — then **Create report** again.
+
+### "no training information: recorded with DFM firmware older than 4.0.0"
+
+An older recording (generation 2): PyMCU 4 recorded a DFM whose firmware was not updated.
+The file has the Paradigm columns, all empty, and no training flag either: there is no
+record of Training at all. Nothing is removed. Each chamber group gets one `Recording`
+Facet, with no Test phase, no breaking point and no sucrose persistence, and the member says
+so on the Hub's Loaded line, in the report and in the Project Report. Update the DFM's
+firmware for the next recording; this one cannot gain what it did not record. See
+[No training information](concepts-progressive-ratio.md#no-training-information).
 
 ## Optogenetic recordings
 
@@ -270,25 +276,27 @@ The integrity report and the light QC read the DFM's own bookkeeping:
 ### "acclimation count mismatch"
 
 A trigger well's completed Acclimation counted a different number of Activations than its
-Paradigm's `Acclimation` setting. Firmware 4.0.0 gives exactly that many, so first check
+Paradigm's `Acclimation` setting. The firmware gives exactly that many, so first check
 that `Program.txt` is this recording's. If it is, the DFM did not do what its Paradigm says:
 look at the well's lane in the [Program timeline](plots-catalog.md#program-timeline). An
 Acclimation cut short by the end of the recording or by a new Paradigm is never counted.
 
 ### "firmware events disagree"
 
-Under a ratio Paradigm the firmware counts its own feeding bouts, Firmware Events, and
-pyflic counts its feeding events from the same signal. They are different detectors and
-differ at the edges. Like the firmware, pyflic's count leaves out the bouts that start while
-the well's own Activation is lit. A trigger well whose two counts differ by more than
+Under a ratio Paradigm with `Counter: Events` the firmware counts its own feeding bouts,
+Firmware Events, and pyflic counts its feeding events from the same signal. They are
+different detectors and differ at the edges. Like the firmware, pyflic's count leaves out
+the bouts that start while the well's own Activation is lit. A trigger well whose two counts differ by more than
 `opto_event_disagreement_warn_fraction` (25%) of the Firmware Events warns, once either count
 reaches 5. Far more Firmware Events than pyflic events is a drifting well or thresholds that
 miss real feeding; far fewer is pyflic splitting bouts the firmware joins. Compare the
 firmware's `EventGapMs` with your `feeding_event_link_gap`, and look at the baselined trace.
+Under `Counter: Contact`, the default, there are no Firmware Events, so this check does not
+run.
 
 ### A Paradigm's rule broken: "wrong activation length", "lockout broken", "requirement series wrong", "max on exceeded", "short activations"
 
-These fail a group on a firmware 4.0.0 recording. The firmware keeps each Paradigm's rule to
+These fail a group. The firmware keeps each Paradigm's rule to
 the millisecond, so light that breaks the rule of the Paradigm `Program.txt` names is not a
 fly's doing. The likely cause, in order:
 
@@ -322,16 +330,16 @@ See [Each Paradigm's own rule](concepts-optogenetics.md#each-paradigms-own-rule)
 ### "open loop not lit"
 
 A warning: an open-loop interval, whose wells are set to light whatever the fly does, was lit
-for less than `opto_open_loop_min_lit_fraction` (95%) of its time. On firmware 4.0.0 the
-reason names the group's darkest open-loop window, so one dark Program Interval shows.
+for less than `opto_open_loop_min_lit_fraction` (95%) of its time. The reason names the
+group's darkest open-loop window, so one dark Program Interval shows.
 Check the lid and its LEDs, and that `Program.txt` is this recording's. See
 [The checks](concepts-optogenetics.md#the-checks).
 
 ### No Role, or every Role blank
 
-A chamber's Role comes from `Program.txt`, or on a firmware 4.0.0 recording from the data. A
-recording from older firmware without `Program.txt` cannot tell a trigger well from a yoked
-one, so its Roles are blank. See [Roles](concepts-optogenetics.md#roles).
+A chamber's Role comes from `Program.txt`, or without it from the data. An older recording
+without `Program.txt` cannot tell a trigger well from a yoked one, so its Roles are blank.
+See [Roles](concepts-optogenetics.md#roles).
 
 ## The QC, Analyze and Plots panels
 

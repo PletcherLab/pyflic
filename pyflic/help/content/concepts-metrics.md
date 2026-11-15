@@ -85,8 +85,8 @@ Every row of an optogenetic experiment also says what the chamber's light did:
   Open or Unlit. See [Roles](concepts-optogenetics.md#roles).
 - `LitSec`, after the `OptoOn_sec` columns — seconds the chamber's own light was on,
   counted once however many of its wells were lit.
-- `Activations` — the on-periods its wells' own Paradigms started. Blank before firmware
-  4.0.0, which is the first to record them.
+- `Activations` — the on-periods its wells' own Paradigms started. Blank on an older
+  recording, which does not record them.
 
 They are the [light table](concepts-optogenetics.md#the-light-table)'s columns of the same
 name. A DFM the light QC does not cover leaves them blank.

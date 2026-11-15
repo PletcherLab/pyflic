@@ -18,7 +18,7 @@ paper.
 | Baselined signal | `qc/baselined/DFM{n}_baselined.png` | Every well after baseline subtraction, with thresholds drawn |
 | Cumulative licks | `qc/cumulative_licks/DFM{n}_cumulative_licks.png` | Running lick total per well over time |
 | Light explained by licks | `qc/opto/opto_light_dfm{n}.png` | Optogenetic experiments only: each linkage group's lit time, explained and unexplained by trigger-well licks |
-| Program timeline | `qc/program/program_timeline_dfm{n}.png` | Optogenetic experiments only, a DFM with a `Program.txt` section or firmware 4.0.0 data: its Program Intervals, and each well's Acclimation, Activations and light |
+| Program timeline | `qc/program/program_timeline_dfm{n}.png` | Optogenetic experiments only (on an older recording, a DFM with a `Program.txt` section): its Program Intervals, and each well's Acclimation, Activations and light |
 
 The **baselined signal with thresholds** is the most useful one in the set. It puts your
 `feeding_threshold` and `feeding_minimum` lines directly on the trace, so whether they sit
@@ -33,21 +33,21 @@ any type, by Run QC and by basic analysis. One row per linkage group. The left p
 time per bin, stacked: grey-blue where a trigger-well lick or touch within the light's
 Hold explains it, red where nothing does, purple where it was lit while every threshold
 was `Off` (-1), and light grey where the light is not judged by licks (open loop,
-NonFeeding). The right panel is orange: on a recording older than firmware 4.0.0, when
-`data/Program.txt` allows it, the time the emulated firmware trigger read the trigger wells
-above threshold with no lick or touch; on a firmware 4.0.0 recording, titled *firmware
-events, no lick*, the light of Activations the firmware counted with no lick or touch at
-their onset. Lit time there is `OnMs`, in milliseconds. Red beside orange in the same bins
-is a drifting sensor. The strip carries the group's verdict. See
+NonFeeding). The right panel, titled *firmware events, no lick*, is orange: the light of
+Activations the firmware counted with no lick or touch at their onset. Lit time there is
+`OnMs`, in milliseconds. (On an older recording, when `data/Program.txt` allows it, the
+orange is the time the emulated firmware trigger read the trigger wells above threshold with
+no lick or touch.) Red beside orange in the same bins is a drifting sensor. The strip
+carries the group's verdict. See
 [Optogenetic experiments](concepts-optogenetics.md).
 
 ### Program timeline
 
 **Program timeline** (`plot_program_timeline`) is drawn, in an optogenetic experiment, for
-every DFM that has something to draw: firmware 4.0.0 data, or a `Program.txt` section.
+every DFM that has something to draw: Paradigm data, or a `Program.txt` section.
 **Run QC** and **Analyze all** write it for each such DFM; the `basic_analysis` script
-action, which skips the QC reports, still writes it for each firmware 4.0.0 DFM. A recording
-whose light never came on (every well Off) gets none.
+action, which skips the QC reports, still writes it for each DFM with Paradigm data. A
+recording whose light never came on (every well Off) gets none.
 
 - **The band at the top** is the program, one block per Program Interval, coloured by
   Paradigm type and labelled with the Paradigm's name (and `C<n>`, the Cycle, when the
@@ -58,16 +58,15 @@ whose light never came on (every well Off) gets none.
 - **Below it, one lane per well**, labelled with its chamber and Role. A trigger well's label
   is bold and gives its threshold (*trigger 20*); a well lit regardless says *On*. Pale
   orange shading is Acclimation (Phase `A`), each black tick an Activation, and the blue
-  strip the share of each bin the LED was on. On a firmware 4.0.0 recording a lane is also
-  hatched where `Program.txt` sets the well `On`, and grey where it sets it `Off`, Program
-  Interval by Program Interval. On an older recording each tick is a trigger well's light
-  coming on, which under a ratio or fixed-interval Paradigm is one Activation.
+  strip the share of each bin the LED was on. A lane is also hatched where `Program.txt`
+  sets the well `On`, and grey where it sets it `Off`, Program Interval by Program
+  Interval.
 - **The strip's scale fits the program.** It runs from 0 to 100% of a bin when the program
   lights a well open loop, where a lane lit throughout is what to check. Otherwise it runs
   to the DFM's brightest bin and the colour bar says *scaled to this DFM*, because light
   that follows the fly fills only a few percent of a bin.
 - **A red band labelled "restart"**, across the band and every lane, marks each restart of
-  the DFM (firmware 4.0.0): from the last record before the gap in `Index` to the first row
+  the DFM: from the last record before the gap in `Index` to the first row
   under the instruction again. A restart that only `Messages.csv` names has no rows to place
   it by, and is not drawn.
 
@@ -90,16 +89,17 @@ How to read it:
 - **After a red restart band** every trigger well starts again: Acclimation shading and the
   ticks of a new Requirement series.
 
-On a recording older than firmware 4.0.0 the band is laid out from the program's clock
-times, approximate, and the lanes show the sampled `OptoCol1` light only: no Acclimation, no
-ticks, no `On` or `Off` shading and no restarts. The bin width is the plot action's
+On an older recording the band is laid out from the program's clock times, approximate, and
+the lanes show the sampled `OptoCol1` light, each tick a trigger well's light coming on (one
+Activation under a ratio or fixed-interval Paradigm): no Acclimation, no `On` or `Off`
+shading and no restarts. The bin width is the plot action's
 `binsize` (10 minutes by default, and always 10 minutes from the Hub's Run QC). See
 [Optogenetic experiments](concepts-optogenetics.md#the-program-timeline).
 
 ### Rule figures
 
-In the experiment report's *Optogenetic light QC*, on a firmware 4.0.0 recording with its
-`Program.txt`: each Paradigm's **Rule check** subsection ends with its rule figure, one
+In the experiment report's *Optogenetic light QC*, on a recording with its `Program.txt`:
+each Paradigm's **Rule check** subsection ends with its rule figure, one
 panel per DFM, that puts the measured light against the rule's setting. Light that keeps the
 rule is grey-blue; light that breaks it, by more than `opto_activation_tolerance_ms` (one
 record more for an Activation timed only to the record), is **red**, as bars and as ticks
@@ -235,7 +235,8 @@ them, two to a row, from the chambers whose window ran that family:
   ClosedLoop `MaxOnMs`;
 - **fixed length, interval**: Activations, Reward efficiency, Median return after the
   lockout (s);
-- **fixed length, ratio**: Activations, Last Requirement met, Firmware Events;
+- **fixed length, ratio**: Activations, Last Requirement met and, under `Counter: Events`,
+  Firmware Events;
 - **non-feeding**: Fraction of the time lit, Suppressions;
 - **Acclimation**: Acclimation end (min).
 
@@ -245,9 +246,9 @@ the same value in every chamber, such as the lit time of open-loop chambers lit 
 program, is named once as *the same in every chamber, so not compared between treatments*.
 The Activation measures compare only the chambers that earn light (Paired, Self, Mutual): a
 Yoked chamber keeps its lit time beside its partner's. A Progressive Ratio experiment shows
-its paired chambers only. A member without a firmware 4.0.0 recording keeps one section
-with the four metrics of before (Activations, Lit time, Firmware Events, Acclimation end),
-everything but lit time empty.
+its paired chambers only. A member without `Program.txt`, or with an older recording, keeps
+one section with four metrics (Activations, Lit time, Firmware Events, Acclimation end); on
+an older recording everything but lit time is empty.
 
 **Feeding in light and dark** — in the open-loop subsection, under a type with the Light
 and dark module (Custom and Progressive Ratio have it; see
@@ -301,7 +302,7 @@ is listed as *… (light, faceted)* and drawn from `<project>_LightSummary_Facet
 | `faceted_lightfeedingindex` | Light feeding index, on a fixed axis from −1 to 1 with a line at 0 |
 
 The reports test the headline metrics of each family, above; the first four are the ones a
-member without a firmware 4.0.0 recording keeps.
+member without `Program.txt`, or with an older recording, keeps.
 
 ## Progressive-ratio plots
 
@@ -375,8 +376,8 @@ strip giving the group's breaking point (`n+` when censored). A dashed line mark
 the last light event the breaking point counts, on both chambers of the group; onsets past
 it are grey, and lick-free light events, which never count, are hollow red rings.
 
-All of these need the recording's light: `OptoCol1`, or on firmware 4.0.0 the LEDs'
-`OnMs`.
+All of these need the recording's light: the LEDs' `OnMs` (on an older recording,
+`OptoCol1`).
 
 ### Did the paired fly earn its light? (QC)
 

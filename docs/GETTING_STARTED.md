@@ -255,20 +255,21 @@ to your first plot.
 In outline:
 
 1. **Make a folder for the recording**, outside the pyflic folder, with a `data`
-   folder inside it. Copy the DFM files from the rig into `data`. For an optogenetic
-   recording, copy the `Program.txt` the MCU exported into `data` as well: pyflic uses it
-   to check that the light followed the flies, and that the recording fits its Experiment
-   Type. pyflic reads both kinds of `Program.txt`,
-   the one PyMCU 4.0.0 writes (with a `Paradigms:` block) and the older one. A recording
-   from DFM firmware 4.0.0 needs it most: without it the kind of each light rule is
-   unknown, and pyflic warns.
+   folder inside it. Copy everything the MCU exported for the recording into `data`: the
+   DFM files and, when the MCU wrote them, `Program.txt`, `Messages.csv` and
+   `Baselines.csv`. pyflic reads recordings from every version of PyMCU and the DFM
+   firmware. `Program.txt` matters most for an optogenetic recording: pyflic uses it to
+   check that the light followed the flies, and that the recording fits its Experiment
+   Type. Without it, pyflic warns and leaves the light results blank.
 
    ```
    my_experiment/
      data/
        DFM1_0.csv
        DFM2_0.csv
-       Program.txt        (optogenetic recordings)
+       Program.txt
+       Messages.csv
+       Baselines.csv
    ```
 
 2. **Describe the experiment** in the config editor. Give it the recording's folder:

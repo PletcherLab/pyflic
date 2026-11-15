@@ -127,9 +127,9 @@ Where the Facets come from:
 | `program` | one per Program Interval of each DFM's `Program.txt` section, labelled by its Paradigm's name, its Cycles pooled |
 | `program_cycles` | one per Program Interval and Cycle, labelled `<Paradigm> C<n>` |
 
-A Paradigm a DFM runs in two Program Intervals is labelled `I<k> <Paradigm>`. Recordings
-older than firmware 4.0.0 lay the Facets out from the program's clock schedule, which
-`summary.txt` notes as approximate.
+A Paradigm a DFM runs in two Program Intervals is labelled `I<k> <Paradigm>`. Older
+recordings lay the Facets out from the program's clock schedule, which `summary.txt` notes
+as approximate.
 
 ```yaml
 global:
@@ -168,7 +168,7 @@ built with it) adds its own, all with defaults:
 | Key | Default | Effect |
 |---|---|---|
 | `require_training_complete` | `true` | Remove every chamber of a chamber group whose paired fly never finished training (both of a pair, the one of a single chamber) |
-| `exclude_failed_pr_groups` | `true` | Remove every chamber of a chamber group that fails the light QC (self-triggered light, implausible training, and on firmware 4.0.0 *requirement series wrong*); `false` keeps them, still listed in `pr_light_qc.csv` |
+| `exclude_failed_pr_groups` | `true` | Remove every chamber of a chamber group that fails the light QC (self-triggered light, implausible training, *requirement series wrong*); `false` keeps them, still listed in `pr_light_qc.csv` |
 | `pr_lick_free_run` | `5` | Consecutive Test light events with no sucrose licks that make a group's light self-triggered |
 | `pr_trend_min_events` | `5` | Test light events needed before the licks-per-event trend is judged |
 | `pr_trend_min_rho` | `0.3` | Spearman's rho below which a group gets the *no increasing trend* warning |
@@ -184,8 +184,8 @@ type's default in grey.
 
 Every optogenetic experiment, of any type, reads the optogenetic light QC's constants too —
 `exclude_failed_opto_chambers` (off by default: failed linkage groups are flagged, not
-excluded) and twenty thresholds whose names start `opto_`, thirteen of which apply only to
-firmware 4.0.0 recordings. They are listed in
+excluded) and twenty thresholds whose names start `opto_`, thirteen of which use the
+Paradigm columns and so do not apply to older recordings. They are listed in
 [Optogenetic experiments](concepts-optogenetics.md#thresholds). Both editors show them as
 fields too, in an *Optogenetic light QC* group, for an experiment whose optogenetics is not
 off, the default in grey.

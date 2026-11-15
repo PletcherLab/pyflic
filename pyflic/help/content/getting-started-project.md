@@ -20,12 +20,11 @@ Only two things are required: a configuration file named `flic_config.yaml`, and
 folder containing your raw CSVs. The folder name is yours to choose — pyflic never reads
 meaning from it.
 
-For an optogenetic recording, copy the `Program.txt` the MCU wrote out into `data/` too.
-pyflic reads both kinds the MCU writes: the PyMCU 4.0.0 export, with a `Paradigms:` block,
-and the older one, with `F:`, `P:` and `D:` on each line. It is optional, but it tells
-pyflic each well's threshold, the linkage and the rule the light followed, which the light
-QC needs to judge the light fully. A recording from DFM firmware 4.0.0 names each Paradigm
-but not its type, so without its `Program.txt` pyflic warns loudly. See
+For an optogenetic recording, copy the `Program.txt` the MCU wrote out into `data/` too. It
+tells pyflic each well's threshold, the linkage and the rule the light followed, which the
+light QC needs to judge the light fully. The data name each Paradigm but not its type, so
+without its `Program.txt` pyflic warns loudly. pyflic also reads the older export, with
+`F:`, `P:` and `D:` on each line. See
 [Optogenetic experiments](concepts-optogenetics.md#programtxt).
 
 Copy the `Messages.csv` PyMCU writes beside the data into `data/` as well. It is optional

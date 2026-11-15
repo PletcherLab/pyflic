@@ -24,7 +24,7 @@ The member is already loaded when a script starts, so `load` reads nothing, and 
 
 | Action | Parameters | What it does |
 |---|---|---|
-| `basic_analysis` | — | The standard pipeline: auto-removal (the `constants:` cutoffs, once) and `removed_chambers.csv`, summary, feeding summary (and, with Facets, the faceted one), summary plot; for an optogenetic experiment the light QC, the light table, the yoked comparison (`yoked_comparison.csv`, a design with a yoked group only) and each firmware 4.0.0 DFM's Program timeline; and the type's own outputs — Hedonic's plot and weighted-duration summary, Progressive Ratio's difference table, light QC tables, breaking point and figures. QC is `run_qc`'s job, and it does not read `global.omit` |
+| `basic_analysis` | — | The standard pipeline: auto-removal (the `constants:` cutoffs, once) and `removed_chambers.csv`, summary, feeding summary (and, with Facets, the faceted one), summary plot; for an optogenetic experiment the light QC, the light table, the yoked comparison (`yoked_comparison.csv`, a design with a yoked group only) and each DFM's Program timeline (not an older recording's); and the type's own outputs — Hedonic's plot and weighted-duration summary, Progressive Ratio's difference table, light QC tables, breaking point and figures. QC is `run_qc`'s job, and it does not read `global.omit` |
 | `run_qc` | — | The Hub's **Run QC**: the QC Set minus `global.omit.qc`, into `qc/` — the integrity report, data breaks, simultaneous feeding and bleeding (two-well), the raw / baselined / cumulative-licks plots, and the optogenetic light QC, its figure and the Program timeline; Progressive Ratio's light QC and its two figures into `analysis/` |
 | `run_analysis` | `binsize` | The Hub's **Run analysis**: the core (auto-removal and `removed_chambers.csv`, `summary.txt`, `feeding_summary.csv` and, with Facets, `feeding_summary_facet.csv`), then the Analysis Set minus `global.omit.analyses`, the experiment report last. `binsize` is the binned summary's and the report's |
 | `feeding_csv` | — | Per-chamber feeding summary to CSV |
@@ -98,8 +98,8 @@ Selection says.
 | `plot_pr_resting_level` | — | Per-DFM paired Sucrose Well resting level over the recording, light onsets as a rug (progressive ratio, QC) |
 | `plot_pr_still_responding` | — | Fraction of paired flies whose breaking point reached each ratio, per treatment; censored flies as ticks (progressive ratio) |
 | `plot_breaking_point` | — | Per-DFM ΔLicks per light-on period since training end, the break marked (progressive ratio) |
-| `plot_opto_light` | `binsize` | Per-DFM lit time per bin, explained and unexplained by trigger-well licks, and the contact with no lick: the emulated firmware trigger's, or on firmware 4.0.0 data the Activations' (any optogenetic experiment, QC) |
-| `plot_program_timeline` | `binsize` | **Program timeline**: per DFM, the Program Intervals coloured by Paradigm type, and per well its Acclimation, its Activations as ticks and the share of each bin its LED was on. Draws each DFM with firmware 4.0.0 data or a `Program.txt` section (any optogenetic experiment; skipped otherwise, QC) |
+| `plot_opto_light` | `binsize` | Per-DFM lit time per bin, explained and unexplained by trigger-well licks, and the contact with no lick: the Activations' (on an older recording, the emulated firmware trigger's) (any optogenetic experiment, QC) |
+| `plot_program_timeline` | `binsize` | **Program timeline**: per DFM, the Program Intervals coloured by Paradigm type, and per well its Acclimation, its Activations as ticks and the share of each bin its LED was on. Draws each DFM with Paradigm data or a `Program.txt` section (any optogenetic experiment; skipped otherwise, QC) |
 
 `plot_program_timeline`'s `binsize` (10 minutes by default) is the width of the light
 strip's bins. See [Program timeline](plots-catalog.md#program-timeline).
