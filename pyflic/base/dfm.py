@@ -13,13 +13,18 @@ from .algorithms.tasting import tasting_bout_durations_and_intervals
 from .algorithms.thresholds import build_thresholds_table
 from .chamber import OneWellChamber, TwoWellChamber, compute_feeding_for_well, compute_tasting_for_well
 from .paradigm_state import (
+    BASELINE_SET_COLUMN,
+    BASELINES_FILE,
     GENERATION_EMPTY,
     GENERATION_FLAG,
     GENERATION_PARADIGM,
     RECORD_MS,
     ParadigmState,
     detect_generation,
+    find_baselines_file,
+    read_baseline_sets,
     split_baseline_columns,
+    split_baseline_set_column,
     split_paradigm_columns,
 )
 from .parameters import Parameters
@@ -325,9 +330,19 @@ def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Seque
     ## ParadigmState, which takes the same rows as raw_df below.
     generation = detect_generation(df)
     df, paradigm_columns = split_paradigm_columns(df)
-    ## The Baseline in force (PyMCU's last 12 columns) comes off too, kept
-    ## row for row as an array, like the Paradigm state.
+    ## The Baseline in force comes off too, kept row for row as an array, like
+    ## the Paradigm state: PyMCU 4.0.1's BaselineSet column and the sets in
+    ## Baselines.csv, or development builds' 12 Baseline columns.
     df, baseline_in_force = split_baseline_columns(df)
+    baseline_notes: tuple[str, ...] = ()
+    if baseline_in_force is None and BASELINE_SET_COLUMN in df.columns:
+        sets_path = find_baselines_file(data_dir)
+        sets = read_baseline_sets(sets_path, int(dfm_id)) if sets_path is not None else None
+        df, baseline_in_force = split_baseline_set_column(df, sets)
+        if sets_path is None:
+            baseline_notes = (f"{BASELINES_FILE} is not in data/: the BaselineSet column "
+                              f"names Baseline sets that file lists, so the baselines in "
+                              f"force are unknown.",)
     df = _ensure_minutes_seconds(df)
     state = None
     if generation == GENERATION_PARADIGM and paradigm_columns is not None:
@@ -338,12 +353,12 @@ def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Seque
     ## copy of each Index, in the data and in the Paradigm state alike.
     repeated = _repeated_index_rows(df)
     n_repeated = int(repeated.sum())
-    notes: tuple[str, ...] = ()
+    notes: tuple[str, ...] = baseline_notes
     if n_repeated:
         blocks = _index_blocks(pd.to_numeric(df["Index"], errors="coerce")
                                .to_numpy(dtype=float)[repeated])
-        notes = (f"{n_repeated} repeated record(s) dropped at load (Index {blocks}): rows a "
-                 f"retried file write wrote again; the first copy of each was kept.",)
+        notes = notes + (f"{n_repeated} repeated record(s) dropped at load (Index {blocks}): rows a "
+                         f"retried file write wrote again; the first copy of each was kept.",)
         df = df[~repeated]
         if state is not None:
             state = state.subset(~repeated)

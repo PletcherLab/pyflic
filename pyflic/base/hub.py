@@ -745,7 +745,7 @@ class AnalysisHubWindow(QMainWindow):
         self.init_member_btn.setToolTip(
             "Adopt a folder already sitting in the Project that has no "
             "flic_config.yaml: any loose recording is filed into data/, with "
-            "its Program.txt and Messages.csv (everything else loose goes "
+            "its Program.txt, Messages.csv and Baselines.csv (everything else loose goes "
             "into extra_files/), the config is "
             "scaffolded from the design, and the config editor opens on it.")
         self.init_member_btn.clicked.connect(self._initialize_member_folder)
@@ -778,7 +778,7 @@ class AnalysisHubWindow(QMainWindow):
                                      Category.TOOLS, "file")
         self.file_btn.setToolTip(
             "Move DFM CSVs sitting loose at a member's root into its data/ "
-            "folder, with Program.txt and Messages.csv (everything else loose "
+            "folder, with Program.txt, Messages.csv and Baselines.csv (everything else loose "
             "goes to extra_files/).  YAML files "
             "and remove_chambers.csv stay where they are, and nothing is "
             "overwritten.")
@@ -1967,7 +1967,7 @@ class AnalysisHubWindow(QMainWindow):
         if member.fix == "file":
             answer = QMessageBox.question(
                 self, "Blocked member",
-                f"{detail}\n\nFile its DFM CSVs, Program.txt and Messages.csv "
+                f"{detail}\n\nFile its DFM CSVs, Program.txt, Messages.csv and Baselines.csv "
                 "into data/ now?  Everything else loose goes to extra_files/; "
                 "YAML files and "
                 "remove_chambers.csv stay where they are.")
@@ -2517,7 +2517,7 @@ class AnalysisHubWindow(QMainWindow):
             return
         confirm = QMessageBox.question(
             self, "File unfiled recordings",
-            f"Move the DFM CSVs, Program.txt and Messages.csv into data/ in "
+            f"Move the DFM CSVs, Program.txt, Messages.csv and Baselines.csv into data/ in "
             f"{len(targets)} member director(ies)?\n\nEvery other loose file "
             "goes to extra_files/.  "
             "YAML files and remove_chambers.csv stay where they are, and "

@@ -706,8 +706,8 @@ interval's threshold. Contact the Emulated Trigger sees and pyflic does not —
 a well the firmware read as touched while the baselined signal was flat — is
 the drifting-baseline signature, and it names the likely cause of
 unexplained light. Approximate when the data begin after the baseline window.
-When the data have PyMCU's Baseline columns, the Baseline in force is read
-from each row instead, and is never approximate.
+When the data name PyMCU's Baseline sets, the Baseline in force is read
+for each row instead, and is never approximate.
 On a Generation-3 recording the firmware's decisions are recorded, so its
 Activations and Firmware Events take this role and nothing is emulated.
 _Avoid_: simulated firmware, firmware replay.
@@ -715,7 +715,8 @@ _Avoid_: simulated firmware, firmware replay.
 **Baseline in force**:
 The baseline PyMCU added to a well's threshold before sending the DFM an
 instruction, so a numeric threshold T meant contact above Baseline + T. PyMCU
-writes it on every row as `Baseline1`–`Baseline12`; with `Baseline: Adaptive`
+names it on every row as `BaselineSet`, a set of 12 listed in the recording's
+`Baselines.csv`; with `Baseline: Adaptive`
 it follows the well's resting level slowly through the recording. With it the
 contact cause splits in two: a well resting 10 or more counts above its
 Baseline in force is a **drifting baseline**; one resting at it, its signal
@@ -804,12 +805,23 @@ One feeding bout as the firmware counts it: contact above the Well's
 threshold, ended once the signal has stayed below it for the Event gap, and
 not started while the Well's own Activation is running; a bout that starts
 during that Activation is not one even if it carries on after it ends. Ratio
-Paradigms count these; Acclimation counts Activations instead. Visible on
-Generation 3 as a rise in Progress. A
+Paradigms with the Events **Counter** count these; Acclimation counts
+Activations instead. Visible on Generation 3 as a rise in Progress, under that
+Counter only. A
 different detector from pyflic's feeding event (licks linked across the link
 gap) on the same signal; they agree in the main and differ at the edges, and
 the difference is a QC measure.
 _Avoid_: event (alone, ambiguous with pyflic's), lick, contact time.
+
+**Counter**:
+What a ratio Paradigm's Requirement and Progress count (PyMCU 4.0.1, DFM
+firmware 4.0.1): milliseconds of **Contact** outside the Well's own
+Activations, added up across bouts (the default, and the rule before firmware
+4.0.0), or **Events** (Firmware Events, as in firmware 4.0.0). `Program.txt`
+writes it on each ratio Paradigm's line; a line without one is from before
+4.0.1 and counted Events. Under Contact there are no Firmware Events to read,
+so pyflic's counts of them are NA.
+_Avoid_: lick-based (the firmware never saw licks).
 
 **Phase** / **Acclimation**:
 Where a Well is in its Paradigm: `A` during **Acclimation**, the firmware's
@@ -817,7 +829,11 @@ opening run of N closed-loop Activations under a FixedInterval or ratio
 Paradigm (each time contact lights the LED is one, even within one Firmware
 Event), and `M` (Main) otherwise. Per Well, recorded on every Generation-3
 row; a Well with an `On` or `Off` threshold, or under a Paradigm without
-Acclimation, reads `M` throughout and says nothing about Training. In a
+Acclimation, reads `M` throughout and says nothing about Training. Such a
+Well keeps its state, so when a later Interval of the same Paradigm makes it a
+trigger Well it starts there the Acclimation the Paradigm's start left it; an
+Acclimation that fits in one record leaves no `A` row, and only
+`Program.txt` says it ran (`ParadigmState.acclimation`). In a
 Progressive Ratio experiment the Paired Sucrose Well's Acclimation **is**
 Training, together with any Program Interval before the ratio Paradigm.
 _Avoid_: training (pyflic's PR-level word for the same span), stage, state.

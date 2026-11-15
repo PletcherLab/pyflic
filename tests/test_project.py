@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -397,9 +398,18 @@ def test_a_project_key_cannot_escape_its_batch(tmp_path: Path):
     by hand."""
     root = tmp_path / "batch"
     _make_project(root, members=("rep1",))
-    for bad in ("../etc", "/etc", "proj/../../etc"):
+    bad_keys = ["../etc", "/etc", "proj/../../etc",
+                "..\\etc", "proj\\..\\..\\etc", "\\etc", "\\\\server\\share"]
+    if os.name == "nt":
+        ## A drive, with or without a root, leaves the Batch on Windows.
+        bad_keys += ["C:\\etc", "D:etc"]
+    for bad in bad_keys:
         with pytest.raises(ValueError):
             batch_mod.project_directory(root, bad)
+    ## A key typed with either separator names the same Project.
+    inside = os.path.join(os.path.abspath(root), "Sept", "ProjB")
+    for good in ("Sept/ProjB", "Sept\\ProjB", "./Sept//ProjB/"):
+        assert batch_mod.project_directory(root, good) == inside
 
 
 def test_new_project_yaml_is_seeded_with_a_batch_script(tmp_path: Path):

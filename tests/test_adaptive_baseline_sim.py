@@ -73,7 +73,7 @@ def test_the_program_says_adaptive(adaptive) -> None:
 def test_the_columns_load_beside_raw_df(adaptive) -> None:
     exp, _, _ = adaptive
     dfm = exp.dfms[1]
-    assert not set(BASELINE_COLUMNS) & set(dfm.raw_df.columns)
+    assert not (set(BASELINE_COLUMNS) | {"BaselineSet"}) & set(dfm.raw_df.columns)
     assert dfm.baseline_in_force.shape == (len(dfm.raw_df), 12)
     ## Interval 0, before the first instruction, has no Baseline.
     assert np.isnan(dfm.baseline_in_force[0]).all()

@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 from pyflic.base import activation_ledger as al
+from pyflic.base import opto_program as op
 from pyflic.base import paradigm_state as ps
 
 from v4_fixtures import (
@@ -26,6 +27,7 @@ from v4_fixtures import (
     family_specs,
     fixed_ratio_spec,
     one_of_each_spec,
+    program_text,
     repeating_open_loop_spec,
     simulate,
     stress_spec,
@@ -70,12 +72,15 @@ def linked_of(linkage) -> dict[int, tuple[int, ...]]:
 @lru_cache(maxsize=None)
 def ledgers(name: str):
     """``(dfm id, SimResult, ParadigmState, ledger)`` for every DFM of a spec,
-    the ledger given the spec's own Linkage."""
+    the ledger given the spec's own Linkage and the state marked with its
+    ``Program.txt``'s Acclimation, as the loader marks it."""
     spec, results = _simulated(name)
+    program = op.parse_program(program_text(spec))
     out = []
     for dfm in spec.dfms:
         r = results[dfm.dfm_id]
         state = state_of(r.rows)
+        state.mark_acclimation(program.acclimation_rows(dfm.dfm_id, state))
         out.append((dfm.dfm_id, r, state, al.ledger(state, linked=linked_of(dfm.linkage))))
     return out
 
@@ -146,10 +151,10 @@ def compare_with_truth(r, book, boundaries=ALL_BOUNDARIES) -> dict[str, list]:
 
 #: Activations timed exactly on each spec, at the default length and seed:
 #: a change to the simulator or the rules shows here.
-TIMED = {"choice_pr": 305, "fixed_ratio": 159, "one_of_each": 1973, "yoked_controls": 363,
+TIMED = {"choice_pr": 308, "fixed_ratio": 159, "one_of_each": 1973, "yoked_controls": 363,
          "repeating_open_loop": 0, "family_closed_max": 570, "family_fixed_interval": 784,
          "family_non_feeding": 1043, "family_exponential": 96, "family_restart": 696,
-         "stress": 1975}
+         "stress": 1983}
 
 
 @pytest.mark.parametrize("name", EXACT_SPECS)
@@ -194,7 +199,7 @@ def test_the_ledger_is_the_truths_on_the_stress_spec() -> None:
                 ambiguous_runs.add((dfm_id, well, run_of(row)))
         for well, row in differ["RequirementMet"]:
             assert row in first_rows or row - 1 in first_rows, (dfm_id, well, row)
-    assert timed == TIMED["stress"] and checked > 6000
+    assert timed == TIMED["stress"] and checked > 5500
     assert 0 < len(ambiguous_runs) <= 10
 
 
@@ -389,6 +394,55 @@ def test_k_and_since_last_onset_count_within_a_state_run() -> None:
     assert [_value(k) for k in book["K"]] == [None, None, None, 1, 2]
     assert [_value(v) for v in book["SinceLastOnsetMs"]] == [None, 400, None, 400, 400]
     assert book["Paradigm"].tolist() == ["P", "P", "Q", "Q", "Q"]
+
+
+def _well_one_acclimation(n: int, rows: slice, count: int) -> np.ndarray:
+    """``ParadigmState.mark_acclimation``'s array: Well 1 runs a Paradigm
+    with Acclimation *count* in *rows*."""
+    out = np.zeros((n, 12), dtype=np.int64)
+    out[rows, 0] = count
+    return out
+
+
+def test_a_well_set_on_starts_its_acclimation_where_it_first_runs() -> None:
+    """A Well set On for an Interval runs no Paradigm, and the next Interval
+    of the same Paradigm keeps state, so the Acclimation the run's reset left
+    it starts where it first runs: two Acclimation Activations shorter than a
+    record can start and end in that row, which reads M (stress_spec's DFM 2
+    Well 10 under PyMCU 4.0.1's Starting baseline).  The rows cannot say so;
+    Program.txt's Acclimation, marked on the state, can."""
+    n = 8
+    state = synthetic(n, on={1: [0, 0, 0, 0, 120, 0, 50, 0]}, onsets={1: [4, 4, 6]},
+                      interval=[1] * 4 + [2] * 4, requirement={1: [None] * 4 + [2, 2, 3, 3]})
+    assert al.ledger(state)["Phase"].tolist() == ["M", "M", "M"]
+    state.mark_acclimation(_well_one_acclimation(n, slice(4, n), 2))
+    book = al.ledger(state)
+    assert book["Phase"].tolist() == ["A", "A", "M"]
+    assert [_value(k) for k in book["K"]] == [None, None, 1]
+
+
+def test_only_a_clipped_first_run_hides_where_a_well_first_ran() -> None:
+    """A range that starts mid-run cannot show the run's reset, so its first
+    run keeps the rows' Phase; the next run, Q from row 2, is whole, and the
+    Acclimation marked carries into the range's state."""
+    n = 8
+    state = synthetic(n, on={1: [0, 0, 0, 0, 120, 0, 50, 0]}, onsets={1: [4, 4, 6]},
+                      paradigm=["P"] * 2 + ["Q"] * 6, interval=[1] * 4 + [2] * 4,
+                      requirement={1: [None] * 4 + [2, 2, 3, 3]})
+    state.mark_acclimation(_well_one_acclimation(n, slice(4, n), 2))
+    assert al.ledger(state.subset(np.arange(1, n)))["Phase"].tolist() == ["A", "A", "M"]
+    assert al.ledger(state.subset(np.arange(3, n)))["Phase"].tolist() == ["M", "M", "M"]
+
+
+def test_a_well_back_from_on_leaves_acclimation_against_its_last_running_row() -> None:
+    """A Well in Acclimation set On for an Interval keeps its state; back
+    under the ratio Paradigm it can leave Acclimation in its first row, which
+    reads M.  That row is compared with the Well's last row under the
+    Paradigm (row 2), not the On row before it, which shows no Requirement."""
+    state = synthetic(8, on={1: [0, 0, 0, 0, 0, 60, 0, 0]}, onsets={1: [5]},
+                      phase={1: "MAAMMMMM"}, interval=[1, 1, 1, 2, 2, 3, 3, 3],
+                      requirement={1: [None, 2, 2, None, None, 2, 2, 2]})
+    assert al.ledger(state)["Phase"].tolist() == ["A"]
 
 
 def test_a_two_activation_leaving_row_has_its_last_main() -> None:

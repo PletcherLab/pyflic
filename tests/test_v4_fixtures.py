@@ -463,7 +463,7 @@ def test_the_full_length_choice_spec_is_pymcus_example() -> None:
         "\n"
         "Paradigms:\n"
         "Closed (ClosedLoop): Frequency 40 Hz, PulseWidth 8 ms, HoldMs 500 ms, MaxOnMs 2500 ms, EventGapMs 100 ms\n"
-        "PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Series Arithmetic, "
+        "PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Counter Events, Series Arithmetic, "
         "FirstRequirement 1, Step 10, Cap 200, EventGapMs 100 ms, Acclimation 10\n"
         "\n"
         "***DFM 5***\n"
@@ -481,7 +481,8 @@ def test_the_full_length_choice_spec_is_pymcus_example() -> None:
 def test_program_text_matches_the_guides_export_example() -> None:
     # The export example of the retired docs/dfm-firmware-4-data-guide.md (section
     # 7.1; kept as tests/fixtures/Program_v4.txt), without its Env Mon block, and
-    # with each interval's Paradigm before Dark or Lit as PyMCU now writes it.
+    # with each interval's Paradigm before Dark or Lit and the ratio Paradigm's
+    # Counter, as PyMCU now writes them.
     closed = ParadigmSpec("Closed", "ClosedLoop", hold_ms=500)
     legacy = replace(closed, name="ClosedLoop-40Hz-8ms-Hold500-MaxOn0")
     choice: tuple[int | str, ...] = (20, OFF) * 6
@@ -499,7 +500,7 @@ Baseline: Yes
 
 Paradigms:
 Closed (ClosedLoop): Frequency 40 Hz, PulseWidth 8 ms, HoldMs 500 ms, MaxOnMs 0 ms, EventGapMs 100 ms
-PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Series Arithmetic, FirstRequirement 1, Step 10, Cap 200, EventGapMs 100 ms, Acclimation 10
+PR10 (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Counter Events, Series Arithmetic, FirstRequirement 1, Step 10, Cap 200, EventGapMs 100 ms, Acclimation 10
 ClosedLoop-40Hz-8ms-Hold500-MaxOn0 (ClosedLoop): Frequency 40 Hz, PulseWidth 8 ms, HoldMs 500 ms, MaxOnMs 0 ms, EventGapMs 100 ms
 Idle (ClosedLoop): Frequency 40 Hz, PulseWidth 8 ms, HoldMs 0 ms, MaxOnMs 0 ms, EventGapMs 100 ms
 
@@ -527,7 +528,7 @@ def test_program_text_lists_series_settings_and_omits_intervals_past_the_end() -
                         rate=0.25, cap=300, acclimation=2)
     spec = _spec([_iv("Expo", 1.5), _iv("Expo", 0.5), _iv("Expo", 2.0)], [expo], {}, minutes=2.0)
     text = program_text(spec)
-    assert ("Expo (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Series Exponential, "
+    assert ("Expo (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms, ActivationMs 500 ms, Counter Events, Series Exponential, "
             "Scale 2.5, Rate 0.25, Cap 300, EventGapMs 100 ms, Acclimation 2\n") in text
     assert text.endswith("(10/16/2026 12:00:00) Expo, Dark, 20,Off,Off,Off,Off,Off,Off,Off,Off,Off,Off,Off, 1.5 min\n"
                          "(10/16/2026 12:01:30) Expo, Dark, 20,Off,Off,Off,Off,Off,Off,Off,Off,Off,Off,Off, 0.5 min\n")
@@ -957,11 +958,14 @@ def _program_file(spec: RecordingSpec) -> str:
                     "FixedInterval": [("ActivationMs", p.activation_ms), ("LockoutMs", p.lockout_ms),
                                       ("EventGapMs", p.event_gap_ms), ("Acclimation", p.acclimation)],
                     "NonFeeding": [("OnDelayMs", p.on_delay_ms), ("MaxOnMs", p.max_on_ms)],
-                    "ProgressiveRatio": [("ActivationMs", p.activation_ms), ("Series", p.series)]
+                    ## The fixtures simulate Event counting, which PyMCU 4.0.1 runs
+                    ## only when the Paradigm says so (Contact is its default).
+                    "ProgressiveRatio": [("ActivationMs", p.activation_ms), ("Counter", "Events"),
+                                         ("Series", p.series)]
                     + ([("Scale", p.scale), ("Rate", p.rate)] if p.series == "Exponential"
                        else [("FirstRequirement", p.first_requirement), ("Step", p.step)])
                     + [("Cap", p.cap), ("EventGapMs", p.event_gap_ms), ("Acclimation", p.acclimation)],
-                    "FixedRatio": [("ActivationMs", p.activation_ms), ("Ratio", p.ratio),
+                    "FixedRatio": [("ActivationMs", p.activation_ms), ("Counter", "Events"), ("Ratio", p.ratio),
                                    ("EventGapMs", p.event_gap_ms), ("Acclimation", p.acclimation)],
                     "OpenLoop": []}[p.type]
         lines += [f"[Paradigm {name}]", f"Type: {p.type}", f"Frequency: {p.frequency}",
@@ -1014,13 +1018,16 @@ for r in data["rows"]:
     sp.isBeforeProgram = r["before"]
     line = sp.GetDataBufferPrintPacket()
     # The fixtures are 90-column files, as PyMCU 4.0.0 wrote before its Baseline
-    # columns; a PyMCU that writes them adds 12 more, NA for a record with no
-    # Baseline set, which are checked and left off (test_adaptive_baseline_sim.py
-    # checks the columns themselves against PyMCU's simulator).
-    if hasattr(StatusPacket, "BASELINE_COLUMNS"):
-        line, extra = line.rstrip("\\n").rsplit(",", 12)[0], line.rstrip("\\n").split(",")[-12:]
-        assert extra == ["NA"] * 12, extra
-        line += "\\n"
+    # columns. A PyMCU that writes them adds BaselineSet (4.0.1), or 12
+    # Baseline columns (development builds), NA for a record with no Baseline
+    # set; they are checked and left off (test_adaptive_baseline_sim.py checks
+    # the Baselines themselves against PyMCU's simulator).
+    extra_fields = (1 if hasattr(StatusPacket, "BASELINE_SET_COLUMN")
+                    else 12 if hasattr(StatusPacket, "BASELINE_COLUMNS") else 0)
+    if extra_fields:
+        fields = line.rstrip("\\n").split(",")
+        assert fields[-extra_fields:] == ["NA"] * extra_fields, fields[-extra_fields:]
+        line = ",".join(fields[:-extra_fields]) + "\\n"
     out.append(line)
 messages = MessagesList.MessageList()
 messages.AddMessage(Message.Message(0, start, 0, "Recording started", Enums.MESSAGETYPE.ANNOTATION, -99))

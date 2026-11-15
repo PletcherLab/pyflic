@@ -13,10 +13,13 @@ file carries, and whether they hold anything, is its **Generation**
   there is no Training information at all;
 * generation 3 (:data:`GENERATION_PARADIGM`): 90 columns, filled.
 
-PyMCU 4.0.0 releases add 12 more, ``Baseline1``-``Baseline12`` (102 columns):
-the Baseline in force behind each record's thresholds, which PyMCU writes for
-every firmware.  They don't change the Generation; :func:`split_baseline_columns`
-takes them off the frame too, and the DFM keeps them as ``baseline_in_force``.
+PyMCU 4.0.1 adds one more, ``BaselineSet`` (91 columns): the Baseline set
+behind each record's thresholds, a row of the recording's ``Baselines.csv``,
+which PyMCU writes for every firmware (development builds of 1-15 November
+2026 wrote the 12 Baselines on every row instead, 102 columns).  Neither
+changes the Generation; :func:`split_baseline_set_column` and
+:func:`split_baseline_columns` take them off the frame too, and the DFM keeps
+the Baselines as ``baseline_in_force``.
 
 :func:`split_paradigm_columns` takes the 63 columns off the frame the rest of
 pyflic works on, and :class:`ParadigmState` holds them for generation 3 as
@@ -64,8 +67,8 @@ GENERATION_FLAG, GENERATION_EMPTY, GENERATION_PARADIGM = 1, 2, 3
 #: What each Generation is, in the words ``summary.txt`` uses.
 GENERATION_DESCRIPTIONS: dict[int, str] = {
     GENERATION_FLAG: "27 columns, training flag in the signal",
-    GENERATION_EMPTY: "90 or 102 columns, paradigm columns empty: DFM firmware older than 4.0.0",
-    GENERATION_PARADIGM: "90 or 102 columns, firmware 4.0.0 paradigm state",
+    GENERATION_EMPTY: "90 to 102 columns, paradigm columns empty: DFM firmware older than 4.0.0",
+    GENERATION_PARADIGM: "90 to 102 columns, firmware 4.0.0 paradigm state",
 }
 
 #: What pyflic says of a generation-2 DFM wherever its Training would show
@@ -83,10 +86,15 @@ PARADIGM_COLUMNS: tuple[str, ...] = (
     "Interval", "Cycle", "Paradigm",
     *(f"{name}{w}" for name in _PER_WELL for w in range(1, N_WELLS + 1)))
 
-#: PyMCU's ``StatusPacket.BASELINE_COLUMNS``, after the Paradigm columns: the
-#: Baseline in force (``PyMCU/docs/DataFileColumns.md``), ``NA`` in Interval 0,
-#: outside the Program and with ``Baseline: No``.
+#: The Baseline in force, after the Paradigm columns (``PyMCU/docs/DataFileColumns.md``):
+#: PyMCU 4.0.1 writes one column, ``BaselineSet``, the number of a set in the
+#: recording's ``Baselines.csv`` (one row per DFM and set: ``DFM, Set, Date,
+#: Time, Reason, Baseline1``-``Baseline12``); development builds of
+#: 1-15 November 2026 wrote the 12 values on every row as ``Baseline1``-``12``.
+#: ``NA`` in Interval 0, outside the Program and with ``Baseline: No``.
 BASELINE_COLUMNS: tuple[str, ...] = tuple(f"Baseline{w}" for w in range(1, N_WELLS + 1))
+BASELINE_SET_COLUMN = "BaselineSet"
+BASELINES_FILE = "Baselines.csv"
 
 #: PyMCU's own Paradigm: ClosedLoop with every Well Off, the Paradigm of a
 #: program whose Intervals name none (the simple export) and of the DFM after
@@ -150,6 +158,54 @@ def split_baseline_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray |
         return df, None
     values = np.column_stack([_numbers(df, c, len(df)) for c in BASELINE_COLUMNS])
     return df.drop(columns=present), values
+
+
+def find_baselines_file(data_dir) -> "Path | None":
+    """The recording's ``Baselines.csv`` in *data_dir*, matched ignoring case,
+    or ``None``."""
+    from pathlib import Path
+
+    folder = Path(data_dir)
+    exact = folder / BASELINES_FILE
+    if exact.is_file():
+        return exact
+    if folder.is_dir():
+        for f in folder.iterdir():
+            if f.name.lower() == BASELINES_FILE.lower() and f.is_file():
+                return f
+    return None
+
+
+def read_baseline_sets(path, dfm_id: int) -> dict[int, np.ndarray]:
+    """``{set: (12,) float}`` for DFM *dfm_id* from a ``Baselines.csv``."""
+    frame = pd.read_csv(path)
+    out: dict[int, np.ndarray] = {}
+    if frame.empty or "DFM" not in frame.columns or "Set" not in frame.columns:
+        return out
+    rows = frame[pd.to_numeric(frame["DFM"], errors="coerce") == int(dfm_id)]
+    for _, row in rows.iterrows():
+        out[int(row["Set"])] = np.array([pd.to_numeric(row.get(c), errors="coerce")
+                                         for c in BASELINE_COLUMNS], dtype=float)
+    return out
+
+
+def split_baseline_set_column(df: pd.DataFrame, sets: dict[int, np.ndarray] | None
+                              ) -> tuple[pd.DataFrame, np.ndarray | None]:
+    """``(the frame without BaselineSet, the Baseline in force)``: each row's
+    set looked up in *sets* (:func:`read_baseline_sets`), ``(n, 12)`` float,
+    NaN where the column is ``NA`` or names a set *sets* lacks.  The second
+    item is ``None`` without the column, or when *sets* is ``None`` (no
+    ``Baselines.csv``: the sets are unknown)."""
+    if BASELINE_SET_COLUMN not in df.columns:
+        return df, None
+    rest = df.drop(columns=[BASELINE_SET_COLUMN])
+    if sets is None:
+        return rest, None
+    numbers = _numbers(df, BASELINE_SET_COLUMN, len(df))
+    values = np.full((len(df), N_WELLS), np.nan)
+    for number, baselines in sets.items():
+        values[numbers == number] = baselines
+    return rest, values
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +278,7 @@ class ParadigmState:
 
     __slots__ = ("minutes", "index", "program_interval", "cycle", "paradigm", "phase_a",
                  "activations", "requirement", "progress", "on_ms", "activations_before",
-                 "on_ms_before", "_cache")
+                 "on_ms_before", "contact", "acclimation", "_cache")
 
     def __init__(self, *, minutes: np.ndarray, index: np.ndarray,
                  program_interval: pd.arrays.IntegerArray, cycle: pd.arrays.IntegerArray,
@@ -247,6 +303,19 @@ class ParadigmState:
         #: that starts with the recording, whose row 0 has no row before.
         self.activations_before = activations_before
         self.on_ms_before = on_ms_before
+        #: (n,) bool: rows under a ratio Paradigm whose Counter is Contact
+        #: (PyMCU 4.0.1's default), where ``Requirement`` and ``Progress``
+        #: are ms of contact, not Events.  The rows don't say; ``Program.txt``
+        #: does, so :meth:`mark_contact` sets it once the program is read.
+        self.contact = np.zeros(self.minutes.size, dtype=bool)
+        #: (n, 12) int64: the Acclimation of the Paradigm each Well runs at
+        #: each row (a level threshold in the row's Program Interval), 0
+        #: where it runs none or one without Acclimation.  The rows show
+        #: neither (Phase reads ``M`` for a Well set On or Off), so
+        #: :meth:`mark_acclimation` sets it once the program is read; the
+        #: Activation ledger reads it where an Acclimation can start and end
+        #: unseen inside a Well's first row of a state run.
+        self.acclimation = np.zeros((self.minutes.size, N_WELLS), dtype=np.int64)
         #: Per-well arrays built on first use (the running total of Firmware
         #: Events, which rows credit a Requirement): a Light Event Ledger asks
         #: one question per Activation, and each answer is a full pass.
@@ -314,13 +383,47 @@ class ParadigmState:
         if picked.size and int(picked[0]) > 0:
             before_acts = self.activations[int(picked[0]) - 1].copy()
             before_on = self.on_ms[int(picked[0]) - 1].copy()
-        return ParadigmState(
+        out = ParadigmState(
             minutes=self.minutes[rows], index=self.index[rows],
             program_interval=self.program_interval[rows], cycle=self.cycle[rows],
             paradigm=self.paradigm[rows], phase_a=self.phase_a[rows],
             activations=self.activations[rows], requirement=self.requirement[rows],
             progress=self.progress[rows], on_ms=self.on_ms[rows],
             activations_before=before_acts, on_ms_before=before_on)
+        out.contact = self.contact[rows].copy()
+        out.acclimation = self.acclimation[rows].copy()
+        return out
+
+    def mark_contact(self, names) -> None:
+        """Marks the rows whose Paradigm (*names*, compared ignoring case) is
+        a ratio Paradigm counting Contact, as ``Program.txt`` says (the
+        ``OptoProgram.contact_paradigms`` set).  Their ``Progress`` rises
+        every 10 ms of contact, so they hold no Firmware Events."""
+        wanted = {str(n).lower() for n in names}
+        if not wanted or not len(self):
+            return
+        lowered = pd.Series(self.paradigm).str.lower()
+        self.contact = lowered.isin(wanted).to_numpy(dtype=bool, na_value=False)
+        self._cache.clear()
+
+    def mark_acclimation(self, counts: np.ndarray) -> None:
+        """Sets :attr:`acclimation` to *counts*, (n, 12): per row and Well
+        the Acclimation of the Paradigm the Well runs there, as
+        ``Program.txt`` says (``OptoProgram.acclimation_rows``)."""
+        counts = np.asarray(counts, dtype=np.int64)
+        if counts.shape != (len(self), N_WELLS):
+            raise ValueError(f"acclimation counts are {counts.shape}, "
+                             f"the state is {(len(self), N_WELLS)}")
+        self.acclimation = counts.copy()
+        self._cache.clear()
+
+    def counts_contact(self, i0: int | None = None, i1: int | None = None) -> bool:
+        """Whether any row of ``[i0, i1)`` (the whole state by default) is
+        under a Paradigm counting Contact."""
+        if i0 is None and i1 is None:
+            return bool(self.contact.any())
+        a, b = self._window(0 if i0 is None else i0, len(self) if i1 is None else i1)
+        return bool(self.contact[a:b].any())
 
     def __len__(self) -> int:
         return int(self.minutes.size)
@@ -574,11 +677,14 @@ class ParadigmState:
         """Row indices where *well*'s ``Progress`` rose (``NA`` read as 0):
         rows in which at least one Firmware Event started under a ratio
         Paradigm without completing a Requirement.  A row may hold more than
-        one Event; :meth:`firmware_events_between` counts them."""
+        one Event; :meth:`firmware_events_between` counts them.  Rows under
+        a Paradigm counting Contact (:attr:`contact`) are left out: there
+        ``Progress`` rises with every 10 ms of contact."""
         p = np.nan_to_num(self.progress[:, self._column(well)], nan=0.0)
         if not p.size:
             return np.zeros(0, dtype=np.int64)
-        return np.flatnonzero(np.diff(p, prepend=p[:1]) > 0)
+        rises = np.diff(p, prepend=p[:1]) > 0
+        return np.flatnonzero(rises & ~self.contact)
 
     def _main_activation_steps(self, w: int) -> np.ndarray:
         """Main-phase ratio Activations counted in each row: every
@@ -593,10 +699,12 @@ class ParadigmState:
             main[leaving] = np.minimum(main[leaving], 1)
         return main
 
-    def firmware_events_between(self, well: int, i0: int, i1: int) -> int:
+    def firmware_events_between(self, well: int, i0: int, i1: int) -> int | float:
         """Firmware Events *well* produced under a ratio Paradigm in Phase
         ``M`` in rows ``[i0, i1)``: the Requirements met by the Activations
         counted there, plus the change in ``Progress`` across the window.
+        NaN when any of those rows is under a Paradigm counting Contact
+        (:attr:`contact`), whose Requirement and Progress are ms of contact.
 
         Exact on the simulator's truth, with these edges:
 
@@ -624,6 +732,10 @@ class ParadigmState:
         a, b = self._window(i0, i1)
         if a >= b:
             return 0
+        ## Under a Paradigm counting Contact, Progress is ms of contact: the
+        ## Events made there are unknown, so the count is too.
+        if self.contact[a:b].any():
+            return float("nan")
         key = ("events", w)
         total = self._cache.get(key)
         if total is None:

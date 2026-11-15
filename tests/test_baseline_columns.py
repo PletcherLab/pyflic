@@ -18,7 +18,9 @@ import pandas as pd
 
 from pyflic.base import opto_program as op
 from pyflic.base import opto_qc as oq
-from pyflic.base.paradigm_state import BASELINE_COLUMNS, split_baseline_columns
+from pyflic.base.paradigm_state import (BASELINE_COLUMNS, BASELINES_FILE, find_baselines_file,
+                                        read_baseline_sets, split_baseline_columns,
+                                        split_baseline_set_column)
 
 V4 = Path(__file__).parent / "fixtures" / "Program_v4.txt"
 
@@ -47,6 +49,31 @@ def test_a_file_without_them_has_none() -> None:
     frame = pd.DataFrame({"W1": [5], "OnMs12": [0]})
     rest, recorded = split_baseline_columns(frame)
     assert recorded is None and rest is frame
+
+
+BASELINES = "\n".join((
+    "DFM,Set,Date,Time,Reason," + ",".join(BASELINE_COLUMNS),
+    "4,1,11/15/2026,10:00:00,Start," + ",".join(["10"] * 12),
+    "4,2,11/15/2026,10:40:00,Update," + ",".join(["20"] + ["10"] * 11),
+    "5,1,11/15/2026,10:00:00,Start," + ",".join(["7"] * 12))) + "\n"
+
+
+def test_the_baseline_set_column_reads_baselines_csv(tmp_path) -> None:
+    ## PyMCU 4.0.1: one BaselineSet column, and the sets in Baselines.csv.
+    (tmp_path / BASELINES_FILE.lower()).write_text(BASELINES)
+    path = find_baselines_file(tmp_path)
+    assert path is not None and path.name.lower() == BASELINES_FILE.lower()
+    sets = read_baseline_sets(path, 4)
+    assert sorted(sets) == [1, 2] and sets[2][0] == 20 and sets[2][1] == 10
+    frame = pd.DataFrame({"W1": [5, 6, 7, 8], "BaselineSet": [np.nan, 1, 2, 9]})
+    rest, recorded = split_baseline_set_column(frame, sets)
+    assert list(rest.columns) == ["W1"]
+    assert np.isnan(recorded[0]).all() and np.isnan(recorded[3]).all()   # NA, and a set not listed
+    assert recorded[1, 0] == 10 and recorded[2, 0] == 20
+    ## Without Baselines.csv the sets are unknown.
+    rest, recorded = split_baseline_set_column(frame, None)
+    assert recorded is None and "BaselineSet" not in rest.columns
+    assert find_baselines_file(tmp_path / "missing") is None
 
 
 # ---------------------------------------------------------------------------

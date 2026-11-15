@@ -35,13 +35,22 @@ table; nothing downstream re-reads the rows.  The columns are
   among the Well's Phase-``M`` Activations of its state run (``NA`` in
   ``A``).  Under a ratio Paradigm the k-th Main Activation meets
   ``requirement_for(k)``.  A restart starts a new run, so ``K`` starts over
-  after one, as the firmware's Requirement series does.  Two edges, where a
+  after one, as the firmware's Requirement series does.  Three edges, where a
   record holds two states:
 
   - the row where a Well leaves Acclimation under a ratio Paradigm reads
     ``M``, but its Activations are Acclimation ones unless the Requirement
     advanced there (only a Main Activation advances it), and then only the
-    row's last is Main, as ``ParadigmState.requirement_met`` reads that row;
+    row's last is Main, as ``ParadigmState.requirement_met`` reads that row.
+    It is compared with the Well's last row under the Paradigm in its state
+    run, which is the row before unless the Well was set On or Off between;
+  - a Well's first row under a Paradigm with Acclimation in a state run
+    (the run's first row, or a later Interval's for a Well set On or Off
+    until then: the same Paradigm sent again keeps state) can hold the
+    whole Acclimation and read ``M``.  The rows cannot say so;
+    ``ParadigmState.acclimation``, marked from ``Program.txt`` by the
+    loader, makes the row's first N Activations Phase ``A``.  Without it
+    they read ``M``;
   - the first row of a state run shows the new Paradigm, but an
     instruction that arrives within a record leaves the record's start to
     the old one, so an Activation counted there may be the old run's.  The
@@ -125,6 +134,35 @@ def _cumulative(mask: np.ndarray) -> np.ndarray:
 
 def _nullable_at(values: pd.arrays.IntegerArray, rows: np.ndarray) -> np.ndarray:
     return values[rows].to_numpy(dtype=float, na_value=np.nan)
+
+
+def _unseen_at_first_row(state: ParadigmState, c: int, rows: np.ndarray,
+                         run_of_row: np.ndarray) -> np.ndarray:
+    """Per onset of Well ``c + 1`` (onset rows *rows*, in order): one of the
+    first N Activations counted on the Well's first row under a Paradigm with
+    Acclimation N in a state run, where that row reads ``M``.
+
+    The run's start reset every Well into Acclimation, and a Well set On or
+    Off runs no Paradigm, so it keeps that state until its first row under
+    one, which is the run's first row or a later Interval's (the same
+    Paradigm sent again keeps state).  An Acclimation shorter than a record
+    can start and end in that row, and the row before has no Acclimation to
+    compare with.  The rows cannot say where a Well first ran, or N;
+    ``ParadigmState.acclimation`` can, from ``Program.txt``, and is 0
+    without it.  A range that clipped the first run's start leaves it out:
+    its reset is not in the rows."""
+    out = np.zeros(rows.size, dtype=bool)
+    counts = state.acclimation[:, c]
+    runs = np.flatnonzero(counts > 0)
+    if not runs.size or not rows.size:
+        return out
+    _ids, first = np.unique(run_of_row[runs], return_index=True)
+    starts = runs[first]
+    if state.activations_before is not None:
+        starts = starts[run_of_row[starts] > 0]
+    starts = starts[~state.phase_a[starts, c]]
+    rank = np.arange(rows.size) - np.searchsorted(rows, rows, side="left")
+    return np.isin(rows, starts) & (rank < counts[rows])
 
 
 def ledger(state: ParadigmState, *, wells: Iterable[int] | None = None,
@@ -267,16 +305,22 @@ def ledger(state: ParadigmState, *, wells: Iterable[int] | None = None,
         ## it.  Under a ratio Paradigm only a Main Activation advances the
         ## Requirement, so there, as in requirement_met, the row's
         ## Activations are Acclimation ones unless the Requirement advanced,
-        ## and then its last one is Main.
+        ## and then its last one is Main.  The row it is compared with is
+        ## the well's last one under the ratio Paradigm in its state run: a
+        ## well set On or Off for an Interval keeps its state, and those rows
+        ## show no Requirement.
         req = state.requirement[:, c]
-        left = np.zeros(n, dtype=bool)
-        left[1:] = (state.phase_a[:-1, c] & ~state.phase_a[1:, c]
-                    & ~np.isnan(req[:-1]) & ~np.isnan(req[1:]))
-        left[run_starts] = False
-        advanced = np.zeros(n, dtype=bool)
-        advanced[1:] = req[1:] != req[:-1]
+        known = ~np.isnan(req)
+        before = np.full(n, -1, dtype=np.int64)
+        if n > 1:
+            before[1:] = np.maximum.accumulate(np.where(known, np.arange(n), -1))[:-1]
+        before[before < run_starts[run_of_row]] = -1
+        prior = np.maximum(before, 0)
+        left = (before >= 0) & known & state.phase_a[prior, c] & ~state.phase_a[:, c]
+        advanced = req != req[prior]
         last_in_row = following != rows
         in_a |= left[rows] & ~(advanced[rows] & last_in_row)
+        in_a |= _unseen_at_first_row(state, c, rows, run_of_row)
         k = pd.Series((~in_a).astype(np.int64)).groupby(run).cumsum().to_numpy(dtype=float)
         k[in_a] = np.nan
 

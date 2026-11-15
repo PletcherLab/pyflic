@@ -337,10 +337,16 @@ def project_directory(root, key) -> str:
 
     A key comes from the walk today, but this is the public key→directory
     resolver and the Exclusion Sheet's project column is hand-typed, so an
-    escaping key is refused rather than resolved.
+    escaping key is refused rather than resolved: a ``..`` part, a leading
+    separator or a drive, with ``/`` or ``\\`` alike.  Splitting on ``/``
+    alone let a Windows-typed ``..\\etc`` through, and Python 3.13 on Windows
+    no longer calls ``/etc`` absolute.
     """
-    parts = [part for part in str(key).split("/") if part not in ("", ".")]
-    if any(part == ".." for part in parts) or os.path.isabs(str(key)):
+    text = str(key).strip()
+    rooted = (text.startswith(("/", "\\")) or os.path.isabs(text)
+              or bool(os.path.splitdrive(text)[0]))
+    parts = [part for part in normalize_key(text).split("/") if part]
+    if rooted or ".." in parts:
         raise ValueError(f"{key!r} is not a project of this batch")
     return os.path.join(os.path.abspath(str(root)), *parts)
 
@@ -497,6 +503,15 @@ def normalize_key(value) -> str:
     return "/".join(parts)
 
 
+def _fold_key(value) -> str:
+    """A Project key as this filesystem compares it: :func:`normalize_key`,
+    then ``os.path.normcase`` (case folded on Windows) with ``/`` kept as the
+    separator.  ``normcase`` alone turns ``/`` into ``\\`` on Windows, so a
+    row's ``proja\\rep1`` never started with ``proja/`` and every row of a
+    running Project was scoped out."""
+    return os.path.normcase(normalize_key(value)).replace("\\", "/")
+
+
 #: Historical spelling kept for callers written against the sibling app's API.
 normalize_member_key = normalize_key
 
@@ -524,13 +539,12 @@ def row_project_key(row, keys) -> str:
     was not running, so the row's full path is matched against the longest
     Project key that prefixes it.
     """
-    whole = normalize_key(
+    folded = _fold_key(
         "/".join(part for part in (getattr(row, "project", ""),
                                    getattr(row, "member", "")) if part))
-    folded = os.path.normcase(whole)
     best = ""
     for key in keys:
-        candidate = os.path.normcase(normalize_key(key))
+        candidate = _fold_key(key)
         if (folded == candidate or folded.startswith(candidate + "/")) \
                 and len(candidate) > len(best):
             best = candidate
@@ -547,10 +561,10 @@ def scope_sheet_rows(rows, projects) -> tuple[list, list]:
     """
     if projects is None:
         return list(rows), []
-    ## normcase, because on Windows and macOS 'sept2026/proja' opens the same
-    ## directory as 'Sept2026/ProjA': scoping a row out on the very filesystem
-    ## where its path resolves would silently drop a declaration.
-    wanted = {os.path.normcase(normalize_key(p)) for p in projects}
+    ## Folded, because on Windows 'sept2026/proja' opens the same directory as
+    ## 'Sept2026/ProjA': scoping a row out on the very filesystem where its
+    ## path resolves would silently drop a declaration.
+    wanted = {_fold_key(p) for p in projects}
     keep, skip = [], []
     for row in rows:
         ## Matched on the row's whole path, not its project cell: the two
@@ -654,11 +668,9 @@ def run_batch(batch_dir, script_name: str | None = None,
     if project_names is None:
         targets = [item.key for item in projects]
     else:
-        wanted = {os.path.normcase(normalize_key(n)) for n in project_names}
-        targets = [item.key for item in projects
-                   if os.path.normcase(normalize_key(item.key)) in wanted]
-        for missing in sorted(wanted - {os.path.normcase(normalize_key(k))
-                                        for k in by_key}):
+        wanted = {_fold_key(n) for n in project_names}
+        targets = [item.key for item in projects if _fold_key(item.key) in wanted]
+        for missing in sorted(wanted - {_fold_key(k) for k in by_key}):
             ## An API caller's stale key must not vanish silently — the Hub
             ## table only offers real Projects, so this is for scripts.
             log(f"[{missing}] not a Project in this Batch — ignored")

@@ -34,9 +34,9 @@ _CACHE_DIR_NAME = ".pyflic_cache"
 _CACHE_VERSION = "4"
 
 #: Files beside the DFM CSVs that change what an analysis reports: the Opto
-#: Program and PyMCU's message log.  Matched case-insensitively, as
-#: ``opto_program.find_program`` finds the program.
-_SIDECAR_NAMES = ("program.txt", "messages.csv")
+#: Program, PyMCU's message log and its Baseline sets.  Matched
+#: case-insensitively, as ``opto_program.find_program`` finds the program.
+_SIDECAR_NAMES = ("program.txt", "messages.csv", "baselines.csv")
 
 
 def _hash_bytes(b: bytes) -> str:

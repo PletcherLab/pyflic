@@ -58,11 +58,12 @@ _DFM_RE_STRICT = re.compile(r"^DFM_?(\d+)(_\d+)?\.csv$")
 KEEP_SUFFIXES = (".yaml", ".yml")
 
 #: What PyMCU exports beside the DFM files, filed into ``data/`` with them:
-#: the loader reads the Opto Program (``opto_program.find_program``) and the
-#: message log (``messages.find_messages``) from ``data/`` only, so either
-#: parked in ``extra_files/`` is silently lost.  Lower case: both are found
+#: the loader reads the Opto Program (``opto_program.find_program``), the
+#: message log (``messages.find_messages``) and the Baseline sets
+#: (``paradigm_state.read_baseline_sets``) from ``data/`` only, so any of them
+#: parked in ``extra_files/`` is silently lost.  Lower case: all are found
 #: case-insensitively.
-_RECORDING_COMPANIONS = ("program.txt", "messages.csv")
+_RECORDING_COMPANIONS = ("program.txt", "messages.csv", "baselines.csv")
 
 #: Excel writes ``~$Book.xlsx`` beside an open workbook, and dotfiles are the
 #: filesystem's business, not ours.

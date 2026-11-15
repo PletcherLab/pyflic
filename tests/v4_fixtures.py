@@ -21,8 +21,9 @@ How a recording is made, per DFM:
   The firmware compares the sum of 128 scans with ``threshold * 128``, so the
   array is held as that integer sum and the comparison is the firmware's,
   exactly.  The 128-scan smoothing itself is not simulated.
-* **Baseline.**  PyMCU's truncating running mean of each Well's first ten
-  ``W`` values (``DFM.UpdateBaseline``), added to the authored thresholds
+* **Baseline.**  PyMCU 4.0.1's mean of each Well's first ten ``W`` values,
+  rounded half up (``DFM.StartingBaseline``; see ``_pymcu_baseline``), added
+  to the authored thresholds
   when ``baseline`` is true.  ``Program.txt`` prints the thresholds raw, as
   PyMCU does when it writes the file at the start of the recording.
 * **Schedule.**  PyMCU's ``GetPosition``: the first instruction reaches the
@@ -644,11 +645,14 @@ def _well_sums(seed: int, dfm: DFMSpec, well: int, n_ms: int, upto: int | None =
 
 
 def _pymcu_baseline(first_w: Sequence[int]) -> int:
-    """DFM.UpdateBaseline: a running mean, truncated to int at every record."""
-    base = 0
-    for n, x in enumerate(first_w):
-        base = int((base * n + int(x)) / (n + 1))
-    return base
+    """PyMCU 4.0.1's ``DFM.StartingBaseline``: the readings summed and divided
+    once, rounded half up.  Before 4.0.1 ``DFM.UpdateBaseline`` truncated a
+    running mean at every record, up to 2 counts lower.  Under this rule the
+    stress spec's DFM 2 Well 10 hides two Acclimation Activations in its first
+    row of Cycle 2's second PR1 Interval, where it was On in the first: the
+    case ``activation_ledger`` reads from ``ParadigmState.acclimation``."""
+    values = [int(x) for x in first_w]
+    return (2 * sum(values) + len(values)) // (2 * len(values))
 
 
 def _baseline_of(seed: int, dfm: DFMSpec, well: int, n_ms: int, record_ms: int) -> int:
@@ -1172,14 +1176,16 @@ def _describe(p: ParadigmSpec) -> str:
     elif code == _NONFEEDING:
         parts += [ms("OnDelayMs", p.on_delay_ms), ms("MaxOnMs", p.max_on_ms)]
     elif code == _PROGRESSIVERATIO:
-        parts += [ms("ActivationMs", p.activation_ms), f"Series {p.series}"]
+        ## PyMCU 4.0.1 writes the Counter on every ratio Paradigm; the
+        ## fixtures simulate Event counting.
+        parts += [ms("ActivationMs", p.activation_ms), "Counter Events", f"Series {p.series}"]
         if p.series == "Exponential":
             parts += [f"Scale {p.scale:g}", f"Rate {p.rate:g}"]
         else:
             parts += [f"FirstRequirement {p.first_requirement}", f"Step {p.step}"]
         parts += [f"Cap {p.cap}", gap, acclimation]
     elif code == _FIXEDRATIO:
-        parts += [ms("ActivationMs", p.activation_ms), f"Ratio {p.ratio}", gap, acclimation]
+        parts += [ms("ActivationMs", p.activation_ms), "Counter Events", f"Ratio {p.ratio}", gap, acclimation]
     return f"{p.name} ({p.type}): {', '.join(parts)}"
 
 

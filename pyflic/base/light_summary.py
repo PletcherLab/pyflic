@@ -437,12 +437,12 @@ class _Activations(NamedTuple):
     lit_ms: np.ndarray         # float
     record: np.ndarray         # Timing record: the times are good to one record
     judgeable: np.ndarray      # not Overlap, no Boundary: the length is the rule's
-    main: np.ndarray           # Phase M (the ledger's, less ``unseen``)
+    main: np.ndarray           # the ledger's Phase M
     since_ms: np.ndarray       # SinceLastOnsetMs, NaN for a state run's first
     after_main: np.ndarray     # the previous Activation, in the same state run, is Main
     next_onset_ms: np.ndarray  # the next Activation's onset in the same state run, or NaN
     paradigm: list             # the Paradigm in force at the onset row, or None
-    unseen: np.ndarray         # an Acclimation one the ledger reads as Main (_unseen_acclimation)
+    unseen: np.ndarray         # Phase A on a row that reads M: its Acclimation began and ended in the row
 
     @classmethod
     def of(cls, ctx: _DFMLight, w: int) -> _Activations:
@@ -451,8 +451,8 @@ class _Activations(NamedTuple):
         row = mine["Row"].to_numpy(dtype=np.int64)
         since = mine["SinceLastOnsetMs"].to_numpy(dtype=float, na_value=np.nan)
         paradigm = [ctx.paradigm_by_code[c] for c in ctx.codes[row]]
-        unseen = _unseen_acclimation(ctx, int(w), row)
-        main = (mine["Phase"] == "M").to_numpy(dtype=bool) & ~unseen
+        main = (mine["Phase"] == "M").to_numpy(dtype=bool)
+        unseen = ~main & ~ctx.state.phase_a[row, int(w) - 1]
         onset = mine["OnsetMs"].to_numpy(dtype=float)
         same_run_next = np.append(~np.isnan(since[1:]), False)
         after_main = np.insert(main[:-1], 0, False) & ~np.isnan(since) if row.size else main
@@ -479,31 +479,6 @@ class _Activations(NamedTuple):
         """``tol`` per Activation, one record wider where it is timed to the
         record (stream S1's rule)."""
         return float(tol) + np.where(self.record, float(record_ms), 0.0)
-
-
-def _unseen_acclimation(ctx: _DFMLight, w: int, row: np.ndarray) -> np.ndarray:
-    """Per Activation of well *w* (onset rows *row*): an Acclimation one
-    that the ledger's Phase reads as Main.
-
-    A Paradigm-state run starts in Acclimation wherever its Paradigm has
-    one (``LEDControl.c`` resets the well's state), so a run's first row
-    that reads Phase ``M`` for a well running it saw that Acclimation start
-    and end inside one record (Acclimation 1 and a short Activation): the
-    first N Activations counted on that row were Acclimation ones.  The
-    ledger reads no program and cannot know the run began in Acclimation;
-    its rule for the row a well leaves Acclimation compares it with the row
-    before, which at a run's first row belongs to another run."""
-    out = np.zeros(row.size, dtype=bool)
-    if not row.size:
-        return out
-    col = int(w) - 1
-    starts = np.asarray([a for a, _b in ctx.state.state_runs()], dtype=np.int64)
-    for r0 in np.unique(row[np.isin(row, starts)]).tolist():
-        p = ctx.paradigm_by_code[ctx.codes[r0]]
-        n = int(p.acclimation or 0) if p is not None and p.type in op.ACCLIMATION_PARADIGMS else 0
-        if n > 0 and ctx.trigger[r0, col] and not ctx.state.phase_a[r0, col]:
-            out[np.flatnonzero(row == r0)[:n]] = True
-    return out
 
 
 def _matrix(frame: pd.DataFrame | None, n: int, dtype) -> np.ndarray:
@@ -839,11 +814,12 @@ def _acclimation(ctx: _DFMLight, w: int, win: _Window, acts: _Activations,
     ratio Paradigm with Acclimation in the window.  AcclimationActivations
     counts the ledger's Phase-``A`` Activations with their onset in the
     window, as MainActivations counts its Phase-``M`` ones, so the two sum
-    to Activations: the row's Phase misreads the row a well leaves
-    Acclimation, where an Acclimation Activation can start and end inside
-    a row that already reads ``M`` (``activation_ledger``).  The end is the
-    first row in Main after the window's first run in Phase ``A``, or the
-    row of an Acclimation that ran inside one row (:func:`_unseen_acclimation`);
+    to Activations: the row's Phase misreads a row where an Acclimation
+    Activation started and ended inside a record that already reads ``M``,
+    the row a well leaves Acclimation or its first under the Paradigm in a
+    state run (``activation_ledger``).  The end is the first row in Main
+    after the window's first run in Phase ``A``, or the row of an
+    Acclimation that ran inside one row (``_Activations.unseen``);
     a well still in ``A`` when the window ends has none and is not
     complete.  A run whose last row is the window's last row ended in the
     window: a Progressive Ratio Training window ends exactly there."""

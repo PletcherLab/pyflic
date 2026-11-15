@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ntpath
 from pathlib import Path
 
 import pytest
@@ -219,6 +220,24 @@ def test_a_split_path_still_scopes_to_the_right_project(tmp_path: Path):
         root, log=lambda _m: None, projects=["ProjA"])
     assert result["skipped"] == 1
     assert read_exclusions(root / "Sept" / "ProjB" / "rep1") == {}
+
+
+def _row(project: str, member: str) -> sheet_mod.SheetRow:
+    return sheet_mod.SheetRow(index=2, project=project, member=member, dfm="1",
+                              chamber="2", group="general", reason="r")
+
+
+def test_scoping_holds_under_windows_case_folding(monkeypatch):
+    """Windows' normcase lowers the case and turns '/' into '\\': the scope
+    test then never saw 'proja\\rep1' start with 'proja/', and skipped every
+    row of a running Project.  Here on every platform."""
+    monkeypatch.setattr(batch_mod.os.path, "normcase", ntpath.normcase)
+    rows = [_row("ProjA", "rep1"), _row("sept/projb", "rep1"), _row("Sept", "ProjB/rep1"),
+            _row("ProjC", "rep1")]
+    keep, skip = batch_mod.scope_sheet_rows(rows, ["ProjA", "Sept/ProjB"])
+    assert [(r.project, r.member) for r in keep] == [
+        ("ProjA", "rep1"), ("sept/projb", "rep1"), ("Sept", "ProjB/rep1")]
+    assert [(r.project, r.member) for r in skip] == [("ProjC", "rep1")]
 
 
 def test_the_preview_writes_nothing(tmp_path: Path):

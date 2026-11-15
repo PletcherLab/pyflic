@@ -215,6 +215,15 @@ SERIES_ARITHMETIC = "Arithmetic"
 SERIES_EXPONENTIAL = "Exponential"
 #: The largest Requirement the firmware holds (a 16-bit count).
 MAX_REQUIREMENT = 0xFFFF
+#: What a ratio Paradigm's Requirement counts (PyMCU's ``Counter``, from
+#: 4.0.1): ms of contact, PyMCU's default, or Events.  A Paradigm line
+#: without one was written before 4.0.1 and counted Events.
+COUNTER_CONTACT = "Contact"
+COUNTER_EVENTS = "Events"
+#: Under ``Counter: Contact`` the firmware counts contact in steps of this
+#: many ms (``CONTACT_UNIT_MS``); PyMCU writes the settings and the data's
+#: Requirement and Progress in ms.
+CONTACT_UNIT_MS = 10
 
 
 class ProgramError(ValueError):
@@ -301,13 +310,15 @@ _LOCKOUT = ("LockoutMs", "lockout_ms", "ms")
 _ON_DELAY = ("OnDelayMs", "on_delay_ms", "ms")
 _EVENT_GAP = ("EventGapMs", "event_gap_ms", "ms")
 _ACCLIMATION = ("Acclimation", "acclimation", "count")
+_COUNTER = ("Counter", "counter", "counter")
 _SERIES = ("Series", "series", "series")
-_FIRST = ("FirstRequirement", "first_requirement", "count")
-_STEP = ("Step", "step", "count")
+## A Requirement setting: Events, or ms of contact (printed with " ms").
+_FIRST = ("FirstRequirement", "first_requirement", "requirement")
+_STEP = ("Step", "step", "requirement")
 _SCALE = ("Scale", "scale", "decimal")
 _RATE = ("Rate", "rate", "decimal")
-_CAP = ("Cap", "cap", "count")
-_RATIO = ("Ratio", "ratio", "count")
+_CAP = ("Cap", "cap", "requirement")
+_RATIO = ("Ratio", "ratio", "requirement")
 
 _LIGHT = (_FREQUENCY, _PULSE_WIDTH)
 #: Each type's settings in PyMCU's display order (``Paradigm._SETTINGS``).
@@ -316,10 +327,12 @@ _TYPE_SETTINGS: dict[str, tuple[tuple[str, str, str], ...]] = {
     CLOSED_LOOP: (_HOLD, _MAX_ON, _EVENT_GAP),
     FIXED_INTERVAL: (_ACTIVATION, _LOCKOUT, _EVENT_GAP, _ACCLIMATION),
     NON_FEEDING: (_ON_DELAY, _MAX_ON),
-    PROGRESSIVE_RATIO: (_ACTIVATION, _SERIES, _FIRST, _STEP, _SCALE, _RATE, _CAP,
+    PROGRESSIVE_RATIO: (_ACTIVATION, _COUNTER, _SERIES, _FIRST, _STEP, _SCALE, _RATE, _CAP,
                         _EVENT_GAP, _ACCLIMATION),
-    FIXED_RATIO: (_ACTIVATION, _RATIO, _EVENT_GAP, _ACCLIMATION),
+    FIXED_RATIO: (_ACTIVATION, _COUNTER, _RATIO, _EVENT_GAP, _ACCLIMATION),
 }
+#: The settings printed in ms under ``Counter: Contact``.
+_CONTACT_MS_SETTINGS = ("FirstRequirement", "Step", "Scale", "Cap", "Ratio")
 #: Settings that belong to one Series only; the export prints the chosen one's.
 _SERIES_SETTINGS = {SERIES_ARITHMETIC: ("FirstRequirement", "Step"),
                     SERIES_EXPONENTIAL: ("Scale", "Rate")}
@@ -349,6 +362,9 @@ class Paradigm:
     on_delay_ms: int | None = None        # NonFeeding
     event_gap_ms: int | None = None
     acclimation: int = 0
+    #: Ratio types: :data:`COUNTER_CONTACT` or :data:`COUNTER_EVENTS`;
+    #: ``None`` when the line has no Counter (PyMCU before 4.0.1: Events).
+    counter: str | None = None
     series: str | None = None             # ProgressiveRatio: Arithmetic | Exponential
     first_requirement: int | None = None
     step: int | None = None
@@ -373,6 +389,12 @@ class Paradigm:
         return self.type
 
     @property
+    def counts_contact(self) -> bool:
+        """A ratio Paradigm whose Requirement, Progress and Requirement
+        settings are ms of contact rather than Events (``Counter Contact``)."""
+        return self.type in RATIO_PARADIGMS and self.counter == COUNTER_CONTACT
+
+    @property
     def hold(self) -> int | None:
         """The Hold (``CONTEXT.md``): ``HoldMs`` for a closed loop,
         ``ActivationMs`` for a fixed interval and the ratio types, ``None``
@@ -384,28 +406,38 @@ class Paradigm:
         return None
 
     def requirement_for(self, k: int) -> int | None:
-        """Firmware Events needed for the *k*-th Main Activation (from 1), as
-        the firmware computes it (``LEDControl.c``, ``RequirementFor``);
-        ``None`` outside the ratio types and for a legacy progressive ratio,
-        whose old lick counts have no Requirement."""
+        """The Requirement for the *k*-th Main Activation (from 1), as the
+        firmware computes it (``LEDControl.c``, ``RequirementFor``): Firmware
+        Events, or under ``Counter Contact`` ms of contact (the firmware works
+        in steps of :data:`CONTACT_UNIT_MS`, as PyMCU sends the settings, and
+        PyMCU writes ms, so this does too).  ``None`` outside the ratio types
+        and for a legacy progressive ratio, whose old lick counts have no
+        Requirement."""
         k = int(k)
         if k < 1:
             raise ValueError(f"k counts Main Activations from 1, got {k}")
+        unit = CONTACT_UNIT_MS if self.counts_contact else 1
+
+        def units(value) -> int:
+            return int(value) // unit
+
         if self.type == FIXED_RATIO:
             if self.ratio is None:
                 return None
-            value = int(self.ratio)
+            value = units(self.ratio)
         elif self.type == PROGRESSIVE_RATIO and self.series is not None:
-            cap = int(self.cap) if self.cap else MAX_REQUIREMENT
+            cap = units(self.cap) if self.cap else MAX_REQUIREMENT
             if cap > MAX_REQUIREMENT:
                 cap = MAX_REQUIREMENT
             if self.series == SERIES_EXPONENTIAL:
-                ## The MCU sends Scale and Rate as thousandths. The firmware
-                ## works in single precision (so the rounding at the halves is
-                ## its own), skips the exponential when Scale is 0, and gives
-                ## the cap for anything not below it, an overflow included.
+                ## The MCU sends Scale (in units) and Rate as thousandths. The
+                ## firmware works in single precision (so the rounding at the
+                ## halves is its own), skips the exponential when Scale is 0,
+                ## and gives the cap for anything not below it, an overflow
+                ## included.
                 f32 = np.float32
-                scale = f32(round(float(5.0 if self.scale is None else self.scale) * 1000)) / f32(1000.0)
+                scale_ms = float(5.0 if self.scale is None else self.scale)
+                scale = f32(round(scale_ms * 1000 / unit)) / f32(1000.0)
                 rate = f32(round(float(0.2 if self.rate is None else self.rate) * 1000)) / f32(1000.0)
                 if scale > 0:
                     with np.errstate(over="ignore"):
@@ -414,13 +446,13 @@ class Paradigm:
                     x = f32(0.0)
                 value = int(x + f32(0.5)) if x < f32(cap) else cap
             else:
-                first = 1 if self.first_requirement is None else int(self.first_requirement)
-                step = 0 if self.step is None else int(self.step)
+                first = 1 if self.first_requirement is None else units(self.first_requirement)
+                step = 0 if self.step is None else units(self.step)
                 value = first + step * (k - 1)
             value = min(value, cap)
         else:
             return None
-        return max(1, min(value, MAX_REQUIREMENT))
+        return max(1, min(value, MAX_REQUIREMENT)) * unit
 
     def describe(self) -> str:
         """The Paradigm as the export prints it, e.g. ``PR10
@@ -436,7 +468,9 @@ class Paradigm:
             if value is None or setting in skip:
                 continue
             text = f"{value:g}" if kind == "decimal" else str(value)
-            parts.append(f"{setting} {text}{_UNITS.get(kind, '')}")
+            unit = " ms" if self.counts_contact and setting in _CONTACT_MS_SETTINGS \
+                else _UNITS.get(kind, "")
+            parts.append(f"{setting} {text}{unit}")
         return f"{self.name} ({self.type_name}): {', '.join(parts)}"
 
 
@@ -687,6 +721,40 @@ class OptoProgram:
         and sections ignored.  The simple export's warning says what the
         recording is, and is not a line that was skipped."""
         return [w for w in self.warnings if w != SIMPLE_WARNING]
+
+    def contact_paradigms(self) -> frozenset[str]:
+        """The names, lower case, of the ratio Paradigms counting Contact:
+        the rows that name them hold ms of contact in Requirement and
+        Progress, not Events (``ParadigmState.mark_contact``)."""
+        return frozenset(name.lower() for name, p in self.paradigms.items() if p.counts_contact)
+
+    def acclimation_rows(self, dfm_id: int, state) -> np.ndarray:
+        """(n, 12) int64 for *dfm_id*'s ``ParadigmState`` *state*: per row and
+        Well, the Acclimation of the Paradigm the row names where the Well's
+        threshold is a level in the row's Program Interval (the section's
+        trigger Wells where the export has no line for it, as the light
+        table reads them), 0 elsewhere (``ParadigmState.mark_acclimation``)."""
+        n = len(state)
+        out = np.zeros((n, N_WELLS), dtype=np.int64)
+        section = self.section(dfm_id)
+        if section is None or not n:
+            return out
+        names = state.paradigm.to_numpy(dtype=object, na_value=None)
+        counts = np.zeros(n, dtype=np.int64)
+        for name in set(names) - {None}:
+            p = self.paradigms.get(str(name))
+            if p is not None and p.type in ACCLIMATION_PARADIGMS and p.acclimation:
+                counts[names == name] = int(p.acclimation)
+        if not counts.any():
+            return out
+        fallback = section.trigger_wells()
+        for run in state.interval_runs():
+            if run.kind != "program":
+                continue
+            interval = self.interval_for(dfm_id, int(run.program_interval))
+            for w in (interval.trigger_wells() if interval is not None else fallback):
+                out[run.i0:run.i1, int(w) - 1] = counts[run.i0:run.i1]
+        return out
 
     def section(self, dfm_id: int) -> DFMProgram | None:
         return self.dfms.get(int(dfm_id))
@@ -968,11 +1036,19 @@ def _parse_setting_value(kind: str, text: str):
         unit = _UNITS[kind].strip().lower()
         if text.lower().endswith(unit):
             text = text[:-len(unit)].strip()
+    ## Under Counter Contact the Requirement settings and Scale carry " ms".
+    if kind in ("requirement", "decimal") and text.lower().endswith("ms"):
+        text = text[:-2].strip()
     if kind == "series":
         for series in (SERIES_ARITHMETIC, SERIES_EXPONENTIAL):
             if text.lower() == series.lower():
                 return series
         raise ValueError(f"Series must be Arithmetic or Exponential, not {text!r}")
+    if kind == "counter":
+        for counter in (COUNTER_CONTACT, COUNTER_EVENTS):
+            if text.lower() == counter.lower():
+                return counter
+        raise ValueError(f"Counter must be Contact or Events, not {text!r}")
     if kind == "decimal":
         return float(text)
     return _whole(text)

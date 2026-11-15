@@ -720,6 +720,19 @@ def load_experiment_yaml(
 
     print(f"All {n_total} DFM(s) loaded.", flush=True)
 
+    ## Rows under a ratio Paradigm counting Contact (PyMCU 4.0.1's default)
+    ## hold ms of contact in Requirement and Progress, not Events, and a Well
+    ## set On or Off reads Phase M with an Acclimation still to come; only
+    ## Program.txt says which Paradigms and Wells those are.
+    if opto_program is not None:
+        contact = opto_program.contact_paradigms()
+        for dfm_id, dfm in loaded.items():
+            if dfm.paradigm is None:
+                continue
+            if contact:
+                dfm.paradigm.mark_contact(contact)
+            dfm.paradigm.mark_acclimation(opto_program.acclimation_rows(dfm_id, dfm.paradigm))
+
     # Store DFMs and assign chambers to treatments.
     chamber_factors_map: dict[tuple[int, int], dict[str, str]] = {}
     for dfm_id, _, chamber_assignments, well_names, chamber_factor_levels in dfm_specs:

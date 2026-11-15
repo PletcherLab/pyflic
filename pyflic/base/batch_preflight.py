@@ -150,7 +150,7 @@ class BatchPreflightDialog(QDialog):
         self._btn_fix = QPushButton("File data…")
         self._btn_fix.setIcon(icon("file", category=Category.TOOLS))
         self._btn_fix.setToolTip(
-            "Move the selected member's DFM CSVs, Program.txt and Messages.csv "
+            "Move the selected member's DFM CSVs, Program.txt, Messages.csv and Baselines.csv "
             "into data/ (and any other loose file into extra_files/).  Never "
             "overwrites.")
         self._btn_fix.clicked.connect(self._fix_selected)
@@ -443,7 +443,7 @@ class BatchPreflightDialog(QDialog):
             return
         confirm = QMessageBox.question(
             self, "File every unfiled recording",
-            f"Move the DFM CSVs, Program.txt and Messages.csv into data/ in "
+            f"Move the DFM CSVs, Program.txt, Messages.csv and Baselines.csv into data/ in "
             f"{len(targets)} member director(ies) of the checked projects?\n\n"
             "Every other loose file goes to extra_files/.  YAML files and an "
             "exclusion sheet stay "

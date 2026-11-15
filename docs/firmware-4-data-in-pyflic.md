@@ -51,13 +51,14 @@ the one Paradigm column the firmware fills on every row:
 | Generation | Constant | Written by | Header | `Phase1` | `DFM.training_info` |
 |---|---|---|---|---|---|
 | 1 | `GENERATION_FLAG` | PyMCU 3.x, any older firmware | 27 columns | absent | `flag` |
-| 2 | `GENERATION_EMPTY` | PyMCU 4.0.0, DFM firmware before 4.0.0 | 90 or 102 columns | every value `NA` or blank | `none` |
-| 3 | `GENERATION_PARADIGM` | PyMCU 4.0.0, DFM firmware 4.0.0 | 90 or 102 columns | any `A` or `M` | `phase` |
+| 2 | `GENERATION_EMPTY` | PyMCU 4.0.0, DFM firmware before 4.0.0 | 90, 91 or 102 columns | every value `NA` or blank | `none` |
+| 3 | `GENERATION_PARADIGM` | PyMCU 4.0.0, DFM firmware 4.0.0 | 90, 91 or 102 columns | any `A` or `M` | `phase` |
 
-102 columns are the released PyMCU 4.0.0: the 90, then `Baseline1`–`Baseline12`
-([The Baseline columns](#the-baseline-columns)). They don't change the
-generation; 90-column files are 4.0.0 development builds from before 1 November
-2026.
+91 columns are PyMCU 4.0.1: the 90, then `BaselineSet`, the number of a
+Baseline set in the recording's `Baselines.csv` ([The Baseline in force](#the-baseline-in-force)).
+102 columns are development builds of 1 to 15 November 2026, with all 12
+Baselines on every row (`Baseline1`–`Baseline12`), and 90 columns earlier
+builds. None of this changes the generation.
 
 `DFM.generation` carries it, and `with_params` copies it. The `version` (2 or
 3) that the file name gives stays as a separate axis. The generation is
@@ -112,23 +113,32 @@ member.
   529b926 a restart is an `Index` gap instead ([DFM restarts](#dfm-restarts)).
 - **A range filter** applies to the Paradigm state as to `raw_df`
   (`ParadigmState.subset`).
-- **The Baseline columns leave `raw_df` too.** `split_baseline_columns` takes
-  `Baseline1`–`Baseline12` off, on every generation, and `DFM.baseline_in_force`
-  holds them as an `(n, 12)` float array, row for row with `raw_df`, `NaN`
-  where the file has `NA`; `None` for a file without them. Repeated records and
-  a range filter drop the same rows from it, and `with_params` shares it.
+- **The Baseline in force leaves `raw_df` too.** `split_baseline_set_column`
+  takes `BaselineSet` off and looks each row's set up in `data/Baselines.csv`
+  (`find_baselines_file`, `read_baseline_sets`); `split_baseline_columns` does
+  the same for the 12 columns of development builds. On every generation
+  `DFM.baseline_in_force` holds the result as an `(n, 12)` float array, row for
+  row with `raw_df`, `NaN` where the column is `NA` or names a set the file
+  lacks; `None` for a file without either, or with `BaselineSet` but no
+  `Baselines.csv` (a load note says so). Repeated records and a range filter
+  drop the same rows from it, and `with_params` shares it.
 
-## The Baseline columns
+## The Baseline in force
 
-PyMCU writes `Baseline1`–`Baseline12` after `OnMs12`, on every DFM whatever its
-firmware: the Baseline in force, which PyMCU added to the Program's threshold
-before sending each instruction, so a numeric threshold T meant contact above
-`Baseline + T` (PyMCU's `docs/DataFileColumns.md` and
-`docs/adaptive-baseline-plan.md`). With `Baseline: Yes` they hold the Starting
-baseline from Interval 1 on; with `Baseline: Adaptive` they change when PyMCU
-sent new thresholds (at a new Interval or Cycle, or when a well's tracked
-baseline moved 10 counts or more). They are `NA` in Interval 0, outside the
-Program and with `Baseline: No`.
+PyMCU 4.0.1 writes `BaselineSet` after `OnMs12`, on every DFM whatever its
+firmware: the number of the Baseline set behind the record's thresholds, a row
+of the recording's `Baselines.csv` (`DFM, Set, Date, Time, Reason,
+Baseline1`–`Baseline12`; `Reason` is `Start`, `Interval` or `Update`). PyMCU
+added the set's Baseline to the Program's threshold before sending each
+instruction, so a numeric threshold T meant contact above `Baseline + T`
+(PyMCU's `docs/DataFileColumns.md` and `docs/adaptive-baseline-plan.md`). With
+`Baseline: Yes` every row from Interval 1 on names set 1, the Starting
+baseline; with `Baseline: Adaptive` a new set starts when PyMCU sent different
+thresholds (at a new Interval or Cycle, or when a well's tracked baseline
+moved 10 counts or more). `NA` in Interval 0, outside the Program and with
+`Baseline: No`. Development builds of 1 to 15 November 2026 wrote the 12
+Baselines on every row instead (`Baseline1`–`Baseline12`), which pyflic reads
+the same way.
 
 | pyflic reads it as | Used for | Surfaces in |
 |---|---|---|
@@ -171,10 +181,18 @@ Every one is `NA` on generation 2; pyflic reads them only on generation 3.
 | `Interval` | `ParadigmState.program_interval`; `NA` is an unknown instruction, 0 the baseline | the windows of everything per Program Interval (`interval_runs`); the lead-in (`lead_in_rows`); unknown-instruction rows; restarts (an `Index` gap into a run of `NA` rows, `restarts`); each Interval's start against `Program.txt` (*interval started late*) | the light QC's windows and `opto_light_intervals.csv`'s `ProgramInterval`; Program Facets; the light table's `ProgramInterval`; the open-loop light and dark rates (rows under a Program Interval only); the timeline's band; the integrity report's unknown-instruction rows and *DFM restarts*. Always exposed as `ProgramInterval`, never bare `Interval` |
 | `Cycle` | `ParadigmState.cycle` | with `Interval`, one run of one Program Interval | `program_cycles` Facets (`C<n>`); `Cycle` in the light table and `opto_light_intervals.csv`; the timeline's band labels; *interval started late* on every pass |
 | `Paradigm` | `ParadigmState.paradigm`; the join key to `Program.txt`'s `Paradigms:` block (names matched ignoring case); `NA` on the lead-in and on unknown-instruction rows, as PyMCU writes it | each row's Paradigm type and settings, and so its Paradigm Family; a change of name resets every well's state (`state_runs`) | the light QC (*paradigm not in program*, *program mismatch*, the rule checks); Program Facet labels; the light table's `Paradigm` and `ParadigmType`; the ledger's `Paradigm`; the integrity report's Paradigm sequence; the Progressive Ratio Test Paradigm (`test_paradigm`) |
-| `Phase1`–`12` | `ParadigmState.phase_a`: `A` true, anything else false | Acclimation runs and ends; Training (decision 11) | Progressive Ratio training end and notes; the light QC's Acclimation rule and *acclimation count mismatch*; the light table's Acclimation columns; the ledger's `Phase`; the timeline's shading; the QC Viewer's `Phase` |
+| `Phase1`–`12` | `ParadigmState.phase_a`: `A` true, anything else false; with `Program.txt`, `ParadigmState.acclimation` adds what no row shows, an Acclimation inside a Well's first record under its Paradigm | Acclimation runs and ends; Training (decision 11) | Progressive Ratio training end and notes; the light QC's Acclimation rule and *acclimation count mismatch*; the light table's Acclimation columns; the ledger's `Phase`; the timeline's shading; the QC Viewer's `Phase` |
 | `Activations1`–`12` | `ParadigmState.activations`, cumulative; a missing value carries the previous total; a rise marks an Activation's onset row | light events; the Activation ledger's rows; trigger wells without a program | the light QC's light events (`Source` = `activations`) and Explained Light; the rule checks; Progressive Ratio Light Events; the light table's `Activations` and the family columns; `Activations` on the feeding summary; Roles without a program; *broken yoking* (an `Off` well that counts); the timeline's ticks and the QC Viewer's *Activations* table |
 | `Requirement1`–`12` | `ParadigmState.requirement`; `NA` off a ratio Paradigm | the Requirement an Activation met, read from the row before the rise (`requirement_met`) | the ledger's `RequirementMet` and *requirement series wrong* (both light QCs); `BreakRequirement`; the light table's `LastRequirementMet`; `RequirementMet` in `opto_light_events.csv`; the QC Viewer's `Requirement` |
-| `Progress1`–`12` | `ParadigmState.progress` | Firmware Events: rises in Progress plus the Requirements met (`firmware_events_between`) | the ledger's and the breaking point's `FirmwareEvents`; `TrendRhoFirmware`; the light QC's `FirmwareEvents`, *firmware events disagree* and `FirmwareEventsWithoutActivity`; the light table's `FirmwareEvents`, `ProgressAtEnd`, `EventsPerActivation` |
+| `Progress1`–`12` | `ParadigmState.progress` | Firmware Events: rises in Progress plus the Requirements met (`firmware_events_between`), under `Counter Events` only ([The Counter](#the-counter)) | the ledger's and the breaking point's `FirmwareEvents`; `TrendRhoFirmware`; the light QC's `FirmwareEvents`, *firmware events disagree* and `FirmwareEventsWithoutActivity`; the light table's `FirmwareEvents`, `ProgressAtEnd`, `EventsPerActivation` |
+
+### The Counter
+
+From PyMCU 4.0.1 (DFM firmware 4.0.1) a ratio Paradigm has a `Counter`: `Contact`, the default, or `Events`. Under `Contact`, `Requirement` and `Progress` are milliseconds of contact outside the Well's own Activations, added up across bouts (PyMCU writes ms; the firmware counts in 10 ms steps), and the Paradigm's `FirstRequirement`, `Step`, `Scale`, `Cap` and `Ratio` in `Program.txt` carry `ms`. That is the progressive ratio of firmware before 4.0.0. The rows don't say which Counter a Paradigm used: `Program.txt` does, as `Counter Contact` or `Counter Events` on the Paradigm's line, read into `Paradigm.counter`. A line without a Counter is from PyMCU before 4.0.1 and counted Events.
+
+- **Marking the rows.** When an experiment loads, `OptoProgram.contact_paradigms()` names the Paradigms counting Contact, and `ParadigmState.mark_contact` marks the rows that name them (`ParadigmState.contact`). Without `Program.txt` nothing is marked, and every ratio Paradigm is read as Events.
+- **No Firmware Events under Contact.** `Progress` rises there with every 10 ms of contact, so `firmware_event_rises` leaves those rows out and `firmware_events_between` is NaN for any window that touches them. The ledger's, the breaking point's, the light QC's and the light table's `FirmwareEvents`, and `EventsPerActivation`, are `NA`; *firmware events disagree* isn't judged; `TrendRhoFirmware` is NaN; Progress rises add nothing to `FirmwareEventsWithoutActivity`.
+- **Requirements in ms.** `requirement_for` gives ms under Contact, computed as the firmware does in 10 ms units (the Exponential series from Scale ÷ 10), so *requirement series wrong* compares like with like. `BreakRequirement`, `LastRequirementMet`, `RequirementMet` and `ProgressAtEnd` are ms of contact for such a Paradigm.
 | `OnMs1`–`12` | `ParadigmState.on_ms`; a missing value is 0 | the light, exact: `lit()`, `lit_seconds()`; each Activation's onset, end and lit time from the edges of its light period (the ledger); linkage without a program (identical columns); late records (above 200) | `OptoOn_sec*`, `LightOn_sec`, the light table's `LitSec` (`LitSource` = `OnMs`) and `LightOnsets`; the light QC's lit time, *broken yoking* and every length rule check; the ledger's `OnsetMs`, `EndMs`, `LitMs`; the light-phase summary; the timeline's light strip; the integrity report's late records |
 
 pyflic relies on these facts from the PyMCU and firmware source, which
@@ -572,7 +590,7 @@ firmware's own `LEDControl.c` (`tests/v4_fixtures.py`, cross-checked by
 one, has confirmed part of it (below). Diff each new bench recording against
 the fixtures and the loader:
 
-- The header is the 102 columns (90 before the Baseline columns); every row has
+- The header is the 91 columns (90 before `BaselineSet`); every row has
   as many fields; missing values are `NA`.
 - The lead-in: how many `Interval` 0 rows, their `Paradigm` (`NA`), their
   `Dark`, `OptoFreq` and `OptoPW` (0). Confirmed below.

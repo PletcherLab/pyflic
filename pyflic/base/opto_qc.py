@@ -2290,6 +2290,8 @@ def _analyze_paradigm_state(inp: DFMInputs, *, program: op.OptoProgram | None,
         ## ---- Firmware Events against pyflic's, under a ratio Paradigm's Main ----
         firmware_total = pyflic_total = 0
         ratio_seen = False
+        ## A ratio Paradigm counting Contact has no Firmware Events to compare.
+        contact_seen = False
         disagreements: list[str] = []
         for t in sorted(triggers_seen):
             counted = np.array([t in mm[1] and mm[0] in op.RATIO_PARADIGMS for mm in modes]
@@ -2299,6 +2301,9 @@ def _analyze_paradigm_state(inp: DFMInputs, *, program: op.OptoProgram | None,
                 continue
             ratio_seen = True
             fe = sum(state.firmware_events_between(t, a, b) for a, b in _true_runs(main))
+            if fe != fe:      # NaN: rows under a Paradigm counting Contact
+                contact_seen = True
+                continue
             ## Like with like (decision 16): no Firmware Event starts while
             ## the well's own Activation is lit, so a pyflic feeding event
             ## whose first sample lies in its light period's rows is left
@@ -2458,7 +2463,7 @@ def _analyze_paradigm_state(inp: DFMInputs, *, program: op.OptoProgram | None,
             "FeedingEvents": feeding_events,
             "ClosedLoopFeedingEvents": closed_events if closed_events else np.nan,
             "UnlitFeedingEvents": unlit_events if closed_events else np.nan,
-            "FirmwareEvents": firmware_total if ratio_seen else np.nan,
+            "FirmwareEvents": firmware_total if ratio_seen and not contact_seen else np.nan,
             "PyflicEvents": pyflic_total if ratio_seen else np.nan,
             "AcclimationActivations": acclimation_count if acclimation_runs else np.nan,
             "AcclimationExpected": (acclimation_expected

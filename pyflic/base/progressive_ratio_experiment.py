@@ -2691,7 +2691,10 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         if not self._reads_phase(self.dfms[int(dfm_id)]):
             return None, None
         counted = np.asarray(counted, dtype=bool)
-        firmware = int(test["FirmwareEvents"][counted].sum())
+        ## NA under a Paradigm counting Contact, whose Progress is ms of
+        ## contact: the Events it took are unknown, not 0.
+        credited = test["FirmwareEvents"][counted]
+        firmware = None if credited.isna().any() else int(credited.sum())
         if not counted.any():
             return None, firmware
         _name, paradigm = self.test_paradigm(dfm_id, group)
