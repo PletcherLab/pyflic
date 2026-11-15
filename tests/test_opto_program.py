@@ -138,6 +138,32 @@ def test_the_printed_timestamps_are_kept():
     assert _spans(sched) == [(0, 10, 1), (15, 60, 2)]
 
 
+def test_circadian_runs_on_the_time_of_day():
+    """PyMCU's GetPosition: Interval k from midnight plus the Intervals
+    before it, Cycle n the n-th calendar day.  Started at 23:56 inside the
+    1438-minute Interval, the 2-minute one runs at 23:58 and the first again
+    at midnight, whatever the stamps say (PyMCU before 4.0.1 stamped them
+    from the Start Time)."""
+    start = datetime(2026, 10, 16, 23, 56)
+    old_stamps = [start, start + timedelta(minutes=1438)]
+    for stamps in (None, old_stamps):
+        sched = _section("Circadian", [1438, 2], stamps).schedule(start, start + timedelta(minutes=10))
+        assert [(s.start, s.end, s.interval.index, s.occurrence) for s in sched] == [
+            (start, datetime(2026, 10, 16, 23, 58), 1, 1),
+            (datetime(2026, 10, 16, 23, 58), datetime(2026, 10, 17), 2, 1),
+            (datetime(2026, 10, 17), start + timedelta(minutes=10), 1, 2)]
+
+
+def test_circadian_leaves_unprinted_intervals_out():
+    """A Circadian Program.txt from PyMCU before 4.0.1 can leave out the
+    Intervals that start later in the day than the recording lasted: their
+    hours are left unscheduled, not filled with the printed ones."""
+    start = datetime(2026, 3, 2, 13, 45)
+    sched = _section("Circadian", [600]).schedule(start, start + timedelta(hours=24))
+    assert [(s.start, s.end, s.occurrence) for s in sched] == [
+        (datetime(2026, 3, 3), datetime(2026, 3, 3, 10), 2)]
+
+
 # ---------------------------------------------------------------------------
 # What the parser tolerates, and what it refuses
 # ---------------------------------------------------------------------------

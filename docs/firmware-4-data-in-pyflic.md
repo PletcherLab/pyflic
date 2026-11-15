@@ -689,17 +689,20 @@ On real recordings of each Paradigm type, confirm:
 - **PyMCU's FixedRatio recording of 10/17/2026**: the series check, `K`, and
   the Acclimation counts.
 
-**A known gap: Circadian exports.** PyMCU's `Program.txt` omits an Interval
-whose start, counted from the Start Time through the lengths of the Intervals
-before it, falls past the recording's duration. A Circadian program runs by
-the time of day instead, so a recording that starts partway through its day
-can run an Interval the export leaves out. On `stress_spec`'s DFM 3, started at
-23:56 under a day of FR1 for 1438 minutes then FI1 for 2, the export lists FR1
-only, though FI1 runs at minutes 2 to 4. The rows name FI1, so it is judged by
-its name, but its thresholds are unknown and its wells get no Acclimation
-columns (`NA`). pyflic's simulator reproduces PyMCU's export exactly, so a real
-recording of such a program will show the same; only an export that prints
-every Interval of the day would close it.
+**Circadian exports before PyMCU 4.0.1.** A Circadian program runs by the time
+of day: `DFMProgram.schedule` lays each Interval from midnight plus the
+Intervals before it, every day, the Cycle being the day, as
+`rule_checks.scheduled_start` and PyMCU's `GetPosition` do. From PyMCU 4.0.1
+`Program.txt` lists every Interval of the day, stamped with its clock time on
+the start day. Before 4.0.1 it listed a Circadian program like a Linear one:
+stamps counted from the Start Time, which pyflic ignores, and no Interval whose
+start, counted that way, fell past the recording's duration. A recording that
+started partway through its day could run an Interval the export leaves out.
+On `stress_spec`'s DFM 3, started at 23:56 under a day of FR1 for 1438 minutes
+then FI1 for 2, such an export lists FR1 only, though FI1 runs at minutes 2 to
+4. The rows name FI1, so it is judged by its name, but its thresholds are
+unknown, its wells get no Acclimation columns (`NA`) and the schedule leaves
+its hours empty. pyflic's simulator writes the 4.0.1 export.
 
 ## Not read
 

@@ -1225,10 +1225,16 @@ def program_text(spec: RecordingSpec) -> str:
         s += f"\n***DFM {d.dfm_id}***\n"
         s += "Linkage: " + ",".join(str(v) for v in d.linkage) + "\n"
         s += f"Program Type: {d.program_type}\n"
+        ## InstructionSet.ToString: a Circadian block lists every Interval at
+        ## its clock time on the start day; the others those that start
+        ## before the recording ends, from the Start Time.
+        circadian = d.program_type == "Circadian"
+        origin = (datetime.combine(spec.start.date(), dtime(0), tzinfo=spec.start.tzinfo)
+                  if circadian else spec.start)
         for iv, (start, length) in zip(d.intervals, _elapsed(d)):
-            if start < duration:
+            if circadian or start < duration:
                 s += "({}) {}, {}, {}, {:g} min\n".format(
-                    (spec.start + start).strftime(stamp), iv.paradigm, "Dark" if iv.dark else "Lit",
+                    (origin + start).strftime(stamp), iv.paradigm, "Dark" if iv.dark else "Lit",
                     ",".join(_threshold_text(t) for t in iv.thresholds), length.total_seconds() / 60)
     return s
 

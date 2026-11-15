@@ -1535,8 +1535,9 @@ on-period past `MaxOnMs` fails the group (section 7.3).
   simulators, so 5 seconds of the first lag are discounted. PyMCU runs a
   program on the clock, so a recording started after the Start Time joins
   it partway: its first Interval is timed from the recording's start, not
-  from its `Program.txt` time. An Interval `Program.txt` does not print (a
-  Circadian day the program started partway through) is not timed.
+  from its `Program.txt` time. An Interval `Program.txt` does not print is
+  not timed, and neither is the Circadian Interval a recording starts
+  partway through.
 - **Verdict.** A warning, on every group of the DFM, when a lag is above
   `opto_interval_lag_warn_sec` (default 5). The reason names the Program
   Interval, Cycle, lag and minute, and says when the DFM had just come back

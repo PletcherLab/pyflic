@@ -45,8 +45,8 @@ closed loop, and its Main, under its own family, so a section appears exactly
 when its family is in the program (:func:`paradigm_families.families_in
 <pyflic.base.paradigm_families.families_in>`).  Wells set ``On`` under
 another Paradigm are open loop: one section of their own.  A Program
-Interval beyond the lines ``Program.txt`` prints (a Repeating program's
-later passes, the rest of a Circadian day) is judged by its Paradigm by
+Interval beyond the lines ``Program.txt`` prints (one past the duration, or
+the rest of a Circadian day before PyMCU 4.0.1) is judged by its Paradigm by
 name, as the light QC judges it.
 
 **The numbers are the light QC's.**  The checks are stream S1's

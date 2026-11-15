@@ -481,10 +481,6 @@ ACCLIMATION_SPECS = {
     "choice": vf.choice_pr_spec,
     "stress": vf.stress_spec,
 }
-#: stress_spec's DFM 3 runs Circadian, and its Program.txt lists FR1 alone,
-#: where wells 9 and 10 are On and Off: pyflic cannot know they ran FI1's
-#: Acclimation from minute 2, so their Acclimation columns are missing.
-UNTYPED = {("stress", 3, 9), ("stress", 3, 10)}
 
 
 @pytest.fixture(scope="module")
@@ -512,15 +508,17 @@ def test_acclimation_activations_are_the_truths(acclimation_wells, name):
     end to within one record.  Counted from the rows' Phase, as before, it
     missed the truth on 8 of stress_spec's 20 such wells, and the sum on 7:
     an Acclimation Activation shorter than a record can start and end in a
-    row that reads Main, the first row of a state run among them."""
+    row that reads Main, the first row of a state run among them.  stress_spec's
+    Circadian DFM 3 counts too: its Program.txt lists FI1, which wells 9 and 10
+    run from minute 2, though the recording ends before FI1's 1438 minutes
+    from midnight (PyMCU 4.0.1's export)."""
     wells, results = acclimation_wells(name)
     defined = 0
     for row in wells.itertuples(index=False):
         truth = results[row.DFM].truth
         phases = list(truth.activation_phase[row.Well])
         if pd.isna(row.AcclimationActivations):
-            if (name, row.DFM, row.Well) not in UNTYPED:
-                assert "A" not in phases, (row.DFM, row.Well)
+            assert "A" not in phases, (row.DFM, row.Well)
             continue
         defined += 1
         assert row.Activations == row.AcclimationActivations + row.MainActivations, row

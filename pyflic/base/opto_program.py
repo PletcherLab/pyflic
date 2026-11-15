@@ -646,16 +646,19 @@ class DFMProgram:
         """The intervals laid out from *start* to *end*.
 
         The first pass keeps the timestamps the export printed; after it a
-        Linear program holds its last interval to the end, a Repeating or
-        Circadian one starts over, and a Constant one runs its first interval
-        throughout.  An interval running past *end* is cut there — the run's
-        duration takes precedence over the intervals, as on the MCU.
+        Linear program holds its last interval to the end, a Repeating one
+        starts over, and a Constant one runs its first interval throughout.
+        A Circadian one runs on the time of day (:meth:`_circadian`).  An
+        interval running past *end* is cut there — the run's duration takes
+        precedence over the intervals, as on the MCU.
         """
         if end <= start or not self.intervals:
             return []
         kind = self.program_type.strip().lower()
         if kind == "constant":
             return [ScheduledInterval(self.intervals[0], start, end, 1)]
+        if kind == "circadian":
+            return self._circadian(start, end)
         out: list[ScheduledInterval] = []
         t = start
         for iv in self.intervals:
@@ -670,7 +673,7 @@ class DFMProgram:
         if t >= end or not out:
             return out
         cycle = sum(max(0.0, float(iv.duration_min)) for iv in self.intervals)
-        if kind in ("repeating", "circadian") and cycle > 0:
+        if kind == "repeating" and cycle > 0:
             occurrence = 1
             while t < end:
                 occurrence += 1
@@ -684,6 +687,32 @@ class DFMProgram:
             return out
         last = out[-1]
         out[-1] = ScheduledInterval(last.interval, last.start, end, last.occurrence)
+        return out
+
+    def _circadian(self, start: datetime, end: datetime) -> list[ScheduledInterval]:
+        """A Circadian program as PyMCU's ``InstructionSet.GetPosition`` runs
+        it: every calendar day, the k-th interval from midnight plus the
+        intervals before it, the occurrence being the day (1 on the start
+        day, the data's Cycle).  The printed stamps are not used: PyMCU
+        before 4.0.1 stamped them from the Start Time, and could leave out
+        the intervals that start later in the day than the recording lasted,
+        whose hours are then left unscheduled."""
+        offsets: list[tuple[ProgramInterval, timedelta, timedelta]] = []
+        t = timedelta(0)
+        for iv in self.intervals:
+            length = timedelta(minutes=max(0.0, float(iv.duration_min)))
+            offsets.append((iv, t, t + length))
+            t += length
+        out: list[ScheduledInterval] = []
+        first = datetime.combine(start.date(), datetime.min.time(), tzinfo=start.tzinfo)
+        day = 0
+        while first + timedelta(days=day) < end:
+            midnight = first + timedelta(days=day)
+            for iv, a, b in offsets:
+                s, e = max(midnight + a, start), min(midnight + b, end)
+                if e > s:
+                    out.append(ScheduledInterval(iv, s, e, day + 1))
+            day += 1
         return out
 
 
@@ -762,7 +791,8 @@ class OptoProgram:
     def interval_for(self, dfm_id: int, k: int) -> ProgramInterval | None:
         """The *k*-th interval line printed for *dfm_id* (1-based, as a 4.0.0
         data file's ``Interval`` column counts), or ``None``.  The export
-        omits Intervals that start past the duration and a Repeating
+        omits Intervals that start past the duration (a Circadian program's
+        too, before PyMCU 4.0.1, which lists the whole day) and a Repeating
         program's later passes, so a recorded *k* may have no line."""
         section = self.section(dfm_id)
         k = int(k)

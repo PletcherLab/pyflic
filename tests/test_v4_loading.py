@@ -14,7 +14,7 @@ import os
 import time
 import warnings
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -440,12 +440,19 @@ def test_every_ready_made_program_parses_as_v4(make):
         section = program.section(d.dfm_id)
         assert section.linkage == tuple(d.linkage)
         assert section.program_type == d.program_type
-        printed, start = [], timedelta(0)
+        ## PyMCU 4.0.1: a Circadian block lists the whole day, stamped from
+        ## midnight; the others the Intervals that start before the end.
+        circadian = d.program_type == "Circadian"
+        origin = (datetime.combine(spec.start.date(), datetime.min.time())
+                  if circadian else spec.start)
+        printed, starts, start = [], [], timedelta(0)
         for iv in d.intervals:
-            if start < duration:
+            if circadian or start < duration:
                 printed.append(iv)
+                starts.append((origin + start).replace(microsecond=0))   # printed to the second
             start += timedelta(minutes=iv.minutes)
         assert len(section.intervals) == len(printed)
+        assert [got.start for got in section.intervals] == starts
         for got, want in zip(section.intervals, printed):
             assert got.paradigm.name == want.paradigm
             assert got.paradigm.type_name == spec.paradigms[want.paradigm].type
