@@ -56,7 +56,12 @@ class Experiment:
     design_factors: list[str] | None = None    # ordered factor names from experimental_design_factors
     chamber_factors: dict | None = None         # {(dfm_id, chamber_idx): {factor: level}}
     config_path: Path | None = None
+    #: The folder the recording was read from: ``data/``, or the folder the
+    #: config's ``data_folder:`` names (ADR-0021).
     data_dir: Path | None = None
+    #: How the loader found it (:class:`~pyflic.base.layout.DataLocation`):
+    #: the key as written and the resolved path.
+    data_location: Any = None
     experiment_dir: Path | None = None
     range_minutes: tuple[float, float] | None = None
     facet_cutoffs: tuple[float, ...] | None = None
@@ -773,7 +778,14 @@ class Experiment:
 
         if self.config_path is not None:
             buf.write(f"Config: {self.config_path}\n")
-        if self.data_dir is not None:
+        location = self.data_location
+        if location is not None and location.referenced:
+            ## Where the data came from, both ways (ADR-0021).  Only for a
+            ## referenced folder: an experiment reading its own data/ writes
+            ## the summary it always wrote.
+            buf.write(f"Data folder: {location.path}\n"
+                      f"  (data_folder: {location.written}, as written)\n")
+        elif self.data_dir is not None and location is None:
             buf.write(f"Data dir: {self.data_dir}\n")
         if self.slice is not None:
             buf.write(f"Slice: {self.slice.name} {self.slice.bounds_label()}: analysed as if "

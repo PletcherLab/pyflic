@@ -57,8 +57,9 @@ A **Blocked Member** is a folder inside a Project that a run cannot use as it st
 |---|---|---|
 | `unfiled recording` | DFM CSVs sit at the folder's root, not in its `data/` | **File data…** in the review window, or **File unfiled recordings** on the Project panel |
 | `no config` | `data/` holds DFM CSVs but there is no `flic_config.yaml` | double-click it in the review window, or **Member configs…** on the Project panel |
-| `no recording` | there is a config but no DFM CSV the loader can find | by hand |
-| `ambiguous` | the same DFM id appears both loose and in `data/` | by hand — decide which copy is the experiment |
+| `no recording` | there is a config but no DFM CSV the loader can find, or its `data_folder` does not exist or is a file | by hand |
+| `ambiguous` | the same DFM id appears both loose and in `data/`, or a `data_folder` sits beside a recording of the member's own | by hand — decide which copy is the experiment |
+| `duplicate` | it reads the same recording as a member before it by name (see [`data_folder`](config-structure.md#data-folder)) | by hand — decide which member reads it |
 | `unreadable` | the folder cannot be listed | by hand — permissions |
 
 Blocked belongs to the **member**, never to the Project. A Project with four healthy

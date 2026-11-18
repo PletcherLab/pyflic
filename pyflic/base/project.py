@@ -86,11 +86,26 @@ def is_experiment_dir(path) -> bool:
     return os.path.isfile(os.path.join(str(path), CONFIG_FILENAME))
 
 
+def _data_folder(path) -> str | None:
+    """The folder the experiment at *path* reads its recording from — its own
+    ``data/``, or the folder its ``data_folder:`` names (ADR-0021) — or
+    ``None`` when the loader would refuse that location."""
+    from . import layout
+
+    location = layout.data_location(str(path))
+    return None if location.problem else location.path
+
+
 def has_experiment_data(path) -> bool:
     """True when *path* holds a recording: a ``data/`` subdirectory with at
     least one ``DFM*.csv``.  This is the experiment-shape test for listing
-    scaffolding candidates; any other subdirectory is ignored."""
-    data = os.path.join(str(path), "data")
+    scaffolding candidates; any other subdirectory is ignored.
+
+    A Member whose config names ``data_folder:`` is asked about that folder
+    instead (ADR-0021); one the loader would refuse holds nothing."""
+    data = _data_folder(path)
+    if data is None:
+        return False
     try:
         entries = os.listdir(data)
     except OSError:
@@ -110,12 +125,20 @@ def dfm_ids_in_data(path) -> list[int]:
 
     pyflic can discover this where PyTrackingAnalysis cannot, which is what
     lets :meth:`Project.scaffold_member` reconcile a copied ``dfms:`` block
-    against the recording that actually exists.
+    against the recording that actually exists.  Read from wherever the
+    recording is — ``data/`` or the folder ``data_folder:`` names (ADR-0021).
     """
-    data = os.path.join(str(path), "data")
+    data = _data_folder(path)
+    if data is None:
+        return []
+    return dfm_ids_in_folder(data)
+
+
+def dfm_ids_in_folder(folder) -> list[int]:
+    """:func:`dfm_ids_in_data` for the recording folder itself."""
     ids: set[int] = set()
     try:
-        entries = os.listdir(data)
+        entries = os.listdir(str(folder))
     except OSError:
         return []
     for entry in entries:
@@ -377,13 +400,24 @@ class Project:
         self._whole = None
 
         # ---- discover members -------------------------------------
+        from . import layout
+
         self.member_names: list[str] = []
         self.configs: dict[str, dict] = {}
+        #: Where each Member reads its recording (ADR-0021).
+        self.data_locations: dict = {}
+        #: Members skipped because an earlier one (in sorted order) already
+        #: reads their recording: ``{skipped: kept}``.
+        self.duplicates: dict[str, str] = {}
         #: Real paths already taken.  Two symlinked directories pointing at
         #: one recording used to be counted twice — the same chambers analyzed
         #: twice and stacked into the Combined Analysis under two labels
         #: (ADR-0009).  ``layout.members_in`` enforces the same rule.
         seen: set[str] = set()
+        #: ...and the same rule for two Members whose data_folder: names one
+        #: recording — the rule layout.members_in applies, so the Project and
+        #: Batch discovery agree on who is a duplicate.
+        reads = layout.DataLocations()
         for entry in sorted(os.listdir(self.project_directory)):
             sub = os.path.join(self.project_directory, entry)
             if os.path.isdir(sub) and is_experiment_dir(sub):
@@ -391,10 +425,17 @@ class Project:
                 if real in seen:
                     continue
                 seen.add(real)
-                self.member_names.append(entry)
                 with open(os.path.join(sub, CONFIG_FILENAME),
                           encoding="utf-8") as handle:
-                    self.configs[entry] = yaml.safe_load(handle) or {}
+                    config = yaml.safe_load(handle) or {}
+                location = layout.data_location(sub, config=config)
+                first = reads.claim(entry, location)
+                if first is not None:
+                    self.duplicates[entry] = first
+                    continue
+                self.member_names.append(entry)
+                self.configs[entry] = config
+                self.data_locations[entry] = location
         if not self.member_names and not self.design:
             raise ValueError(
                 f"Project '{self.name}' has no members: no subdirectory of "
@@ -604,12 +645,26 @@ class Project:
                 self.warnings.append(
                     f"{label} differs across members ({detail})")
 
+        from . import layout
+
+        ## Named, never dropped silently: a duplicate is reported the way a
+        ## Blocked Member is, and a reference the loader will refuse is said
+        ## here, before a run fails on it (ADR-0021).
+        for name, first in self.duplicates.items():
+            self.warnings.append(
+                f"{name} is a duplicate: it "
+                + layout.duplicate_detail(first, self.data_locations[first]))
         if len(self.member_names) > 1:
             spread(lambda n: len(self.configs[n].get("dfms") or []),
                    "DFM count")
         for name in self.member_names:
-            if not has_experiment_data(self.member_dir(name)):
-                self.warnings.append(f"{name}: no DFM CSVs in data/")
+            location = self.member_data_location(name)
+            if location.problem:
+                self.warnings.append(f"{name}: {location.problem}")
+            elif not has_experiment_data(self.member_dir(name)):
+                where = (f"{layout.DATA_FOLDER_KEY}: {location.written}"
+                         if location.referenced else "data/")
+                self.warnings.append(f"{name}: no DFM CSVs in {where}")
         for problem in self.slice_problems:
             self.warnings.append(f"design: {problem}")
 
@@ -772,6 +827,17 @@ class Project:
     def member_dir(self, name: str) -> str:
         return os.path.join(self.project_directory, name)
 
+    def member_data_location(self, name: str):
+        """Where Member *name* reads its recording
+        (:class:`~pyflic.base.layout.DataLocation`, ADR-0021): its own
+        ``data/``, or the folder its ``data_folder:`` names."""
+        location = self.data_locations.get(name)
+        if location is None:
+            from . import layout
+
+            location = layout.data_location(self.member_dir(name))
+        return location
+
     def load_member(self, name: str, **kwargs):
         """Load a Member with the Design's ``global:`` supplied for
         inheritance and per-DFM overrides restricted (ADR-0005).  A Slice view
@@ -872,7 +938,10 @@ class Project:
         * an entry with no data is **flagged**, never silently dropped, because
           a missing CSV is usually a copy that has not finished.
 
-        ``global:`` is deliberately absent: the Member inherits the Design.
+        ``global:`` is deliberately absent: the Member inherits the Design.  So
+        is the first Member's ``data_folder:``: it names *that* Member's
+        recording, and a copy would make the new Member its duplicate
+        (ADR-0021).  Only ``dfms:`` is copied.
         """
         import copy
 
@@ -924,7 +993,9 @@ class Project:
         Creates the directory and its ``data/`` when missing, so this serves
         both "add a new member" and "adopt a folder already sitting in the
         Project".  Never overwrites an existing config — a member's chamber
-        assignments are hand-made.
+        assignments are hand-made — and the config is checked first, so a
+        Member whose config names ``data_folder:`` never gets an empty
+        ``data/`` beside the key (ADR-0021).
         """
         if not name or name != os.path.basename(name) or name in (".", ".."):
             ## The name is joined onto the Project directory, so a separator
@@ -1615,7 +1686,7 @@ class Project:
             current = light[generation == GENERATION_PARADIGM]
             for name, rows in current.groupby("Experiment", sort=False):
                 try:
-                    path = op.find_program(os.path.join(self.member_dir(str(name)), "data"))
+                    path = op.find_program(self.member_data_location(str(name)).path)
                     program = op.read_program(path) if path is not None else None
                 except (op.ProgramError, OSError, ValueError):
                     program = None

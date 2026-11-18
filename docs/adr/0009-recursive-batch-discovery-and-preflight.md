@@ -167,3 +167,13 @@ those rows are not interchangeable.
   so "succeeded" can no longer be read as "analyzed everything".
 - The Project panel lists folders that are not Members yet. That is the point:
   they were previously invisible in the one place that offers the fix.
+
+## Addendum (2026-11-17): a Member may read a named data folder
+
+A Member's config may name the folder its recording is read from,
+`data_folder:` (ADR-0021). The classifier then reads that config, still
+decides by the loader's own rule, and never calls such a Member unfiled;
+filing refuses it. "One recording, one Member" now also compares data
+locations: a second Member reading a folder an earlier one reads is a
+Blocked Member with the status `duplicate`, whenever one of the two names its
+folder. The rest of this decision stands.

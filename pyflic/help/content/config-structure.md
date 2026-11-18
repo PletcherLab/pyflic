@@ -1,9 +1,11 @@
 # Configuration file structure
 
-`flic_config.yaml` has three top-level keys. `dfms` is always required. A standalone
+`flic_config.yaml` has four top-level keys. `dfms` is always required. A standalone
 experiment states `global` too; a member of a Project takes it from the design (below).
+`data_folder` is needed only when the recording is not in this folder's `data/`.
 
 ```yaml
+data_folder: ...                         # optional: where the recording is, when not data/
 global:
   experiment_type: ...                   # or chamber_layout: for a Custom experiment
   transform_licks: ...                   # optional
@@ -41,9 +43,44 @@ normally holds only `dfms:` and its own `scripts:`; every `global:` key comes fr
 `design:` in `project.yaml`, written in the same shape. See
 [Projects and members](concepts-project.md).
 
-> **`data_dir` no longer exists.** Data is always read from
-> `<experiment directory>/data/`. The linter flags a leftover `data_dir` key so you can
-> delete it.
+> **`data_dir` no longer exists.** It is never read, whatever it says: the recording is
+> read from `<experiment directory>/data/`, or from the folder `data_folder` names. The
+> linter flags a leftover `data_dir` key so you can delete it. Old configs carry
+> `data_dir` paths to folders on someone's own PC, which is why the new key has a new name.
+
+## `data_folder`
+
+The folder this experiment's recording is read from, when it is not the `data/` beside
+`flic_config.yaml` — for a member whose recording is kept in a run folder that may not be
+changed. It holds what `data/` would hold: the `DFM<id>_<n>.csv` files and, when PyMCU
+exported them, `Program.txt`, `Messages.csv` and `Baselines.csv`.
+
+```yaml
+data_folder: ../../../../../runs/flic/2026/R-20261020-asmith-01/data
+dfms:
+  - id: 1
+    chambers: {1: Ctrl, 2: Exp}
+```
+
+- **Relative to this folder**, with forward slashes. An absolute path works too, but
+  `pyflic lint` warns that it breaks when the share is mounted somewhere else.
+- **Only ever read.** The analysis, the QC, the reports, the cache and every Slice are
+  written in this folder, as always; nothing is written in the folder `data_folder` names,
+  and a member that names one is never filed.
+- **This config's alone.** It goes at the top, never under `global:` (where `pyflic lint`
+  reports it as an error, because it is not read there), and never in a Project's design.
+  A member scaffolded or copied from another does not take it.
+- **One recording, one member.** When two members of a Project read the same folder, the
+  first by name is analysed and the other is reported as a `duplicate`. Members of
+  different Projects may read one recording, each with its own settings.
+- **Problems stop the member, not the Project.** A folder that does not exist, a file
+  where a folder belongs, or a recording of the member's own beside the key (DFM CSVs at
+  its root, or anything in its own `data/`) makes the member blocked, with the resolved
+  path in the reason; loading it fails with the same words. An empty `data/` beside the
+  key is fine. See [Blocked members](concepts-project.md#blocked-members).
+
+The load message, `summary.txt`, the member's report and the Project Report's member
+table say where the recording was read, as the resolved path with the key as written.
 
 ## `global.experiment_type`
 

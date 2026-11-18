@@ -190,8 +190,10 @@ and much harder to see.
 ## Blocked members
 
 A folder inside a Project can hold a perfectly good recording and still be unusable. The
-loader reads `experiment_dir/data` and nothing else, so DFM CSVs sitting at the folder's
-root are invisible — not broken, not warned about, simply absent from the Project.
+loader reads `experiment_dir/data` — or the folder the config's
+[`data_folder`](config-structure.md#data-folder) names — and nothing else, so DFM CSVs
+sitting at the folder's root are invisible — not broken, not warned about, simply absent
+from the Project.
 
 The Project panel lists these as **blocked members**, in red, with the reason in the
 tooltip, and the Batch panel counts them for each Project:
@@ -200,8 +202,9 @@ tooltip, and the Batch panel counts them for each Project:
 |---|---|
 | `unfiled recording` — DFM CSVs at the root, not in `data/` | **File unfiled recordings** |
 | `no config` — `data/` holds DFM CSVs but there is no `flic_config.yaml` | **Member configs…** or **Initialize existing directory…** |
-| `no recording` — a config, but no DFM CSV the loader can find (a CSV whose name is spelled in the wrong case is named) | by hand |
-| `ambiguous` — the same DFM id both loose and in `data/`, or a `data` that is a file | by hand: decide which copy is the experiment |
+| `no recording` — a config, but no DFM CSV the loader can find (a CSV whose name is spelled in the wrong case is named), or a `data_folder` that does not exist or is a file | by hand |
+| `ambiguous` — the same DFM id both loose and in `data/`, or a `data` that is a file, or a `data_folder` beside a recording of the member's own | by hand: decide which copy is the experiment |
+| `duplicate` — reads the same recording as a member before it by name, so only that one is analysed | by hand: decide which member reads that recording |
 | `unreadable` — the folder cannot be listed (permissions?) | by hand |
 
 Double-click a blocked row for its repair in place. In the Batch panel, right-click a
@@ -215,7 +218,36 @@ members and one blocked one analyses the four.
 PyMCU exported beside them, since pyflic reads both only from `data/`. Every other loose
 file goes into `extra_files/`. Every `.yaml` file and any `remove_chambers.csv` stays
 exactly where it is — at a member root those are configuration and declaration, never
-data. Nothing is ever overwritten.
+data. Nothing is ever overwritten. A member whose config names a `data_folder` is never
+filed: its recording is read where the key says, and nothing is moved into or out of it.
+
+## A member whose recording is elsewhere
+
+A member does not have to hold its recording. When the recording must stay where it was
+recorded — a run folder that is locked once registered — the member's `flic_config.yaml`
+names it with [`data_folder`](config-structure.md#data-folder), relative to the member:
+
+```
+managed/
+  runs/flic/2026/R-20261020-asmith-01/
+    data/                          ← the recording, only ever read
+  studies/mbon10-silencing/analyses/A-20261105-asmith-01/
+    project.yaml                   ← the Project
+    R-20261020-asmith-01/          ← a member
+      flic_config.yaml             ← data_folder: ../../../../../runs/flic/2026/R-20261020-asmith-01/data
+      analysis/  qc/               ← everything pyflic writes for it
+```
+
+Such a member's config usually holds only `data_folder:` and `dfms:`, and inherits
+`global:` from the design like any other. Everything pyflic writes for it — the analysis,
+the QC, its report, its Slices, the cache — stays in the member's folder, and the pooled
+outputs in the Project's. Two Projects may read one recording with different designs;
+neither changes the other. Within one Project a recording is read once: a second member
+naming the same folder is a `duplicate`.
+
+A Project whose members read their recordings this way no longer carries them. Copy the
+analysis folder on its own and those members are blocked, each naming the folder it
+looked for; move the whole tree and the relative paths still resolve.
 
 ## Adding a member
 

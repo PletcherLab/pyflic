@@ -159,7 +159,9 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
         return issues
 
     # Top-level keys
-    expected_top = {"global", "dfms", "DFMs", "scripts"}
+    from .layout import DATA_FOLDER_KEY
+
+    expected_top = {"global", "dfms", "DFMs", "scripts", DATA_FOLDER_KEY}
     for k in cfg.keys():
         if k == "data_dir":
             _emit(
@@ -171,13 +173,22 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
             )
         elif k not in expected_top:
             _emit(issues, "warning", f"unknown top-level key {k!r}", path=k)
+    ## Where the loader will read the recording (ADR-0021): its problems are
+    ## this config's, and every check below that reads the recording reads it
+    ## there.  None when the loader would refuse the location.
+    data_folder = _lint_data_folder(issues, path, cfg)
 
     g = cfg.get("global") or {}
     if g and not isinstance(g, dict):
         _emit(issues, "error", "global: must be a mapping", path="global")
         g = {}
     for k in g.keys():
-        if k not in _KNOWN_GLOBAL_KEYS:
+        if k == DATA_FOLDER_KEY:
+            _emit(issues, "error",
+                  f"{DATA_FOLDER_KEY} belongs at the top of {path.name}, never under "
+                  f"global: — there it is not read, and the recording is read from "
+                  f"data/", path=f"global.{k}")
+        elif k not in _KNOWN_GLOBAL_KEYS:
             _emit(issues, "warning", f"unknown global key {k!r}", path=f"global.{k}")
     _lint_omit(issues, path, g)
     _lint_slices(issues, path, g)
@@ -213,7 +224,8 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
         _emit(issues, "error", problem, path="global.constants")
     program = None
     try:
-        program_path = _opto.find_program(path.parent / "data")
+        program_path = (_opto.find_program(data_folder)
+                        if data_folder is not None else None)
     except _opto.ProgramError as err:
         _emit(issues, "error", str(err))
         program_path = None
@@ -256,7 +268,7 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
         _emit(issues, "error", "dfms must be a mapping or list", path="dfms")
         return issues
 
-    _lint_facet_source(issues, path, g, dfm_items, program, program_path)
+    _lint_facet_source(issues, path, g, dfm_items, program, program_path, data_folder)
     layout = _resolved_layout(issues, path, g)
 
     seen_ids: set[int] = set()
@@ -320,7 +332,7 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
                                         where=f"dfms.{dfm_id}.{_opto.SETTING_KEY}")
         if problem:
             _emit(issues, "error", problem, path=f"dfms.{dfm_id}.{_opto.SETTING_KEY}")
-        _lint_program_present(issues, path, g, dfm_id, dfm, program)
+        _lint_program_present(issues, g, dfm_id, dfm, program, data_folder)
 
         chambers = dfm.get("chambers") or dfm.get("Chambers")
         ## Per-DFM constraints the Experiment Type imposes (Progressive
@@ -403,13 +415,52 @@ def _file_generation(data_dir: Path, dfm_id: int) -> int | None:
     return detect_generation(head)
 
 
-def _lint_program_present(issues: list[LintIssue], path: Path, g: dict, dfm_id: int,
-                          dfm: dict, program) -> None:
+def _lint_data_folder(issues: list[LintIssue], path: Path, cfg: dict) -> Path | None:
+    """``data_folder:`` (ADR-0021): where the loader will read this config's
+    recording, or ``None`` when it would refuse to.
+
+    A location the loader refuses — missing, a file, holding the experiment
+    folder, or beside a recording of the experiment's own — is an error, in
+    the loader's own words.  An absolute value works but is not portable, and
+    a backslash is a separator on Windows only, so both are warnings.  Read
+    from this file's own key, as the loader reads the config it is given.
+    """
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    from .layout import DATA_FOLDER_KEY, data_location
+
+    location = data_location(path.parent, config=cfg)
+    value = cfg.get(DATA_FOLDER_KEY)
+    if location.referenced and isinstance(value, str):
+        ## Said before any error: on Linux a backslashed value names a folder
+        ## that does not exist, and this is why.
+        if PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute():
+            _emit(issues, "warning",
+                  f"{DATA_FOLDER_KEY}: {value} is an absolute path.  It works, but it is "
+                  f"not portable: it breaks when the share is mounted somewhere else.  "
+                  f"Prefer a path relative to this experiment's folder.",
+                  path=DATA_FOLDER_KEY)
+        if "\\" in value:
+            _emit(issues, "warning",
+                  f"{DATA_FOLDER_KEY}: {value} contains backslashes.  Write forward "
+                  f"slashes — a backslash is a folder separator on Windows only.",
+                  path=DATA_FOLDER_KEY)
+    if location.problem:
+        _emit(issues, "error", location.problem, path=DATA_FOLDER_KEY)
+        return None
+    return Path(location.path)
+
+
+def _lint_program_present(issues: list[LintIssue], g: dict, dfm_id: int,
+                          dfm: dict, program, data_folder: Path | None) -> None:
     """Decision 4: a firmware 4.0.0 recording (generation 3) names each
     Paradigm row by row, but only ``Program.txt`` gives its type and
     settings, so a DFM without its section is warned of loudly.  Not for a
     DFM whose light QC is switched off (``optogenetics: no``), which reads
-    no Paradigm."""
+    no Paradigm.  The recording is read in *data_folder*, where the loader
+    reads it; nothing is said when that location cannot be read."""
+    if data_folder is None:
+        return
     from . import opto_program as _opto
     from .opto_light import lacking_program, no_program_warning
 
@@ -421,7 +472,7 @@ def _lint_program_present(issues: list[LintIssue], path: Path, g: dict, dfm_id: 
             return
     except ValueError:
         pass                                   # reported as an error above
-    generation = _file_generation(path.parent / "data", dfm_id)
+    generation = _file_generation(data_folder, dfm_id)
     if generation is not None and lacking_program({dfm_id: generation}, program):
         _emit(issues, "warning", no_program_warning([dfm_id]), path=f"dfms.{dfm_id}")
 
@@ -499,7 +550,7 @@ def _lint_slices(issues: list[LintIssue], path: Path, g: dict) -> None:
 
 
 def _lint_facet_source(issues: list[LintIssue], path: Path, g: dict, dfm_items,
-                       program, program_path) -> None:
+                       program, program_path, data_folder: Path | None) -> None:
     """``facet_source`` (decision 7): a known value, not stated under a type
     that owns its Facets, not beside ``facet_cutoffs``, and for ``program``
     and ``program_cycles`` a ``Program.txt`` section for every DFM the loader
@@ -536,7 +587,7 @@ def _lint_facet_source(issues: list[LintIssue], path: Path, g: dict, dfm_items,
               path="global.facet_labels")
     ## The DFMs the loader will load: configured, not the Environmental
     ## Monitor, and with data when the data folder can be read.
-    from .project import dfm_ids_in_data
+    from .project import dfm_ids_in_folder
 
     ids: list[int] = []
     for raw_id, node in dfm_items:
@@ -546,7 +597,7 @@ def _lint_facet_source(issues: list[LintIssue], path: Path, g: dict, dfm_items,
             continue
         if not is_environmental_monitor(dfm_id):
             ids.append(dfm_id)
-    present = set(dfm_ids_in_data(path.parent))
+    present = set(dfm_ids_in_folder(data_folder)) if data_folder is not None else set()
     if present:
         ids = [d for d in ids if d in present]
     error = None

@@ -28,6 +28,13 @@ refuses to file at all rather than deciding which copy the analysis is of.
 Unlike PyTrackingAnalysis, whose experiment is one workbook, a FLIC recording
 is *many* files — one or more per DFM — so "more than one recording here" is
 the normal case and is never ambiguous on its own.
+
+**Where the recording is** is answered once, by :func:`data_location`
+(ADR-0021): the Member's own ``data/``, or the folder its ``data_folder:`` key
+names.  The loader, the disk cache, this classifier, the Project, Batch
+discovery, the linter, the Project Report and the Config Editor all ask it,
+so none of them can read a different folder from the others.  A referenced
+recording is only ever read: it is never filed, moved, or written beside.
 """
 
 from __future__ import annotations
@@ -37,12 +44,20 @@ import re
 import shutil
 from dataclasses import dataclass, field
 
+import yaml
+
 from .project import CONFIG_FILENAME
 from .utils import is_environmental_monitor
 
 #: Where a recording belongs, and where everything else loose is parked.
 DATA_DIRNAME = "data"
 EXTRA_DIRNAME = "extra_files"
+
+#: The top-level ``flic_config.yaml`` key naming the folder a Member reads its
+#: recording from instead of its own ``data/`` (ADR-0021).  It belongs to that
+#: one config: never under ``global:``, never in a Project design, never
+#: inherited by a scaffolded Member.
+DATA_FOLDER_KEY = "data_folder"
 
 #: The DFM export spellings the loader accepts: ``DFM3_1.csv`` (v3),
 #: ``DFM_3.csv`` and ``DFM_3_1.csv`` (v2).  Matched case-insensitively here so
@@ -84,6 +99,8 @@ NO_CONFIG = "no config"
 NO_RECORDING = "no recording"
 AMBIGUOUS = "ambiguous"
 UNREADABLE = "unreadable"
+#: A second Member reading a recording an earlier one already reads (ADR-0021).
+DUPLICATE = "duplicate"
 
 #: Which action clears each status.  ``None`` means no button can fix it.
 _FIX = {UNFILED: "file", NO_CONFIG: "config"}
@@ -91,7 +108,8 @@ _FIX = {UNFILED: "file", NO_CONFIG: "config"}
 
 @dataclass(frozen=True)
 class MemberLayout:
-    """What one directory is, from its layout alone — no config parsing.
+    """What one directory is, from its layout alone — no data read, and the
+    config parsed only when it names a ``data_folder:``.
 
     Named for the Project level it serves: a Project's subdirectories are its
     **Members**, and this is the per-Member fact the Batch walk, the Project
@@ -150,12 +168,17 @@ def _readable(directory) -> bool:
 
 
 def data_dir(directory) -> str:
-    """The directory's ``data/`` folder.
+    """The directory's own ``data/`` folder.
 
-    Exact-case, deliberately: :func:`pyflic.base.yaml_config.load_experiment_yaml`
-    builds ``experiment_dir / "data"`` and nothing else, so a ``Data/`` here is
-    a directory the loader cannot see — and calling it ``data/`` would make the
-    classifier say "healthy" where the loader says "no DFMs to load".
+    Exact-case, deliberately: the loader reads ``experiment_dir / "data"`` and
+    nothing else, so a ``Data/`` here is a directory the loader cannot see —
+    and calling it ``data/`` would make the classifier say "healthy" where the
+    loader says "no DFMs to load".
+
+    This is the folder a Member reads when its config names no
+    ``data_folder:``, and the one filing moves a recording into.  "Where is the
+    recording?" is :func:`data_location`'s question — the loader asks it too,
+    so the classifier and the loader cannot end up reading different folders.
     """
     return os.path.join(str(directory), DATA_DIRNAME)
 
@@ -228,6 +251,218 @@ def _loose_recording_files(directory) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
+# Where a Member's recording is (ADR-0021)
+# ---------------------------------------------------------------------------
+
+
+class DataLocationError(ValueError):
+    """A Member's ``data_folder:`` cannot be read as it stands — the folder is
+    missing, is a file, holds the Member itself, or competes with a recording
+    of the Member's own.  The message names the key, the value as written and
+    the resolved path."""
+
+
+#: Why a referenced location cannot be used; the classifier maps each to a
+#: Blocked Member status.
+_MISSING = "missing"
+_NOT_A_FOLDER = "not a folder"
+_NOT_A_PATH = "not a path"
+_CONFLICT = "conflict"
+_HOLDS_MEMBER = "holds the member"
+
+
+@dataclass(frozen=True)
+class DataLocation:
+    """Where one Member's recording is read from.
+
+    *path* is the folder the loader reads.  *written* is the ``data_folder:``
+    value exactly as the config spells it, or None when the Member reads its
+    own ``data/`` — in which case *path* is :func:`data_dir`'s answer and
+    nothing else about the Member has changed.  *problem* says why the loader
+    cannot read a referenced location; it is empty when it can.
+    """
+
+    path: str
+    written: str | None = None
+    problem: str = ""
+    kind: str = ""
+
+    @property
+    def referenced(self) -> bool:
+        """The Member names its data location in its config."""
+        return self.written is not None
+
+    @property
+    def identity(self) -> str:
+        """What two locations are compared by: one recording, one Member.
+        ``normcase`` because the lab's share is case-insensitive."""
+        return os.path.normcase(os.path.realpath(self.path))
+
+    def describe(self) -> str:
+        """The location said both ways, for a message or a report: the
+        resolved path, then the key as written.  Just the path without the
+        key."""
+        if not self.referenced:
+            return str(self.path)
+        return f"{self.path} ({DATA_FOLDER_KEY}: {self.written})"
+
+
+def configured_data_folder(directory, config=None, config_path=None):
+    """The ``data_folder:`` value for *directory*, as written, or None.
+
+    *config* is a config already parsed; otherwise the file at *config_path*
+    (default ``<directory>/flic_config.yaml``) is read.  A config that never
+    mentions the key is not parsed at all, so a Member without one costs a
+    file read and nothing it did before can change.  A config that cannot be
+    read or parsed counts as having no key: the loader reports a broken
+    config itself, and the classifier keeps the answer it always gave.  A
+    blank value is no key.
+    """
+    if config is None:
+        path = config_path or os.path.join(str(directory), CONFIG_FILENAME)
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            return None
+        if DATA_FOLDER_KEY not in text:
+            return None
+        try:
+            config = yaml.safe_load(text)
+        except yaml.YAMLError:
+            return None
+    if not isinstance(config, dict):
+        return None
+    value = config.get(DATA_FOLDER_KEY)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return value
+
+
+def resolve_data_folder(directory, value) -> str:
+    """*value* resolved against the Member folder *directory*.
+
+    An absolute value is kept as it is.  Resolution is the operating system's
+    own — ``realpath``, so ``..`` is taken after any symlink, exactly as an
+    ``open()`` of the joined path would take it.  Windows accepts backslashes
+    as separators natively; elsewhere a backslash is part of a name, which is
+    why the linter asks for forward slashes.
+    """
+    return os.path.realpath(os.path.join(os.path.abspath(str(directory)), str(value)))
+
+
+def _contains(folder, path) -> bool:
+    """*path* is *folder* or somewhere beneath it."""
+    folder = os.path.normcase(os.path.realpath(folder))
+    path = os.path.normcase(os.path.realpath(path))
+    try:
+        return os.path.commonpath([folder, path]) == folder
+    except ValueError:                      # different drives
+        return False
+
+
+def _recording_parts(directory) -> list[str]:
+    """Files in *directory* that would be part of a recording: a DFM export in
+    any spelling (the Environmental Monitor's too) or one of the files PyMCU
+    exports beside them, never a hidden file or an Excel lock file.  Used for a
+    Member's own ``data/``, where anything shaped like part of a recording is
+    one."""
+    return [name for name in _entries(directory)
+            if (_DFM_RE.match(name) or name.lower() in _RECORDING_COMPANIONS)
+            and not name.startswith(_IGNORED_PREFIXES)
+            and os.path.isfile(os.path.join(str(directory), name))]
+
+
+def _own_recording(directory, target) -> str:
+    """A recording the Member folder holds itself, as a path relative to it,
+    or ``""``.
+
+    In its own ``data/``, anything shaped like part of a recording counts
+    (:func:`_recording_parts`).  At its root, only what the ordinary
+    classifier counts as a loose recording — the DFM exports the loader would
+    find (:func:`dfm_files`) — so a ``units.csv`` or a ``notes.txt`` kept
+    beside the config is not mistaken for a second recording.
+
+    A folder that IS the target does not count: ``data_folder: data`` names
+    the Member's own ``data/``, and that is one recording, not two.  An empty
+    ``data/`` holds nothing, so it is not a conflict either.
+    """
+    places = []
+    local = data_dir(directory)
+    if os.path.isdir(local):
+        places.append((local, DATA_DIRNAME + "/", _recording_parts))
+    places.append((str(directory), "", dfm_files))
+    target = os.path.normcase(os.path.realpath(target))
+    for folder, prefix, recording in places:
+        if os.path.normcase(os.path.realpath(folder)) == target:
+            continue
+        found = recording(folder)
+        if found:
+            return prefix + found[0]
+    return ""
+
+
+def data_location(directory, *, config=None, config_path=None) -> DataLocation:
+    """Where the Member in *directory* reads its recording from.
+
+    Without ``data_folder:`` this is :func:`data_dir` — today's exact-case
+    ``data/`` — and nothing more is checked.  With it, the value is resolved
+    against *directory* and checked, in this order, for the problems that make
+    the loader refuse it: a value that is not a path; a location holding the
+    Member folder itself (everything pyflic writes for the Member goes there,
+    and nothing is ever written at a data location); a recording of the
+    Member's own beside the key ("which is the experiment?"); a location that
+    does not exist; and a file where a folder belongs.  Each problem names the
+    key, the value as written and the resolved path.
+
+    *config* (already parsed) or *config_path* (another config file) are for
+    a caller that has one; the default reads ``flic_config.yaml``.
+    """
+    directory = str(directory)
+    value = configured_data_folder(directory, config, config_path)
+    if value is None:
+        return DataLocation(data_dir(directory))
+
+    written = value if isinstance(value, str) else repr(value)
+    path = resolve_data_folder(directory, written)
+    where = f"{DATA_FOLDER_KEY}: {written} resolves to {path}"
+
+    def refused(kind, problem):
+        return DataLocation(path, written, problem, kind)
+
+    if not isinstance(value, str):
+        return refused(_NOT_A_PATH, f"{DATA_FOLDER_KEY}: {written} is not a folder path")
+    if _contains(path, directory):
+        return refused(
+            _HOLDS_MEMBER,
+            f"{where}, which holds the experiment folder "
+            f"{os.path.realpath(directory)} itself — the analysis is written "
+            "there, and nothing is ever written at a data location")
+    own = _own_recording(directory, path)
+    if own:
+        return refused(
+            _CONFLICT,
+            f"{where}, but {directory} also holds a recording of its own "
+            f"({own}) — which is the experiment?  Remove {DATA_FOLDER_KEY}: "
+            "or move the local recording out")
+    if not os.path.exists(path):
+        return refused(_MISSING, f"{where}, which does not exist")
+    if not os.path.isdir(path):
+        return refused(_NOT_A_FOLDER, f"{where}, which is a file, not a folder")
+    return DataLocation(path, written)
+
+
+def require_data_location(directory, *, config=None, config_path=None) -> DataLocation:
+    """:func:`data_location`, raising :class:`DataLocationError` for a
+    referenced location the loader cannot read.  The loader's entry point."""
+    location = data_location(directory, config=config, config_path=config_path)
+    if location.problem:
+        source = config_path or os.path.join(str(directory), CONFIG_FILENAME)
+        raise DataLocationError(f"{location.problem} (set in {source})")
+    return location
+
+
+# ---------------------------------------------------------------------------
 # Classification
 # ---------------------------------------------------------------------------
 
@@ -235,22 +470,36 @@ def _loose_recording_files(directory) -> tuple[str, ...]:
 def classify(directory) -> MemberLayout:
     """What *directory* is: healthy Member, Blocked Member, or neither.
 
-    Layout only — no YAML is parsed and no data is read, so this stays cheap
+    Layout only — no data is read, and the config is parsed only when it
+    mentions ``data_folder:`` (:func:`data_location`), so this stays cheap
     enough to run over every subdirectory of every Project in a Batch.
     """
     directory = str(directory)
-    name = os.path.basename(os.path.normpath(directory))
     if not os.path.isdir(directory):
-        return MemberLayout(directory, name, NOT_AN_EXPERIMENT)
+        return MemberLayout(directory, _name(directory), NOT_AN_EXPERIMENT)
+    return _classify(directory, data_location(directory))
+
+
+def _name(directory) -> str:
+    return os.path.basename(os.path.normpath(str(directory)))
+
+
+def _classify(directory, location: DataLocation) -> MemberLayout:
+    """:func:`classify` for a directory whose data location is already known
+    — the same answer, so :func:`members_in` can compare locations without
+    resolving each one twice."""
+    name = _name(directory)
     if not _readable(directory):
         ## Unknown is not the same as absent: a directory nobody can list may
         ## hold a Member, and silently dropping it would overstate the
         ## Project's coverage in both the preflight and the run summary.
         return MemberLayout(directory, name, UNREADABLE,
                             "cannot be listed (permissions?)")
+    if location.referenced:
+        return _classify_referenced(directory, name, location)
 
     configured = has_config(directory)
-    data = data_dir(directory)
+    data = location.path
     filed = dfm_files(data)
     loose = dfm_files(directory)
 
@@ -308,6 +557,44 @@ def classify(directory) -> MemberLayout:
     return MemberLayout(directory, name, NOT_AN_EXPERIMENT)
 
 
+def _classify_referenced(directory, name, location: DataLocation) -> MemberLayout:
+    """A Member whose config names its data folder (ADR-0021).
+
+    Decided by the loader's rule, applied to the folder the loader will read:
+    healthy when that folder holds a DFM export the loader would find,
+    blocked otherwise with the resolved path in the reason.  Never an
+    Unfiled Recording — DFM files in a referenced folder are where the loader
+    looks, and DFM files at the Member root beside the key are a conflict to
+    settle by hand, not something to file.
+    """
+    def blocked(status, detail):
+        return MemberLayout(directory, name, status, detail, (), True)
+
+    if location.problem:
+        status = (AMBIGUOUS if location.kind in (_CONFLICT, _HOLDS_MEMBER)
+                  else NO_RECORDING)
+        return blocked(status, location.problem)
+
+    where = f"{DATA_FOLDER_KEY}: {location.written} ({location.path})"
+    if dfm_files(location.path):
+        return MemberLayout(directory, name, OK, configured=True,
+                            dfm_ids=tuple(dfm_ids(location.path)))
+    lookalikes = _dfm_lookalikes(location.path)
+    if lookalikes:
+        return blocked(NO_RECORDING,
+                       f"{lookalikes[0]} in {where} is not loadable — the loader "
+                       "looks for DFM<id>_<n>.csv with that exact spelling")
+    detail = f"no DFM CSV in {where}"
+    nested = data_dir(location.path)
+    inside = dfm_files(nested) if os.path.isdir(nested) else []
+    if inside:
+        ## The usual slip: the key names the run folder, one level above the
+        ## data/ that holds the recording.
+        detail += (f"; its {DATA_DIRNAME}/ holds {inside[0]} — point "
+                   f"{DATA_FOLDER_KEY}: at that folder")
+    return blocked(NO_RECORDING, detail)
+
+
 def members_in(project_dir) -> list[MemberLayout]:
     """Classify every immediate subdirectory of *project_dir* that could be a
     Member, in name order.
@@ -319,12 +606,19 @@ def members_in(project_dir) -> list[MemberLayout]:
     they are the one thing that is reliably not a Member, and a Project root
     that is also an Experiment Directory would otherwise have its own ``data/``
     listed as an unfiled Member.
+
+    A configured Member that reads a recording an earlier one already reads
+    is reported as a :data:`DUPLICATE` (ADR-0021), by the rule
+    ``Project.__init__`` applies (:class:`DataLocations`).
     """
     found: list[MemberLayout] = []
     #: Real paths already taken: a symlinked copy of a Member must not be
     #: counted (and analyzed, and pooled) twice — the same rule the Batch walk
     #: enforces one level up, and the one ``Project.__init__`` applies.
     seen: set[str] = set()
+    #: Data locations already read, for the same rule one step further: two
+    #: Members naming one recording are one Member (ADR-0021).
+    reads = DataLocations()
     for name in _entries(project_dir):
         if name.startswith("."):
             continue
@@ -341,10 +635,48 @@ def members_in(project_dir) -> list[MemberLayout]:
         if real in seen:
             continue
         seen.add(real)
-        item = classify(path)
+        location = data_location(path)
+        if has_config(path):
+            first = reads.claim(name, location)
+            if first is not None:
+                found.append(MemberLayout(path, name, DUPLICATE,
+                                          duplicate_detail(first, location),
+                                          configured=True))
+                continue
+        item = _classify(path, location)
         if item.status != NOT_AN_EXPERIMENT:
             found.append(item)
     return found
+
+
+class DataLocations:
+    """The data locations a Project's Members read, first come first served.
+
+    One recording is analyzed once per Project (ADR-0009, extended by
+    ADR-0021): a Member whose data location an earlier one — in sorted order
+    — already reads is a duplicate.  Locations compare by
+    ``normcase(realpath(...))``.  The rule applies only when one of the two
+    names its location with ``data_folder:``; two plain Members whose
+    ``data/`` folders happen to be one folder are left as they always were.
+    """
+
+    def __init__(self) -> None:
+        self._taken: dict[str, tuple[str, DataLocation]] = {}
+
+    def claim(self, name: str, location: DataLocation) -> str | None:
+        """Record *name* reading *location*; return the earlier Member it
+        duplicates, or None when it is the first to read it."""
+        first = self._taken.get(location.identity)
+        if first is not None and (location.referenced or first[1].referenced):
+            return first[0]
+        self._taken.setdefault(location.identity, (name, location))
+        return None
+
+
+def duplicate_detail(first: str, location: DataLocation) -> str:
+    """Why a Member is a duplicate, naming the one that is kept."""
+    return (f"reads the same recording as {first} ({location.path}) — only "
+            f"{first} is analyzed")
 
 
 def initializable_dirs(project_dir) -> list[MemberLayout]:
@@ -440,6 +772,15 @@ def plan_filing(directory) -> FilingPlan:
     """
     directory = str(directory)
     plan = FilingPlan(directory)
+    location = data_location(directory)
+    if location.referenced:
+        ## Its recording lives where data_folder: says, and is only ever read
+        ## (ADR-0021).  Whatever is loose here is a conflict to settle by hand,
+        ## not a recording to move.
+        plan.refused = (f"its {CONFIG_FILENAME} reads the recording from "
+                        f"{DATA_FOLDER_KEY}: {location.written} — a member that "
+                        "names its data folder is never filed")
+        return plan
     item = classify(directory)
     if item.status != UNFILED:
         plan.refused = ("already filed" if item.status == OK else

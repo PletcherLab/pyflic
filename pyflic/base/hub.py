@@ -2674,13 +2674,32 @@ class AnalysisHubWindow(QMainWindow):
                 + "\n\nNothing was copied.  Opening the scaffolded config in "
                 "the config editor instead.")
             return False
+        ## data_folder: names the source member's own recording (ADR-0021):
+        ## copied, it would make this member a duplicate of that one, or —
+        ## being relative to the other folder — point somewhere else entirely.
+        ## Only then is the YAML rewritten (its comments lost); otherwise the
+        ## file is copied byte for byte, as it always was.
+        dropped = (isinstance(config, dict)
+                   and config.get(layout_mod.DATA_FOLDER_KEY) is not None)
         try:
-            shutil.copyfile(source, target)
+            if dropped:
+                kept = {k: v for k, v in config.items()
+                        if k != layout_mod.DATA_FOLDER_KEY}
+                target.write_text(
+                    _yaml.safe_dump(kept, sort_keys=False, allow_unicode=True),
+                    encoding="utf-8")
+            else:
+                shutil.copyfile(source, target)
         except Exception as err:  # noqa: BLE001
             QMessageBox.warning(self, "Copy config",
                                 f"Could not copy '{source.name}':\n{err}")
             return False
         self.log.append_line(f"[member] {name}: copied {source} to {target}")
+        if dropped:
+            self.log.append_line(
+                f"[member]   {layout_mod.DATA_FOLDER_KEY}: was not copied — it names "
+                f"{source.parent.name}'s recording; {name} reads its own data/ "
+                f"until its config names another.")
         ## Conforming is not the same as ready: a copied config carries the
         ## other member's chamber assignments, which are about that plate.
         self.log.append_line(

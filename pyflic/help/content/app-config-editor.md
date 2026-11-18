@@ -42,6 +42,11 @@ the save (see [Exclusion Groups and Slices](#exclusion-groups-and-slices)).
 
 ### Experiment Settings
 
+- **Data Folder** — where the recording is read from, when it is not the `data/` beside
+  this config: a path relative to this folder, with forward slashes. Blank (the usual
+  case) reads `data/`, and no key is written. pyflic only reads that folder; everything it
+  writes stays in this one. A Project's design never locks it, because it belongs to this
+  experiment alone. See [`data_folder`](config-structure.md#data-folder).
 - **Experiment Type** — the assay; its `?` opens
   [Experiment types](concepts-experiment-types.md). **The Experiment Type owns the Chamber
   Layout.** Choose *Hedonic Feeding* or *Progressive Ratio* and the layout is fixed for you
@@ -210,7 +215,7 @@ inherits. Per-DFM overrides are how counterbalancing is set up; see
 
 Opened on a Project's member, the editor fills the global settings from `project.yaml`,
 the exclusion groups and Slices among them, marks them read-only with a banner, and writes
-only `dfms:` — see
+only `dfms:`, and `data_folder:` when the member names one — see
 [Projects and members](concepts-project.md). Any save keeps the keys the editor does not
 show, `scripts:` above all, as they were.
 

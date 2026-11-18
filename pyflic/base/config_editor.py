@@ -1889,6 +1889,23 @@ class FLICConfigEditor(QMainWindow):
         self._exp_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._exp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
+        ## Where the recording is read (ADR-0021): the top-level data_folder:
+        ## key, this experiment's own, so a Project's design never locks it.
+        ## Blank is the experiment's own data/, and then no key is written.
+        self._data_folder_edit = QLineEdit()
+        self._data_folder_edit.setPlaceholderText("data/  (this folder's own)")
+        self._data_folder_edit.setToolTip(
+            "data_folder — the folder this experiment's recording is read from, "
+            "when it is not the data/ beside this file: relative to this folder, "
+            "with forward slashes, for example "
+            "../../../../../runs/flic/2026/R-20261020-asmith-01/data.  pyflic only "
+            "reads it; every output still goes in this folder.  Leave it blank to "
+            "read data/.")
+        self._data_folder_edit.textChanged.connect(self._refresh_opto_rows)
+        self._exp_form.addRow("Data Folder:", _with_help(
+            self._data_folder_edit, "config-structure#data-folder",
+            "Reading the recording from another folder"))
+
         ## The Experiment Type comes from the registry, so adding a type
         ## reaches this menu with no edit here — and so the retired layout
         ## names (two_well, single_well) cannot reappear in it (ADR-0007).
@@ -2582,11 +2599,16 @@ class FLICConfigEditor(QMainWindow):
             return True
         if self._current_path is None:
             return False
+        from .layout import DATA_FOLDER_KEY, data_location
         from .opto_program import find_program
 
         directory = self._current_path.parent
+        ## Where the loader would read Program.txt: data/, or the Data Folder
+        ## as it stands in the field (ADR-0021).
+        location = data_location(
+            directory, config={DATA_FOLDER_KEY: self._data_folder_edit.text().strip()})
         try:
-            if find_program(directory / "data") is not None:
+            if not location.problem and find_program(location.path) is not None:
                 return True
         except ValueError:
             return True             # more than one Program.txt: still optogenetic
@@ -3066,6 +3088,28 @@ class FLICConfigEditor(QMainWindow):
         else:
             cfg["global"] = self._global_section()
         cfg["dfms"] = [w.get_dict() for w in self._dfm_widgets]
+        return self._with_data_folder(cfg)
+
+    def _with_data_folder(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        """*cfg* with the Data Folder field's ``data_folder:`` (ADR-0021).
+
+        A value typed where there was none goes first, where labdata writes
+        it; a cleared field removes the key; a blank field never adds one, so
+        a config that did not name a data folder is saved without the key.  A
+        value that is not text was never shown in the field, and is kept as
+        the file has it unless something is typed over it.
+        """
+        from .layout import DATA_FOLDER_KEY
+
+        text = self._data_folder_edit.text().strip()
+        raw = cfg.get(DATA_FOLDER_KEY)
+        if text:
+            if raw != text:
+                rest = {k: v for k, v in cfg.items() if k != DATA_FOLDER_KEY}
+                cfg = {DATA_FOLDER_KEY: text, **rest} if raw is None else {
+                    k: (text if k == DATA_FOLDER_KEY else v) for k, v in cfg.items()}
+        elif raw is None or isinstance(raw, str):
+            cfg.pop(DATA_FOLDER_KEY, None)
         return cfg
 
     def _load_config(self, cfg: dict[str, Any]) -> None:
@@ -3079,6 +3123,12 @@ class FLICConfigEditor(QMainWindow):
         cell.
         """
         self._loaded_raw = dict(cfg)
+        from .layout import DATA_FOLDER_KEY
+
+        folder = cfg.get(DATA_FOLDER_KEY)
+        self._data_folder_edit.blockSignals(True)
+        self._data_folder_edit.setText(folder if isinstance(folder, str) else "")
+        self._data_folder_edit.blockSignals(False)
         self._read_design()
         effective = dict(cfg)
         if self._design:
@@ -3356,6 +3406,7 @@ class FLICConfigEditor(QMainWindow):
     def _new(self) -> None:
         self._current_path = None
         self._loaded_raw = {}
+        self._data_folder_edit.clear()
         self._design = None
         self._design_source = None
         self._apply_design()

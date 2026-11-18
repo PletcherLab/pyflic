@@ -34,13 +34,18 @@ def member_table(project) -> pd.DataFrame:
     """One row per Member: what went in, and what was left out, and the
     Generation of its recordings, read from its saved outputs.  A Member
     without Training information (generation 2, decision 15) says so in a
-    ``Note`` column, present when any Member needs one."""
+    ``Note`` column, present when any Member needs one.  A ``Data folder``
+    column, present when any Member names its ``data_folder:`` (ADR-0021),
+    gives where each recording was read: the resolved path and the key as
+    written, or ``data/``."""
     from .light_summary import NO_TRAINING_INFORMATION
 
     exclusions = project.aggregated_exclusions()
     excluded = (exclusions.groupby("Experiment").size().to_dict()
                 if not exclusions.empty else {})
     no_training = set(project.generation_2_members())
+    locations = {name: project.member_data_location(name) for name in project.member_names}
+    referenced = any(location.referenced for location in locations.values())
     rows = []
     for name in project.member_names:
         status = project.member_status(name)
@@ -57,6 +62,9 @@ def member_table(project) -> pd.DataFrame:
             "Faceted": "yes" if status["faceted"] else "no",
             "Report": "yes" if status["report"] else "no",
         }
+        if referenced:
+            location = locations[name]
+            row["Data folder"] = location.describe() if location.referenced else "data/"
         if no_training:
             row["Note"] = NO_TRAINING_INFORMATION if name in no_training else ""
         rows.append(row)
@@ -566,7 +574,7 @@ def _member_programs(project, light: pd.DataFrame | None) -> tuple[list, dict]:
     keys: dict = {}
     for name, rows in light[generation == GENERATION_PARADIGM].groupby("Experiment", sort=False):
         try:
-            path = op.find_program(os.path.join(project.member_dir(str(name)), "data"))
+            path = op.find_program(project.member_data_location(str(name)).path)
             program = op.read_program(path) if path is not None else None
         except (op.ProgramError, OSError, ValueError):
             program = None

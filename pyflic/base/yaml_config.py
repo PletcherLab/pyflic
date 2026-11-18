@@ -249,13 +249,17 @@ def load_experiment_yaml(
     Load an experiment from a experiment directory.
 
     Reads ``experiment_dir/<config_name>`` (default ``flic_config.yaml``) and
-    loads DFM data from ``experiment_dir/data``.
+    loads DFM data from ``experiment_dir/data`` — or, when the config names a
+    ``data_folder:`` (ADR-0021), from that folder, resolved against
+    *experiment_dir* and only ever read.  A ``data_folder:`` the loader cannot
+    use raises :class:`~pyflic.base.layout.DataLocationError`.
 
     Parameters
     ----------
     experiment_dir:
         Project root directory.  Must contain the selected config file.
-        Data is read from *experiment_dir/data*.  The returned ``Experiment``
+        Data is read from *experiment_dir/data*, or the config's
+        ``data_folder:``.  The returned ``Experiment``
         stores this so that downstream helpers (``write_qc_reports``,
         ``write_summary``, ``_auto_save_fig``) write to
         ``experiment_dir/<config_stem>/qc`` and
@@ -318,6 +322,20 @@ def load_experiment_yaml(
     cfg = yaml.safe_load(path.read_text())
     if not isinstance(cfg, Mapping):
         raise ValueError("YAML root must be a mapping/object.")
+
+    ## Where the recording is (ADR-0021): the experiment's own data/, or the
+    ## folder its data_folder: names — the classifier's own answer, so the two
+    ## cannot read different folders.  A location the loader cannot use stops
+    ## here, before anything is read or written, naming the key, the value as
+    ## written and the resolved path.
+    from . import layout as _layout
+
+    data_location = _layout.require_data_location(
+        resolved_experiment_dir, config=dict(cfg), config_path=str(path))
+    data_dir = Path(data_location.path)
+    #: How messages name the recording folder: "data/" as always, or, for a
+    #: referenced one, where it is and the key as written.
+    data_label = data_location.describe() if data_location.referenced else "data/"
 
     global_cfg = dict(cfg.get("global", {}) or {})
     ## Design inheritance (ADR-0005): inside a Project a Member normally
@@ -394,8 +412,6 @@ def load_experiment_yaml(
     # default (True — apply the 0.25-power transform) is preserved.
     _tl_raw = global_cfg.get("transform_licks", True)
     transform_licks_default = bool(_tl_raw)
-
-    data_dir = resolved_experiment_dir / "data"
 
     dfm_nodes = cfg.get("dfms", cfg.get("DFMs", None))
     if dfm_nodes is None:
@@ -618,17 +634,18 @@ def load_experiment_yaml(
     if config_only:
         import warnings
         warnings.warn(
-            f"DFM(s) in config but missing from data/: {config_only} — skipping these.",
+            f"DFM(s) in config but missing from {data_label}: {config_only} — skipping these.",
             stacklevel=1,
         )
-        print(f"  WARNING: DFM(s) in config but not in data/: {config_only}", flush=True)
+        print(f"  WARNING: DFM(s) in config but not in {data_label}: {config_only}",
+              flush=True)
     if data_only:
         import warnings
         warnings.warn(
-            f"DFM data file(s) in data/ but not in config: {data_only} — ignoring these.",
+            f"DFM data file(s) in {data_label} but not in config: {data_only} — ignoring these.",
             stacklevel=1,
         )
-        print(f"  WARNING: DFM(s) in data/ but not in config: {data_only}", flush=True)
+        print(f"  WARNING: DFM(s) in {data_label} but not in config: {data_only}", flush=True)
 
     # Only load DFMs that are in both config and data.
     dfm_specs = [s for s in dfm_specs if s[0] in data_ids]
@@ -656,7 +673,8 @@ def load_experiment_yaml(
 
     n_total = len(dfm_specs)
     dfm_ids_str = ", ".join(str(s[0]) for s in dfm_specs)
-    print(f"Loading {n_total} DFM(s) [{dfm_ids_str}] from {data_dir}", flush=True)
+    print(f"Loading {n_total} DFM(s) [{dfm_ids_str}] from {data_location.describe()}",
+          flush=True)
 
     loaded: dict[int, DFM] = {}
     #: DFMs with no row in the range: where each recording ended.
@@ -765,6 +783,8 @@ def load_experiment_yaml(
         design_factors=design_factors or None,
         chamber_factors=chamber_factors_map or None,
         config_path=path,
+        data_dir=data_dir,
+        data_location=data_location,
         experiment_dir=resolved_experiment_dir,
         config={"global": global_cfg, **resolved_cfg},
         experiment_type=exp_type,
@@ -814,6 +834,7 @@ def load_experiment_yaml(
             range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
             transform_licks=transform_licks_default,
             extra=cache_extra,
+            data_location=data_location,
         )
         if cached is not None:
             print("Loaded feeding summary from disk cache.", flush=True)
@@ -830,6 +851,7 @@ def load_experiment_yaml(
                 range_minutes=(float(range_minutes[0]), float(range_minutes[1])),
                 transform_licks=transform_licks_default,
                 extra=cache_extra,
+                data_location=data_location,
             )
         except Exception as e:  # pragma: no cover
             print(f"  (disk cache write skipped: {e})", flush=True)

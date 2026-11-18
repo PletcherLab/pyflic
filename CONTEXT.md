@@ -31,10 +31,23 @@ _Avoid_: study, collection, batch parent, parent directory.
 
 **Experiment Directory**:
 One FLIC recording's directory — `flic_config.yaml` at its root, a `data/`
-folder of raw DFM CSVs, and the outputs pyflic writes — either standalone or
-as a Member inside a Project.
+folder of raw DFM CSVs (or a **Data Folder** named elsewhere), and the outputs
+pyflic writes — either standalone or as a Member inside a Project.
 _Avoid_: project, project directory (the pre-overhaul name), folder,
 dataset directory.
+
+**Data Folder**:
+The folder a recording is read from: an Experiment Directory's own `data/`, or
+the folder its config's top-level `data_folder:` names, relative to the
+Experiment Directory (ADR-0021). It holds the DFM CSVs and the `Program.txt`,
+`Messages.csv` and `Baselines.csv` PyMCU exports beside them. A named one is
+only ever read — never filed into, cached in or written beside — so a Member
+can read a locked run's recording while everything pyflic writes for it stays
+in the Member. The key is the config's own: never under `global:`, never in a
+Design, never copied to another Member. One Data Folder is read by at most one
+Member of a Project; a second is a **duplicate**. `data_dir:` is not this: it
+was retired in April 2026 and is never read.
+_Avoid_: data dir, data path, data root, source folder.
 
 **Member**:
 An Experiment Directory inside a Project — one of the several *different*
@@ -55,9 +68,12 @@ and pyflic's do not), run, dataset.
 **Blocked Member**:
 A folder inside a Project that a run cannot use as it stands: an **Unfiled
 Recording** (DFM CSVs at its root rather than in `data/`), a recording with no
-`flic_config.yaml`, or a configured directory with no DFM CSV at all
-(ADR-0009). Blocked is decided by layout alone — no YAML parsed, no data read —
-using the loader's own test, so a directory the classifier calls healthy is one
+`flic_config.yaml`, a configured directory with no DFM CSV at all
+(ADR-0009), a **Data Folder** that is missing or competes with a recording of
+the Member's own, or a **duplicate** — a second Member reading a Data Folder an
+earlier one already reads (ADR-0021). Blocked is decided by layout alone — no
+data read, and the config parsed only when it names a `data_folder:` — using
+the loader's own test, so a directory the classifier calls healthy is one
 the loader can actually open. Blocked is a property of the **Member**, never of
 the Project: a Project with four healthy members and one blocked one runs the
 four, and a run is never refused because of one. Blocked Members are named when
@@ -895,6 +911,9 @@ _Avoid_: manual, documentation, the docs, USAGE.
   (`project.yaml`, `flic_config.yaml`). A Project's Members are its *immediate*
   children; a Batch's Projects may sit at any depth, found by a walk that prunes
   at each Project (ADR-0009).
+- An **Experiment Directory** reads one **Data Folder**, and a **Project** reads
+  each Data Folder through at most one **Member**; Members of different
+  Projects may read the same one, each with its own **Design**.
 - **Blocked** is a property of a **Member**, never of its **Project**, and never
   refuses a run. Discovery, blocked status, and filing are Batch-level concerns
   but Member-level facts, so the Project panel and the **Preflight** read the

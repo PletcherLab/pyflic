@@ -262,6 +262,11 @@ def _cover(experiment: Experiment, qc: dict, name: str) -> list[Any]:
     rows: list[tuple[str, str]] = []
     if experiment.experiment_dir is not None:
         rows.append(("Directory", str(experiment.experiment_dir)))
+    location = getattr(experiment, "data_location", None)
+    if location is not None and location.referenced:
+        ## Where the recording was read, both ways (ADR-0021); an experiment
+        ## reading its own data/ keeps the cover it always had.
+        rows.append(("Data folder", location.describe()))
     if experiment.slice is not None:
         ## A Slice is its own analysis of these minutes (ADR-0020).
         rows.append(("Slice", f"{experiment.slice.name}, minutes "

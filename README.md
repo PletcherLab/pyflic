@@ -65,6 +65,22 @@ my_project/
     ...
 ```
 
+A member may instead read its recording from a folder outside the Project — a run folder
+that must not change — named by `data_folder:` at the top of its `flic_config.yaml`,
+relative to the member and with forward slashes:
+
+```yaml
+data_folder: ../../../../../runs/flic/2026/R-20261020-asmith-01/data
+dfms:
+  - id: 1
+    chambers: {1: Ctrl, 2: Exp}
+```
+
+pyflic only reads that folder: the analysis, QC, reports and cache stay in the member, and
+two members of one Project never read the same recording. Without the key nothing changes,
+and the retired `data_dir:` stays ignored. See
+[`data_folder`](pyflic/help/content/config-structure.md#data-folder).
+
 A folder with Projects **anywhere beneath it** is a **Batch** — nothing marks it, being
 one is structural. Discovery is recursive and stops at each Project, so
 `Sept2026/ProjA` and `Archive/2025/ProjC` are both found from one batch folder, and a
