@@ -58,9 +58,13 @@ DUPLICATE = "Z-also-test-01"
 IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 #: The linter's warning about the retired key, exactly as it has read since
-#: 2026-04-16 (commit 5769e9a).  It must not change.
+#: 2026-04-16 (commit 5769e9a).  It must not change for a config without
+#: ``data_folder:``.
 DATA_DIR_WARNING = ("'data_dir' is no longer used and should be removed; "
                     "data is always read from experiment_dir/data/")
+#: The same warning beside ``data_folder:``, where "always data/" is untrue.
+DATA_DIR_BESIDE_KEY_WARNING = ("'data_dir' is no longer used and should be removed; "
+                               "data is read from the folder data_folder: names")
 
 
 def quiet(fn, *args, **kwargs):
@@ -638,8 +642,11 @@ def test_a_csv_that_is_not_a_recording_beside_the_key_leaves_the_member_healthy(
     assert load(member).dfms
 
 
-@pytest.mark.parametrize("name", ["DFM1_0.csv", "dfm1_0.csv", "Program.txt", "Messages.csv"])
+@pytest.mark.parametrize("name", ["DFM1_0.csv", "dfm1_0.csv", "Program.txt", "Messages.csv",
+                                  "Baselines.csv"])
 def test_a_recording_file_in_the_local_data_folder_still_conflicts(tmp_path, name):
+    """Each on its own, a companion file included: which program, log or
+    baselines go with the experiment is not pyflic's guess to make."""
     member = referencing_member(tmp_path)
     (member / "data").mkdir()
     (member / "data" / name).write_text("x\n", encoding="utf-8")
@@ -1000,11 +1007,14 @@ def test_f4_slice_output_lands_in_the_member_and_never_in_the_referenced_folder(
 # F6: data_dir stays dead
 # ---------------------------------------------------------------------------
 
-def test_f6_data_dir_still_reads_the_members_own_data_folder(tmp_path):
+@pytest.mark.parametrize("extra", [{}, {KEY: ""}], ids=["no data_folder", "blank data_folder"])
+def test_f6_data_dir_still_reads_the_members_own_data_folder(tmp_path, extra):
+    """Without ``data_folder:`` (a blank one is none) the retired key is
+    ignored, ``data/`` is read, and the warning is word for word what it was."""
     other = write_simple(tmp_path / "other", seed=99, bout=14)
     member = tmp_path / "exp"
     write_simple(member / "data", seed=1)
-    write_config(member, {"data_dir": str(other), "global": simple_global(),
+    write_config(member, {"data_dir": str(other), **extra, "global": simple_global(),
                           "dfms": simple_dfms()})
     assert not layout.data_location(member).referenced
     exp = load(member)
@@ -1012,6 +1022,22 @@ def test_f6_data_dir_still_reads_the_members_own_data_folder(tmp_path):
     issues = lint_flic_config(member / prj.CONFIG_FILENAME)
     assert [i.message for i in issues if i.path == "data_dir"] == [DATA_DIR_WARNING]
     assert all(i.severity == "warning" for i in issues if i.path == "data_dir")
+
+
+def test_f6_beside_data_folder_data_dir_is_ignored_and_the_warning_names_the_key(tmp_path):
+    """With both keys the recording is the one ``data_folder:`` names — never
+    ``data_dir:``'s — and the warning says so rather than "always data/"."""
+    stale = write_simple(tmp_path / "someones-pc", seed=99, bout=14)
+    member = referencing_member(tmp_path, data_dir=str(stale))
+    target = os.path.realpath(tmp_path / "runs" / "R1" / "data")
+    exp = load(member)
+    assert {os.path.dirname(os.path.realpath(p)) for p in exp.dfms[1].source_files} == {target}
+    issues = lint_flic_config(member / prj.CONFIG_FILENAME)
+    (warning,) = [i for i in issues if i.path == "data_dir"]
+    assert warning.severity == "warning"
+    assert warning.message == DATA_DIR_BESIDE_KEY_WARNING
+    assert not any("always read" in i.message for i in issues)
+    assert not [i for i in issues if i.severity == "error"]
 
 
 # ---------------------------------------------------------------------------

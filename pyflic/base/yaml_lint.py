@@ -159,16 +159,22 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
         return issues
 
     # Top-level keys
-    from .layout import DATA_FOLDER_KEY
+    from .layout import DATA_FOLDER_KEY, configured_data_folder
 
     expected_top = {"global", "dfms", "DFMs", "scripts", DATA_FOLDER_KEY}
     for k in cfg.keys():
         if k == "data_dir":
+            ## Word for word as it has read since data_dir was retired, unless
+            ## the config also names data_folder: (ADR-0021), where "always
+            ## data/" would be untrue.  A blank data_folder: is no key.
+            if configured_data_folder(path.parent, cfg) is None:
+                where = "data is always read from experiment_dir/data/"
+            else:
+                where = f"data is read from the folder {DATA_FOLDER_KEY}: names"
             _emit(
                 issues,
                 "warning",
-                "'data_dir' is no longer used and should be removed; "
-                "data is always read from experiment_dir/data/",
+                f"'data_dir' is no longer used and should be removed; {where}",
                 path="data_dir",
             )
         elif k not in expected_top:

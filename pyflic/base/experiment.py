@@ -445,7 +445,8 @@ class Experiment:
         ----------
         experiment_dir:
             Root directory for the experiment project.  Must contain
-            ``flic_config.yaml``.  Data is always read from ``experiment_dir/data``.
+            ``flic_config.yaml``.  Data is read from ``experiment_dir/data``, or
+            from the folder the config's ``data_folder:`` names (ADR-0021).
         range_minutes:
             ``(start, end)`` time window in minutes.  ``(0, 0)`` means load all.
         parallel:

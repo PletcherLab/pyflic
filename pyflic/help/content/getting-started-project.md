@@ -76,8 +76,9 @@ CSVs left at the folder's root rather than in `data/` are not read. Inside a Pro
 shows such a folder as a **blocked member** and offers to file them for you.
 
 > **The `data_dir` key no longer exists.** Older configurations sometimes carry one. Data
-> is always read from `<experiment directory>/data/`, and `pyflic lint` will flag a leftover
-> `data_dir` so you can delete it.
+> is read from `<experiment directory>/data/`, or from the folder
+> [`data_folder`](config-structure.md#data-folder) names, and `pyflic lint` will flag a
+> leftover `data_dir` so you can delete it.
 
 ## More than one experiment
 

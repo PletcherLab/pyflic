@@ -46,8 +46,11 @@ pyflic had a key for this once.  `data_dir:` stopped being read on 2026-04-16
 
 - **Not `data_dir:`.**  Old configs on the lab drive still carry `data_dir:`
   set to absolute paths on someone's own PC.  Honouring that key again would
-  send their reads to the wrong place without a word, so it stays dead and its
-  lint warning stays word for word.  The new meaning gets a new name.
+  send their reads to the wrong place without a word, so it stays dead.  Its
+  lint warning stays word for word for a config without `data_folder:`; beside
+  that key, where "always read from experiment_dir/data/" would be untrue, it
+  says data is read from the folder `data_folder:` names.  The new meaning gets
+  a new name.
 
 - **Relative to the Member folder, forward slashes.**
   `../../../../../runs/flic/2026/R-20261020-asmith-01/data` is what labdata
@@ -93,8 +96,10 @@ pyflic had a key for this once.  `data_dir:` stopped being read on 2026-04-16
   (**ambiguous**: which is the experiment?); or when the named folder holds the
   Member folder itself (**ambiguous**: the analysis would be written inside the
   recording).  "A recording of its own" is pyflic's recording, not every
-  file: in the Member's own `data/`, anything shaped like part of one — a DFM
-  export in any spelling, `Program.txt`, `Messages.csv`, `Baselines.csv`; at
+  file: in the Member's own `data/`, anything shaped like part of one, each on
+  its own — a DFM export in any spelling, or a lone `Program.txt`,
+  `Messages.csv` or `Baselines.csv`, since which program goes with the
+  experiment is not pyflic's guess to make; at
   its root, only what the ordinary classifier counts as a loose recording, the
   DFM exports the loader would find.  So a `units.csv` or `notes.txt` beside
   the config is just a file.  Hidden files, Excel lock files, the Exclusion
@@ -173,8 +178,9 @@ Rejected:
   fix is deciding which Member should read that recording.
 - `.pyflic_cache/` stays in the Member folder.  labdata's layout rule against
   caches in study folders is a separate question.
-- The retired key's lint warning still says data is "always read from
-  experiment_dir/data/", now true only of a config without `data_folder:`.  It
-  is kept word for word, by decision, so nothing about an old config's
-  messages changes.
+- The retired key's lint warning has two wordings.  A config without
+  `data_folder:` (or with a blank one) gets the one it always got, so nothing
+  about an old config's messages changes.  A config with both keys is told that
+  data is read from the folder `data_folder:` names, and the warning about
+  `data_dir:` stays a warning.
 - `layout.py` and `hub.py` are mirrored files; `MIRRORED.md` records the port.
