@@ -176,7 +176,7 @@ class HedonicFeedingExperiment(TwoWellExperiment):
             else:
                 out = Path(path).expanduser().resolve()
             out.parent.mkdir(parents=True, exist_ok=True)
-            p.save(str(out), dpi=dpi)
+            p.save(str(out), dpi=dpi, verbose=False)
 
         return p
 

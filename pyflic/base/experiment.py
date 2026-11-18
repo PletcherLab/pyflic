@@ -3052,7 +3052,7 @@ class Experiment:
             ncols=ncols,
             figsize=figsize,
         )
-        p.save(str(out), dpi=dpi)
+        p.save(str(out), dpi=dpi, verbose=False)
         return out
 
     def execute_basic_analysis(

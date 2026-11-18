@@ -77,7 +77,7 @@ def _save_figure(fig, path: Path, log) -> None:
     """Save a plotnine ggplot or a matplotlib Figure to *path*."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if hasattr(fig, "save"):
-        fig.save(str(path), dpi=300)
+        fig.save(str(path), dpi=300, verbose=False)
     else:
         fig.savefig(str(path), dpi=300, bbox_inches="tight")
     log(f"Wrote: {path}")
