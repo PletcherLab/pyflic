@@ -113,6 +113,9 @@ becomes the standard. The Design is **reinforced downwards**: a Member's config
 opens in the config editor with the Design's values shown read-only and its
 `global:` omitted on save, per-DFM overrides limited to the physical keys, and
 saving a Design offers to delete any `global:` block a Member still carries.
+Changing a setting after Members were analysed makes each read **"re-run
+needed"** until it runs again; a save that changes no setting (a Selection
+tick, a Project Script, the notes) does not (ADR-0022).
 _Avoid_: defaults, template (a Design is enforced, not inherited-and-
 overridable).
 
@@ -268,7 +271,10 @@ recording and stays in a Slice that ends at hour 6. Authoring in bulk is the **E
 Sheet**'s job, one level up. A Member whose declaration is newer than its saved
 `feeding_summary.csv` reads **"re-run needed"** rather than "analyzed": those
 results describe a chamber population nobody asked for, and a date beside them
-would be true about a number that is not. The Combined Analysis stacks only
+would be true about a number that is not. So does one whose settings changed
+after its analysis: each saved summary has `analysis_settings.json` beside it,
+the Design and config settings it was computed with, and any that differ now
+are named (ADR-0022). The Combined Analysis stacks only
 filtered rows and writes an aggregated exclusions table (Experiment, DFM,
 Chamber, Source, Note) into the Project Report.
 _Avoid_: dropped chamber, filtered chamber, QC filter (data quality is a

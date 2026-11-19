@@ -88,8 +88,9 @@ PROJECT_ACTIONS: list[ProjectAction] = [
         params=[
             Param(key="skip_analyzed", label="Skip already-analyzed", type="bool",
                   default=False,
-                  note="Skip members that already have a saved "
-                       "feeding_summary.csv."),
+                  note="Skip members whose saved feeding_summary.csv is "
+                       "up to date.  A member reading 're-run needed' — its "
+                       "exclusions or settings changed since — runs again."),
             Param(key="reports", label="Also write per-member reports",
                   type="bool", default=False),
         ],

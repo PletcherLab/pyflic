@@ -165,10 +165,20 @@ def _additional_qss() -> str:
         font-size: 14pt;
         font-weight: 600;
     }
-    QPlainTextEdit#PyflicLog {
-        font-family: "JetBrains Mono", "Menlo", "Consolas", monospace;
-        font-size: 10pt;
-    }
+    """ + _log_qss()
+
+
+def _log_qss() -> str:
+    """The Output and Errors logs in a fixed-width family this machine has:
+    a stylesheet list falls back to a proportional font when its first
+    family is missing, and the logs' tables and indentation then misalign."""
+    from .fonts import LOG_POINT_SIZE, fixed_family
+
+    return f"""
+    QPlainTextEdit#PyflicLog {{
+        font-family: "{fixed_family()}";
+        font-size: {LOG_POINT_SIZE}pt;
+    }}
     """
 
 

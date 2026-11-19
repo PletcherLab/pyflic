@@ -1,7 +1,10 @@
 """Rich rendering for the predominantly-text surfaces (Output log, text tabs).
 
-Prose gets the app's proportional font with real headings; the monospace
-font is reserved for TABULAR content, where alignment carries meaning.
+The Output and Errors logs are wholly in a fixed-width font (the widget's,
+:mod:`pyflic.base.ui.fonts`): every line keeps its spacing exactly, so what an
+analysis prints as a table lines up and its indentation shows.  The text tabs
+give prose the app's proportional font with real headings, and keep the
+fixed-width font for TABULAR blocks, where alignment carries meaning.
 On-screen numbers show at most four decimal places (0.0000).
 
 Every size in the generated HTML is relative (named sizes, no absolute pt),
@@ -15,11 +18,17 @@ import html
 import io
 import re
 
-#: The stack the theme previously forced on the whole log — now applied only
-#: to tabular spans and blocks. Single-quoted: these land inside
-#: double-quoted style="" attributes, where inner double quotes would
-#: terminate the attribute and silently drop the span.
-MONO_FAMILY = "'JetBrains Mono', 'Menlo', 'Consolas', monospace"
+from .fonts import PREFERRED_FIXED_FAMILIES
+
+#: The fixed-width stack for tabular blocks in the text tabs, in the logs'
+#: order of preference. Single-quoted: these land inside double-quoted
+#: style="" attributes, where inner double quotes would terminate the
+#: attribute and silently drop the span.
+MONO_FAMILY = ", ".join([f"'{f}'" for f in PREFERRED_FIXED_FAMILIES] + ["monospace"])
+
+#: Columns between tab stops, as a terminal has them: text printed with tabs
+#: was laid out against these.
+_TAB_STOP = 8
 
 #: Muted gray that reads on both light and dark surfaces.
 _MUTED = "#8a8a8a"
@@ -61,9 +70,12 @@ def _esc(text: str) -> str:
 
 
 def _fixed(text: str) -> str:
-    """Escape *text* for a mono span, preserving its exact spacing."""
-    out = _esc(text).replace("\t", "&nbsp;" * 4)
-    return re.sub(r" {2,}", lambda m: "&nbsp;" * len(m.group(0)), out)
+    """Escape *text* for fixed-width display, preserving its exact spacing:
+    tabs expanded to their stops, and leading spaces and runs of two or more
+    kept rather than collapsed as HTML would.  Single interior spaces stay
+    ordinary, so a long line can still wrap there."""
+    out = _esc(text.expandtabs(_TAB_STOP))
+    return re.sub(r"^ +| {2,}", lambda m: "&nbsp;" * len(m.group(0)), out)
 
 
 # ---------------------------------------------------------------------------
@@ -71,14 +83,15 @@ def _fixed(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def log_line_to_html(text: str) -> str:
-    """One log line as rich text: proportional prose, a muted ``[prefix]``,
-    error/warning/success accents, and monospace only when the line's
-    spacing is doing tabular work."""
+    """One log line as rich text for a fixed-width log: its spacing kept, a
+    muted ``[prefix]``, and error/warning/success accents on prose.
+
+    A line whose spacing does tabular work (a table row, a traceback, a
+    block indented four spaces) is shown exactly as printed, with long
+    decimals shortened in place so its columns stay aligned."""
+    if looks_tabular(text) or text.startswith(("Traceback", '  File "', "    ")):
+        return _fixed(_shorten_padded(text))
     line = shorten_decimals(text)
-    if looks_tabular(line) or line.startswith(
-            ("Traceback", '  File "', "    ")):
-        return (f'<span style="font-family:{MONO_FAMILY}">'
-                f"{_fixed(line)}</span>")
     if line.startswith("── "):
         return f'<b style="font-size:large">{_esc(line[3:].strip())}</b>'
 
@@ -97,7 +110,7 @@ def log_line_to_html(text: str) -> str:
         prefix_html = (f'<span style="color:{_MUTED}">'
                        f"[{_esc(m.group(1))}]</span> ")
         body = line[m.end():]
-    inner = _esc(body)
+    inner = _fixed(body)
     if color:
         inner = f'<span style="color:{color}">{inner}</span>'
     return prefix_html + inner

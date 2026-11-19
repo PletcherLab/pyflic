@@ -69,6 +69,11 @@ class Experiment:
     experiment_type: Any = None            # ExperimentType strategy (ADR-0007)
     chamber_layout: str | None = None      # 'single_well' | 'two_well'
     config: dict = field(default_factory=dict)   # the resolved yaml
+    #: The settings this load was made from, as the files stated them
+    #: (:func:`pyflic.base.analysis_settings.settings`): recorded beside every
+    #: ``feeding_summary.csv`` so a later change reads "re-run needed"
+    #: (ADR-0022).  ``None`` for an experiment not loaded from a config.
+    analysis_settings: dict | None = None
     transform_licks: bool = True
     parallel: bool | None = None
     executor: Literal["threads", "processes"] | None = None
@@ -2618,6 +2623,9 @@ class Experiment:
         (ADR-0008).
         Raises ``ValueError`` if neither *path* nor ``experiment_dir`` is set.
         Only includes DFM chambers assigned to a treatment.
+
+        The analysis's own summary gets ``analysis_settings.json`` beside it,
+        the settings it was computed from (ADR-0022).
         """
         if path is None:
             if self.analysis_dir is None:
@@ -2629,6 +2637,11 @@ class Experiment:
         out.parent.mkdir(parents=True, exist_ok=True)
         df = self.feeding_summary(range_minutes=range_minutes, transform_licks=transform_licks)
         df.to_csv(out, index=False)
+        if (self.analysis_settings is not None and self.analysis_dir is not None
+                and out == (self.analysis_dir / "feeding_summary.csv").expanduser().resolve()):
+            from . import analysis_settings
+
+            analysis_settings.write(out.parent, self.analysis_settings)
         return out
 
     # ------------------------------------------------------------------

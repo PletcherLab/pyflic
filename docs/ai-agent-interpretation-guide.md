@@ -386,7 +386,11 @@ Check each of these and report anything that fails:
 - **Stale member results.** If a Member's `remove_chambers.csv` is newer than its
   `analysis/feeding_summary.csv`, its results were computed before its current
   exclusions (the Hub calls this *re-run needed*). Those numbers describe a
-  chamber population nobody asked for.
+  chamber population nobody asked for. Likewise, `analysis/analysis_settings.json`
+  records the Design and config settings the summary was computed with; any that
+  differ from `project.yaml`'s `design: global:` or the Member's
+  `flic_config.yaml` now (other than `omit:` and the Slice keys) mean the
+  numbers came from settings nobody is asking for any more.
 - **Stale Combined Analysis.** If any Member's `feeding_summary.csv` (or other
   pooled table) is newer than the Project's `<name>_Summary.csv` or
   `_Stats.txt`, the pooled results predate that Member's latest analysis.

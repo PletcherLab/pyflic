@@ -322,6 +322,12 @@ def load_experiment_yaml(
     cfg = yaml.safe_load(path.read_text())
     if not isinstance(cfg, Mapping):
         raise ValueError("YAML root must be a mapping/object.")
+    ## What this load's results will be computed from, taken from the files as
+    ## read, before anything below resolves them: the stale rule compares it
+    ## with the files as they stand later (ADR-0022).
+    from . import analysis_settings as _analysis_settings
+
+    recorded_settings = _analysis_settings.settings(design_global, cfg)
 
     ## Where the recording is (ADR-0021): the experiment's own data/, or the
     ## folder its data_folder: names — the classifier's own answer, so the two
@@ -787,6 +793,7 @@ def load_experiment_yaml(
         data_location=data_location,
         experiment_dir=resolved_experiment_dir,
         config={"global": global_cfg, **resolved_cfg},
+        analysis_settings=recorded_settings,
         experiment_type=exp_type,
         chamber_layout=chamber_layout,
         facet_cutoffs=exp_type.resolve_facet_cutoffs(global_cfg),

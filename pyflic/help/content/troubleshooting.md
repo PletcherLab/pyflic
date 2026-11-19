@@ -92,6 +92,8 @@ Three common causes, in the order worth checking:
    excluded and nothing complains.
 3. **Results that predate the declaration.** Declaring a chamber changes nothing already on
    disk. The Hub's Analyzed column reads **re-run needed** until you re-run the member.
+   The same is true after changing a setting in the project design or a member's config:
+   hover the cell to see what changed since the analysis ran.
 
 ### Lick counts look far too small
 

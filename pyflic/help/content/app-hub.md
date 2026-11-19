@@ -158,10 +158,16 @@ used to be invisible here, which is exactly where the fix lives. See
 [Blocked members](concepts-project.md#blocked-members).
 
 The **Analyzed** column has three values, not two. **re-run needed** means the member's
-`remove_chambers.csv` is newer than its saved analysis: those results describe a chamber
-population you have since said was wrong. With a Slice picked, it also means the Slice's
-definition changed since its run, and a fourth value, **not covered**, means the member's
-recording stops short of the Slice (see [The Slice picker](#the-slice-picker)).
+saved results no longer match what its files ask for: its `remove_chambers.csv` is newer
+than its saved analysis, so those results describe a chamber population you have since said
+was wrong, or a setting in the project design or the member's config has changed since the
+analysis ran (a detection parameter, a constant, a chamber's treatment). Hover the cell to
+see each change, for example *params.feeding_threshold changed: 20 → 25*. Saving the design
+or a config updates the column at once; a save that changes no setting, such as ticking a
+box in the Selection or editing a script, leaves it alone. With a Slice picked, it also
+means the Slice's definition changed since its run, and a fourth value, **not covered**,
+means the member's recording stops short of the Slice (see
+[The Slice picker](#the-slice-picker)).
 
 **Load options**, at the foot of the card, govern every load: **Load DFMs in parallel**
 (on by default) and the number of **Workers** (*auto* by default). See

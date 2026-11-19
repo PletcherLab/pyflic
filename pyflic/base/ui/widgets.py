@@ -611,9 +611,10 @@ class ActionButton(QPushButton):
 class OutputLog(QPlainTextEdit):
     """Read-only log panel with a capped scrollback.
 
-    Lines render as rich text — proportional prose with muted ``[prefix]``
-    tags, accents for failures and warnings, and the monospace font only when
-    a line's spacing is tabular (see :mod:`pyflic.base.ui.textformat`).
+    Every line is in one fixed-width font (:mod:`pyflic.base.ui.fonts`) with
+    its spacing kept, so printed tables line up and indentation shows; lines
+    render as rich text for muted ``[prefix]`` tags and accents on failures
+    and warnings (see :mod:`pyflic.base.ui.textformat`).
     """
 
     line_appended = pyqtSignal(str)
@@ -622,6 +623,11 @@ class OutputLog(QPlainTextEdit):
                  max_lines: int = 5000) -> None:
         super().__init__(parent)
         self.setObjectName("PyflicLog")
+        ## The theme's stylesheet names the same family; this covers a window
+        ## shown without the theme applied.
+        from .fonts import fixed_font
+
+        self.setFont(fixed_font())
         self.setReadOnly(True)
         self.setMaximumBlockCount(max_lines)
         #: Text written without a closing newline, waiting for the rest of its

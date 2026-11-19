@@ -159,6 +159,23 @@ def _add_row_help(row: QHBoxLayout, ref: str, tooltip: str) -> QWidget | None:
     return button
 
 
+#: How many of a stale Member's reasons its tooltip lists before "… and N more".
+_STALE_REASONS_SHOWN = 10
+
+
+def _stale_tooltip(name: str, status: dict) -> str:
+    """Why *name* reads "re-run needed": each change since its analysis
+    (ADR-0010, ADR-0022), so a changed setting is seen without opening a file."""
+    reasons = list(status.get("stale_reasons") or [])
+    shown = reasons[:_STALE_REASONS_SHOWN]
+    lines = [f"{name}'s saved results no longer match what its files ask for:"]
+    lines += [f"  • {reason}" for reason in shown]
+    if len(reasons) > len(shown):
+        lines.append(f"  … and {len(reasons) - len(shown)} more")
+    lines.append("Run its analysis again (Run analysis, or the Project's Analyze all).")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Worker plumbing
 # ---------------------------------------------------------------------------
@@ -3110,12 +3127,21 @@ class AnalysisHubWindow(QMainWindow):
                 pass
         editors[:] = kept
         editor = FLICConfigEditor(str(path) if path is not None else None)
+        ## A saved config can change what a Member's results should be: the
+        ## Analyzed column re-reads it, and reads "re-run needed" if so.
+        editor.saved.connect(self._config_saved)
         editors.append(editor)
         self._config_editor = editor
         editor.show()
         editor.raise_()
         editor.activateWindow()
         return editor
+
+    def _config_saved(self, path: str) -> None:
+        """A config editor wrote *path*: refresh, so the Project's Analyzed
+        column judges its Members against the config as it now stands."""
+        self.log.append_line(f"Wrote {path}")
+        self.refresh()
 
     def _open_qc_viewer(self) -> None:
         if not self._require_experiment():
@@ -3599,6 +3625,8 @@ class AnalysisHubWindow(QMainWindow):
                 table.item(row, 3).setToolTip(
                     f"{name} does not cover {view.view_label()}: "
                     f"{status.get('reason') or 'its recording stops short of it'}.")
+            elif status["analyzed"] and status["stale"]:
+                table.item(row, 3).setToolTip(_stale_tooltip(name, status))
             item = layouts.get(name)
             if item is not None and item.blocked:
                 self._paint_blocked_row(table, row, item)

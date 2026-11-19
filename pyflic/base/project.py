@@ -32,7 +32,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from . import experiment_types, slices, windowing
+from . import analysis_settings, experiment_types, slices, windowing
 from .utils import is_environmental_monitor
 
 #: The Paired-Yoked Difference columns the pooled statistics test, between
@@ -1028,6 +1028,11 @@ class Project:
     def member_status(self, name: str) -> dict:
         """Cheap per-Member status from saved artifacts (no data load).
 
+        ``stale`` holds when the saved results no longer describe what the
+        files ask for — exclusions declared since (ADR-0010), or a setting in
+        the Design or the Member's config changed since (ADR-0022) — and
+        ``stale_reasons`` says which, one line each.
+
         In a Slice view, ``covered`` is what the Member's last run of the
         Slice recorded (``None``: never run) and ``reason`` why it was left
         out; ``stale`` also holds when the Design's Slice no longer matches
@@ -1049,9 +1054,11 @@ class Project:
             ## worse than showing nothing — the date is true and the number
             ## it stands for is not.
             "stale": False,
+            "stale_reasons": [],
             "covered": True,
             "reason": None,
         }
+        reasons: list[str] = status["stale_reasons"]
         if self.slice is not None:
             ## A record of another definition says nothing of this one, not
             ## even whether the recording covers it: what that run wrote is
@@ -1063,7 +1070,7 @@ class Project:
             if status["covered"] is False:
                 status["analyzed"] = False
             elif record is not None and current is None:
-                status["stale"] = True
+                reasons.append(f"Slice {self.slice.name} has changed since it was run")
         if status["analyzed"]:
             try:
                 status["chambers"] = len(pd.read_csv(summary))
@@ -1071,13 +1078,42 @@ class Project:
                 pass
             declaration = os.path.join(directory, "remove_chambers.csv")
             try:
-                status["stale"] = status["stale"] or (
-                    os.path.isfile(declaration)
-                    and os.path.getmtime(declaration)
-                    > os.path.getmtime(summary))
+                if (os.path.isfile(declaration)
+                        and os.path.getmtime(declaration) > os.path.getmtime(summary)):
+                    reasons.append("remove_chambers.csv was saved after this analysis")
             except OSError:
                 pass
+            reasons.extend(self._settings_changes(name, analysis, summary))
+        status["stale"] = bool(reasons)
         return status
+
+    def _settings_changes(self, name: str, analysis: str, summary: str) -> list[str]:
+        """How the Design and the Member's config differ from the settings
+        its saved analysis recorded (ADR-0022), read from disk as they stand.
+
+        An analysis written before records existed is judged by file times,
+        as ADR-0010 judges the exclusions: a config or ``project.yaml`` saved
+        since reads stale.  Conservative in the right direction — a save that
+        changed nothing costs one re-run, after which the record decides."""
+        config_path = os.path.join(self.member_dir(name), CONFIG_FILENAME)
+        project_yaml = os.path.join(self.project_directory, PROJECT_FILENAME)
+        recorded = analysis_settings.read(analysis)
+        if recorded is not None:
+            now = analysis_settings.current(project_yaml, config_path)
+            ## A config that no longer reads is the loader's to report.
+            return [] if now is None else analysis_settings.differences(recorded, now)
+        saved = []
+        for path in (config_path, project_yaml):
+            try:
+                if os.path.getmtime(path) > os.path.getmtime(summary):
+                    saved.append(os.path.basename(path))
+            except OSError:
+                continue
+        if not saved:
+            return []
+        return [f"{' and '.join(saved)} {'was' if len(saved) == 1 else 'were'} saved "
+                f"after this analysis, which predates pyflic recording the settings "
+                f"an analysis used"]
 
     def run_all(self, *, make_reports: bool = True,
                 skip_analyzed: bool = False, log=print,
@@ -1095,9 +1131,15 @@ class Project:
                 log(f"--- {view.view_label()} ---")
             for name in self.member_names:
                 tag = name if view.slice is None else f"{name} / {view.slice.name}"
-                if skip_analyzed and view.member_status(name)["analyzed"]:
-                    log(f"[{tag}] already analyzed — skipped")
-                    continue
+                if skip_analyzed:
+                    ## Only results that still describe the current settings
+                    ## are skipped: a stale Member is what a re-run is for.
+                    status = view.member_status(name)
+                    if status["analyzed"] and not status["stale"]:
+                        log(f"[{tag}] already analyzed — skipped")
+                        continue
+                    if status["analyzed"]:
+                        log(f"[{tag}] re-run needed: {'; '.join(status['stale_reasons'])}")
                 log(f"[{tag}] running analysis...")
                 try:
                     exp = view.load_experiment(name)

@@ -1696,6 +1696,10 @@ _MANAGED_GLOBAL_KEYS = frozenset({
 class FLICConfigEditor(QMainWindow):
     """Main window for the FLIC Config Editor."""
 
+    #: The path of a config just written, so the Hub can re-judge the
+    #: Member's saved results against it (ADR-0022).
+    saved = pyqtSignal(str)
+
     def __init__(self, initial_path: str | Path | None = None) -> None:
         super().__init__()
         self._current_path: Path | None = None
@@ -3601,9 +3605,11 @@ class FLICConfigEditor(QMainWindow):
                 encoding="utf-8",
             )
             self._write_type_copy(path)
-            QMessageBox.information(self, "Saved", f"Config saved to:\n{path}")
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Failed to save config:\n{exc}")
+            return
+        self.saved.emit(str(path))
+        QMessageBox.information(self, "Saved", f"Config saved to:\n{path}")
 
     def _write_type_copy(self, path: Path) -> None:
         """Carry a standalone experiment's type with it (ADR-0019): a lab type
