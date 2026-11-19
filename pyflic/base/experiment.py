@@ -157,6 +157,16 @@ class Experiment:
         """Return the DFM with the given id, or None if it does not exist."""
         return self.dfms.get(int(dfm_id))
 
+    def _wells_of_chamber(self, dfm_id: int, chamber: int) -> tuple[int, ...]:
+        """The wells of chamber *chamber* (1-based) of DFM *dfm_id*; ``()``
+        when the DFM or the chamber is not there."""
+        dfm = self.dfms.get(int(dfm_id))
+        chambers = (dfm.chambers or []) if dfm is not None else []
+        for ch in chambers:
+            if int(ch.index) == int(chamber):
+                return tuple(int(w) for w in ch.wells)
+        return ()
+
     def _remove_chambers_from_design(self, remove_set: set[tuple[int, int]]) -> None:
         """Remove (DFM,Chamber) pairs from all treatments and clear caches."""
         if not remove_set:
@@ -253,6 +263,14 @@ class Experiment:
         ## are taken before anything below thins it.
         opto_on = self.is_optogenetic
         opto_failed = self.opto.failed_chambers() if opto_on else {}
+        ## The signal ceiling (pyflic.base.ceiling): a well resting at the top
+        ## of its sensor's range for longer than max_ceiling_minutes of the
+        ## range had no lick to show for that time.
+        from . import ceiling
+
+        ceiling_limit = ceiling.max_minutes(constants)
+        ceilings = ({int(d): dfm.ceilings(range_minutes=range_minutes)
+                     for d, dfm in self.dfms.items()} if ceiling_limit is not None else {})
 
         for _, row in fs.iterrows():
             dfm_id = int(row["DFM"])
@@ -284,6 +302,9 @@ class Experiment:
             if failing:
                 reasons.append(f"opto light QC failed: {', '.join(failing)} "
                                f"(exclude_failed_opto_chambers)")
+            if ceilings.get(dfm_id):
+                reasons += ceiling.removal_reasons(
+                    ceilings[dfm_id], self._wells_of_chamber(dfm_id, chamber_idx), ceiling_limit)
 
             if reasons:
                 remove_set.add(key)
@@ -323,6 +344,7 @@ class Experiment:
             )
         else:
             lines.append("  • No lick-count cutoff configured — only NaN check applied.")
+        lines.append(ceiling.criteria_line(ceiling_limit))
         if opto_on:
             lines.append("  • exclude_failed_opto_chambers = true: every chamber of a linkage "
                          "group that fails the opto light QC is excluded — see "
@@ -932,6 +954,15 @@ class Experiment:
                         f"elapsed_min={integrity.get('elapsed_minutes_from_minutes_col')}, "
                         f"index_increments_by_one={integrity.get('index_increments_by_one')}\n"
                     )
+                dfm = self.dfms.get(dfm_id)
+                if dfm is not None:
+                    ceilings = dfm.ceilings()
+                    board = dfm.ceiling_board_minutes()
+                    buf.write("- signal ceiling: "
+                              + ("; ".join(ceilings[w].describe() for w in sorted(ceilings))
+                                 if ceilings else "no well")
+                              + (f"; every well together {board} min" if board else "")
+                              + "\n")
 
                 buf.write(
                     f"- data_breaks: count={int(r.get('data_breaks_count', 0))} "

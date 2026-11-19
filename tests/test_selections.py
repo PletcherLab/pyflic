@@ -107,9 +107,11 @@ BUILDERS = {
 #: The fixtures whose Run analysis writes the experiment report (slow); the
 #: others leave it out by the caller's omit.
 WITH_REPORT = {"single_opto_g1", "pr_g1"}
-#: The core Run analysis always writes.
+#: The core Run analysis always writes, the feeding summary with the record of
+#: the settings it was computed from (ADR-0022).
 CORE = {"analysis/removed_chambers.csv", "analysis/summary.txt",
-        "analysis/feeding_summary.csv", "analysis/feeding_summary_facet.csv"}
+        "analysis/feeding_summary.csv", "analysis/analysis_settings.json",
+        "analysis/feeding_summary_facet.csv"}
 
 
 def _load(root: Path):
@@ -258,7 +260,7 @@ def test_the_fixtures_cover_every_layout_type_light_and_generation(
 def test_run_analysis_writes_the_core_first_and_the_report_last(ran):
     r = ran["pr_g1"]
     written = [p.relative_to(r.root).as_posix() for p in r.analysis.written]
-    assert set(written[:4]) == CORE
+    assert set(written[:len(CORE)]) == CORE
     assert written[-1] == "analysis/experiment_report.pdf"
     assert r.analysis.ran[-1].id == "experiment_report"
     assert r.log.index(next(line for line in r.log if line.startswith("Core"))) \

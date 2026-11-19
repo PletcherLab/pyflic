@@ -611,11 +611,22 @@ event to the end of the **Test window**; a Lick-free Light Event neither
 counts nor ends a pause, and a pause of exactly Δt does not end the count.
 `BreakMin` is the minute, since training end, of the last event counted. A
 property of the group, read from the Paired chamber: the Yoked fly has none,
-because its light is its partner's. One row per group in
-`pr_breaking_point.csv` (ADR-0014).
+because its light is its partner's (its counterpart is the **Simulated Yoked
+Breaking Point**). One row per group in `pr_breaking_point.csv` (ADR-0014).
 _Avoid_: breakpoint, final ratio, Test light events (that raw count is
 `TestLightEvents` in the light QC, which ignores pauses and lick-free
 events), yoked breaking point.
+
+**Simulated Yoked Breaking Point**:
+The Breaking Point a Chamber Group's Yoked fly would have reached had its own
+Sucrose Well been the Trigger Well: the group's ratio Paradigm replayed on the
+Yoked fly's recorded contact, from the group's training end and over its Test
+window, and scored by the same first-gap rule. It is what feeding alone,
+under the light the partner earned, is worth on the schedule. The Breaking
+Point minus it, `dBreakingPoint`, is the contingent part of the Paired fly's
+number. Opt-in (ADR-0023).
+_Avoid_: yoked breaking point (the Yoked fly ran no schedule), replayed or
+counterfactual breaking point.
 
 **Censored**:
 Said of a Breaking Point or a Sucrose Persistence when the Test window ended

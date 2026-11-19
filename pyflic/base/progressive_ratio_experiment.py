@@ -62,12 +62,14 @@ from .experiment_types.progressive_ratio import (
     ChamberGroup,
     resolve_chamber_groups,
 )
+from . import pr_replay as prp
 from .opto_program import (
     FIXED_RATIO,
     GRAMMAR_LEGACY,
     PROGRESSIVE_RATIO,
     RATIO_PARADIGMS,
     TYPE_NAMES,
+    is_trigger,
 )
 from .paradigm_state import GENERATION_PARADIGM, NO_TRAINING_INFORMATION, ParadigmState
 from .two_well_experiment import TwoWellExperiment
@@ -149,6 +151,19 @@ BREAKING_POINT_SUMMARY_COLUMNS: tuple[str, ...] = (
     "TestMinutes", "LargestRequirement", "BreakRequirement", "FirmwareEvents",
     "LickFreeLightEvents", "LightQC", "ParadigmType",
 )
+#: What ``pr_breaking_point.csv`` adds when ``pr_simulated_yoked_bp`` is on
+#: (ADR-0023): the Simulated Yoked Breaking Point, the Breaking Point minus it,
+#: and the same replay of the Paired fly, which checks the replay against the
+#: firmware's own lights.
+SIMULATED_YOKED_COLUMNS: tuple[str, ...] = (
+    "YokedChamber", "SimulatedYokedBreakingPoint", "SimulatedYokedBreakMin",
+    "SimulatedYokedCensored", "dBreakingPoint", "ReplayBreakingPoint",
+)
+#: One row per simulated Test light — ``analysis/pr_simulated_yoked_lights.csv``.
+SIMULATED_YOKED_LIGHT_COLUMNS: tuple[str, ...] = (
+    "DFM", "Group", "YokedChamber", "SucroseWell", "Light", "RecordingMinute",
+    "Minutes", "Requirement", "LicksSincePrev", "Explained", "LickFree", "Counted",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +210,7 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
     _pr_training: dict | None = None
     _pr_light: dict | None = None       # light QC caches, per DFM object
     _pr_snapshot: dict | None = None    # design before auto-removal thinned it
+    _pr_replay: dict | None = None      # Simulated Yoked Breaking Point caches (ADR-0023)
 
     # ------------------------------------------------------------------
     # Loading
@@ -697,14 +713,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
 
     def resting_levels(self, dfm_id: int) -> pd.DataFrame:
         """Every well's Resting Level on one DFM: the per-minute median of its
-        raw, un-baselined signal (:func:`pr_light_qc.resting_levels`)."""
-        cache = self._light_cache(dfm_id)
-        if "resting" not in cache:
-            dfm = self.dfms[int(dfm_id)]
-            minutes = pd.to_numeric(dfm.raw_df["Minutes"], errors="coerce")
-            cache["resting"] = lqc.resting_levels(dfm.raw_df,
-                                                  minutes.to_numpy(dtype=float))
-        return cache["resting"]
+        raw, un-baselined signal (:meth:`DFM.resting_levels`, which the
+        signal-ceiling check reads too)."""
+        return self.dfms[int(dfm_id)].resting_levels()
 
     def resting_reference(self, dfm_id: int, well: int) -> pd.Series:
         """Per-minute median Resting Level of the DFM's *other* Sucrose Wells.
@@ -2629,7 +2640,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         records no Training, has no row: its light QC notes say why.
         """
         factors = list(self.design_factors or [])
-        cols = ["Treatment", *factors, *BREAKING_POINT_SUMMARY_COLUMNS]
+        simulate = self.simulated_yoked_enabled()
+        cols = ["Treatment", *factors, *BREAKING_POINT_SUMMARY_COLUMNS,
+                *(SIMULATED_YOKED_COLUMNS if simulate else ())]
         settings = self.break_settings()
         by_group = self._light_qc_by_group()
         rows = []
@@ -2666,11 +2679,32 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 "LightQC": qc.get("Flags", ""),
                 "ParadigmType": self.test_paradigm_type(dfm_id, group),
             })
+            if simulate:
+                ## ADR-0023: NA where the replay cannot run or the Yoked
+                ## chamber is out of the analysis.
+                yoked = self.replayed_break(dfm_id, group, ROLE_YOKED, settings)
+                check = self.replayed_break(dfm_id, group, ROLE_PAIRED, settings)
+                rows[-1].update({
+                    "YokedChamber": layout.yoked,
+                    "SimulatedYokedBreakingPoint": None if yoked is None else int(yoked.count),
+                    "SimulatedYokedBreakMin": None if yoked is None else float(yoked.last_min),
+                    "SimulatedYokedCensored": None if yoked is None else bool(yoked.censored),
+                    "dBreakingPoint": (None if yoked is None
+                                       else int(result.count) - int(yoked.count)),
+                    "ReplayBreakingPoint": None if check is None else int(check.count),
+                })
         if not rows:
             return pd.DataFrame(columns=cols)
         out = pd.DataFrame(rows)
         for col in ("BreakRequirement", "FirmwareEvents"):
             out[col] = pd.array(out[col].tolist(), dtype="Int64")
+        if simulate:
+            for col in ("YokedChamber", "SimulatedYokedBreakingPoint", "dBreakingPoint",
+                        "ReplayBreakingPoint"):
+                out[col] = pd.array(out[col].tolist(), dtype="Int64")
+            out["SimulatedYokedBreakMin"] = pd.to_numeric(out["SimulatedYokedBreakMin"])
+            out["SimulatedYokedCensored"] = pd.array(out["SimulatedYokedCensored"].tolist(),
+                                                     dtype="boolean")
         if out["LargestRequirement"].isna().any():
             out["LargestRequirement"] = pd.array(out["LargestRequirement"].tolist(),
                                                  dtype="Int64")
@@ -2737,6 +2771,250 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         self.breaking_point_summary().to_csv(out, index=False, na_rep="NA")
         return out
 
+    # ------------------------------------------------------------------
+    # Simulated Yoked Breaking Point (ADR-0023)
+    # ------------------------------------------------------------------
+
+    def simulated_yoked_enabled(self) -> bool:
+        """Whether the design asks for the Simulated Yoked Breaking Point
+        (``pr_simulated_yoked_bp``, off by default)."""
+        return _truthy((self.global_constants or {}).get(prp.CONSTANT, False))
+
+    def _replay_cache(self) -> dict:
+        ## Keyed on the groups in the analysis: auto-removal thins the design
+        ## after load, and the contact credit is fitted on what remains.
+        included = tuple((d, g.number) for d, g in self._group_pairs()
+                         if self.design.treatment_for(d, g.paired) is not None)
+        if self._pr_replay is None or self._pr_replay.get("_included") != included:
+            self._pr_replay = {"_included": included}
+        return self._pr_replay
+
+    @staticmethod
+    def _sample_ms(dfm: DFM) -> float:
+        return 1000.0 / float(dfm.params.samples_per_second)
+
+    def replay_setup(self, dfm_id: int, group: int) -> tuple[Any, int] | str:
+        """``(paradigm, level)`` the group's replay runs under: its Test
+        Paradigm from ``Program.txt`` and the threshold level of the Paired
+        Trigger Well under it (contact is the signal above the well's Baseline
+        in force plus *level*).  A string, the reason, when the replay cannot
+        run: it needs generation 3, a recorded Baseline in force, a completed
+        training, and a ratio Test Paradigm that counts Contact."""
+        dfm = self.dfms[int(dfm_id)]
+        if not self._reads_phase(dfm):
+            return "the recording does not record the firmware's Paradigm state"
+        if dfm.baseline_in_force is None:
+            return "the recording has no Baseline in force (PyMCU 4.0.1 writes it)"
+        gt = self.group_training(dfm_id, group)
+        if not gt.complete:
+            return "training never ended"
+        name, paradigm = self.test_paradigm(dfm_id, group)
+        if paradigm is None:
+            return "Program.txt does not define the Test Paradigm"
+        if paradigm.type not in RATIO_PARADIGMS or not paradigm.counts_contact:
+            return (f"the Test Paradigm {name} counts Events, and only a Paradigm "
+                    f"counting Contact can be replayed from 5 Hz records")
+        program = getattr(self, "opto_program", None)
+        section = program.section(int(dfm_id)) if program is not None else None
+        levels = ({int(iv.threshold(gt.sucrose_well)) for iv in section.intervals
+                   if iv.paradigm.name == name and is_trigger(iv.threshold(gt.sucrose_well))}
+                  if section is not None else set())
+        if len(levels) != 1:
+            return (f"Program.txt gives no single threshold for W{gt.sucrose_well} "
+                    f"under {name}")
+        return paradigm, levels.pop()
+
+    @staticmethod
+    def _above(dfm: DFM, well: int, level: int) -> np.ndarray:
+        """Where *well*'s raw signal is above its Baseline in force plus
+        *level*: contact, as the firmware judges it."""
+        raw = pd.to_numeric(dfm.raw_df[f"W{int(well)}"], errors="coerce").to_numpy(dtype=float)
+        base = dfm.baseline_in_force[:, int(well) - 1]
+        with np.errstate(invalid="ignore"):
+            return np.isfinite(base) & np.isfinite(raw) & (raw > base + float(level))
+
+    def replay_contact_credit(self) -> prp.ContactCredit | None:
+        """The ms of contact a 5 Hz record is worth, fitted on the Test-run
+        rows of every Paired Trigger Well in the analysis that the replay
+        can run on (:func:`pyflic.base.pr_replay.fit_contact_credit`).
+        ``None`` when there is none."""
+        cache = self._replay_cache()
+        if "credit" in cache:
+            return cache["credit"]
+        wells, sample, activation = [], None, 0.0
+        for dfm_id, group in cache["_included"]:
+            setup = self.replay_setup(dfm_id, group)
+            if isinstance(setup, str):
+                continue
+            paradigm, level = setup
+            dfm = self.dfms[dfm_id]
+            state = dfm.paradigm
+            well = self.group_training(dfm_id, group).sucrose_well
+            run = self._test_ratio_run(state, well)
+            if run is None:
+                continue
+            i0, i1 = run
+            w = int(well) - 1
+            above = self._above(dfm, well, level)
+            wells.append(prp.WellRecord(
+                above=above[i0:i1], progress=state.progress[i0:i1, w],
+                requirement=state.requirement[i0:i1, w],
+                activations=state.activations[i0:i1, w],
+                acclimation=state.phase_a[i0:i1, w], on_ms=state.on_ms[i0:i1, w]))
+            sample = self._sample_ms(dfm)
+            activation = max(activation, float(paradigm.activation_ms or 0))
+        credit = (prp.fit_contact_credit(wells, sample_ms=sample, activation_ms=activation)
+                  if wells else None)
+        cache["credit"] = credit
+        return credit
+
+    def replay_events(self, dfm_id: int, group: int, role: str = ROLE_YOKED,
+                      settings: pbp.BreakSettings | None = None) -> pd.DataFrame | None:
+        """The Test lights the group's ratio Paradigm would have given the
+        *role* chamber's Sucrose Well, replayed on its own contact from the
+        group's training end over its Test window
+        (:func:`pyflic.base.pr_replay.replay_contact_ratio`).  Columns:
+        ``RecordingMinute``, ``Minutes`` (since training end), ``Requirement``
+        (ms of contact met), ``LicksSincePrev``, ``Explained`` and
+        ``LickFree``, by the Light Event Ledger's rules.  ``None`` when the
+        replay cannot run (:meth:`replay_setup`) or the group has no such
+        chamber."""
+        settings = settings or self.break_settings()
+        dfm_id, group = int(dfm_id), int(group)
+        cache = self._replay_cache()
+        key = ("events", dfm_id, group, role, settings.test_window_min)
+        if key in cache:
+            return cache[key]
+        result = None
+        setup = self.replay_setup(dfm_id, group)
+        layout = self.chamber_group(dfm_id, group)
+        chamber = layout.paired if role == ROLE_PAIRED else layout.yoked
+        credit = self.replay_contact_credit() if not isinstance(setup, str) else None
+        if credit is not None and chamber is not None:
+            paradigm, level = setup
+            dfm = self.dfms[dfm_id]
+            gt = self.group_training(dfm_id, group)
+            well = self._sucrose_well(dfm, chamber)
+            mins = pd.to_numeric(dfm.lick_df["Minutes"], errors="coerce").to_numpy(dtype=float)
+            n = mins.size
+            start = int(dfm.paradigm.training_end(gt.sucrose_well))
+            end_min = float(gt.training_end) + float(self._test_window(dfm_id, group, settings))
+            end = int(np.searchsorted(mins, end_min, side="right"))
+            sample = self._sample_ms(dfm)
+            replay = prp.replay_contact_ratio(
+                credit.credit(self._above(dfm, well, level)), start, end,
+                requirement_for=paradigm.requirement_for,
+                activation_ms=float(paradigm.activation_ms or 0), sample_ms=sample)
+            onsets = replay.onsets
+            reach = max(1, int(np.ceil(float(paradigm.activation_ms or 0) / sample)))
+            ends = np.minimum(np.minimum(onsets + reach, np.append(onsets[1:], n)), n)
+            column = f"W{well}"
+            licks = dfm.lick_df[column].to_numpy(dtype=bool)
+            tasting = (dfm.tasting_df[column].to_numpy(dtype=bool)
+                       if dfm.tasting_df is not None and column in dfm.tasting_df.columns
+                       else np.zeros(n, dtype=bool))
+            ## Licks count from training end, as a Paired fly's first Test
+            ## event counts from its last Training one.
+            counts = lqc.licks_between_events(licks, np.concatenate([[start], ends]))[1:]
+            explained = self._events_explained(dfm_id, licks | tasting, onsets, ends)
+            result = pd.DataFrame({
+                "RecordingMinute": mins[onsets],
+                "Minutes": mins[onsets] - float(gt.training_end),
+                "Requirement": pd.array(replay.requirements.astype(int).tolist(), dtype="Int64"),
+                "LicksSincePrev": counts.astype(int),
+                "Explained": explained.astype(bool),
+                "LickFree": (counts == 0) & ~explained,
+            })
+        cache[key] = result
+        return result
+
+    def replayed_break(self, dfm_id: int, group: int, role: str = ROLE_YOKED,
+                       settings: pbp.BreakSettings | None = None) -> pbp.GapBreak | None:
+        """The first-gap rule on :meth:`replay_events`: for ``ROLE_YOKED``
+        the **Simulated Yoked Breaking Point**, for ``ROLE_PAIRED`` the
+        replay's own estimate of the real Breaking Point (the replay check).
+        ``None`` when the replay cannot run, and for a Yoked chamber out of
+        the analysis."""
+        settings = settings or self.break_settings()
+        layout = self.chamber_group(dfm_id, group)
+        if role == ROLE_YOKED and (layout.yoked is None or
+                                   self.design.treatment_for(dfm_id, layout.yoked) is None):
+            return None
+        events = self.replay_events(dfm_id, group, role, settings)
+        if events is None:
+            return None
+        window = self._test_window(dfm_id, group, settings)
+        return pbp.breaking_point(events["Minutes"].to_numpy(dtype=float),
+                                  ~events["LickFree"].to_numpy(dtype=bool),
+                                  window, settings.gap_min)
+
+    def simulated_yoked_lights(self) -> pd.DataFrame:
+        """Every simulated Test light of every group with a Simulated Yoked
+        Breaking Point (:data:`SIMULATED_YOKED_LIGHT_COLUMNS`), with
+        ``Counted`` saying which the first-gap rule counted — as
+        ``analysis/pr_simulated_yoked_lights.csv``."""
+        settings = self.break_settings()
+        frames = []
+        for r in self.breaking_point_summary().itertuples(index=False):
+            result = self.replayed_break(r.DFM, r.Group, ROLE_YOKED, settings)
+            if result is None:
+                continue
+            events = self.replay_events(r.DFM, r.Group, ROLE_YOKED, settings).copy()
+            layout = self.chamber_group(r.DFM, r.Group)
+            events.insert(0, "DFM", int(r.DFM))
+            events.insert(1, "Group", int(r.Group))
+            events.insert(2, "YokedChamber", int(layout.yoked))
+            events.insert(3, "SucroseWell", self._sucrose_well(self.dfms[int(r.DFM)], layout.yoked))
+            events.insert(4, "Light", np.arange(1, len(events) + 1))
+            events["Counted"] = result.counted
+            frames.append(events)
+        if not frames:
+            return pd.DataFrame(columns=list(SIMULATED_YOKED_LIGHT_COLUMNS))
+        return pd.concat(frames, ignore_index=True)[list(SIMULATED_YOKED_LIGHT_COLUMNS)]
+
+    def write_simulated_yoked_lights(self, path: str | Path | None = None) -> Path:
+        """Write ``analysis/pr_simulated_yoked_lights.csv``."""
+        if path is None:
+            if self.analysis_dir is None:
+                raise ValueError("path must be provided when no experiment_dir is set.")
+            path = self.analysis_dir / "pr_simulated_yoked_lights.csv"
+        out = Path(path).expanduser().resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        self.simulated_yoked_lights().to_csv(out, index=False, na_rep="NA")
+        return out
+
+    def simulated_yoked_lines(self) -> list[str]:
+        """The Simulated Yoked Breaking Point's block of ``summary.txt``:
+        the replay check, why any group has none, and the contact credit."""
+        summary = self.breaking_point_summary()
+        lines = ["", "Simulated Yoked Breaking Point (pr_simulated_yoked_bp; ADR-0023)"]
+        reasons = {}
+        for r in summary.itertuples(index=False):
+            setup = self.replay_setup(r.DFM, r.Group)
+            if isinstance(setup, str):
+                reasons.setdefault(setup, []).append(f"DFM {int(r.DFM)} group {int(r.Group)}")
+        for reason, where in reasons.items():
+            lines.append(f"Not replayed ({reason}): {', '.join(where)}")
+        if "ReplayBreakingPoint" in summary.columns:
+            both = summary[summary["ReplayBreakingPoint"].notna()]
+            if len(both):
+                diff = (both["ReplayBreakingPoint"].astype(int) - both["BreakingPoint"].astype(int)).abs()
+                lines.append(
+                    f"Replay check: replaying each Paired fly from its training end gives its "
+                    f"real Breaking Point exactly in {int((diff == 0).sum())} of {len(both)} "
+                    f"group(s), within one light in {int((diff <= 1).sum())}.")
+                if (diff <= 1).mean() < 0.8:
+                    lines.append("WARNING: fewer than 80% of groups agree within one light; "
+                                 "treat the Simulated Yoked Breaking Point with caution.")
+        credit = self.replay_contact_credit()
+        if credit is not None:
+            lines.append(f"Contact credited per record (ms), fitted on {credit.fitted} records "
+                         f"of the Paired Trigger Wells (previous/this/next above threshold):")
+            lines.append("  " + "  ".join(
+                f"{''.join('A' if x else 'b' for x in p)}={credit.value(p):.0f}"
+                for p in prp.PATTERNS))
+        return lines
+
     def breaking_point_lines(self) -> list[str]:
         """The breaking point by chamber group and its sensitivity to
         ``pr_break_gap_min`` as plain text — for ``summary.txt`` and the
@@ -2784,6 +3062,8 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
                 end = float(self.group_training(r.DFM, r.Group).training_end)
                 lines.append(f"DFM {int(r.DFM)} group {int(r.Group)}: "
                              f"{restart_note(restart, end)}")
+        if self.simulated_yoked_enabled():
+            lines += self.simulated_yoked_lines()
         return lines
 
     def _breaking_point_summary_lines(self) -> list[str]:
@@ -3256,6 +3536,9 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
         print("[PR] Breaking point...", flush=True)
         result["pr_breaking_point"] = self.write_breaking_point()
         print(f"  Done → {result['pr_breaking_point']}", flush=True)
+        if self.simulated_yoked_enabled():
+            result["pr_simulated_yoked_lights"] = self.write_simulated_yoked_lights()
+            print(f"  Done → {result['pr_simulated_yoked_lights']}", flush=True)
         print("[PR] Figures...", flush=True)
         figs = self.write_pr_figures(dpi=dpi)
         result.update(figs)

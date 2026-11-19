@@ -68,7 +68,11 @@ _CONSTANT_ROWS: tuple[tuple[str, str, str], ...] = (
      "type default when checked and blank"),
     ("max_events_cutoff", "Max Events",
      "type default when checked and blank"),
+    ("max_ceiling_minutes", "Max Minutes at Ceiling",
+     "type default when checked and blank"),
 )
+#: The cutoffs that apply to a single-well layout too.
+_EVERY_LAYOUT_KEYS = frozenset({"min_untransformed_licks_cutoff", "max_ceiling_minutes"})
 
 #: Progressive Ratio's own constants, (key, label, tooltip) per row, from the
 #: one description the Config Editor and the type's validation also read
@@ -1019,7 +1023,7 @@ class ProjectDesignDialog(QDialog):
 
         constants: dict = {}
         for key, label, _placeholder in _CONSTANT_ROWS:
-            if chamber_size == 1 and key != "min_untransformed_licks_cutoff":
+            if chamber_size == 1 and key not in _EVERY_LAYOUT_KEYS:
                 continue
             if not self.constant_checks[key].isChecked():
                 constants[key] = None

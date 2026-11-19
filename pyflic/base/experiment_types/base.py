@@ -113,7 +113,11 @@ class ExperimentType:
             self.phase_labels = tuple(definition.facet_labels)
         self.experiment_class = next(
             (m.experiment_class for m in self.modules if m.experiment_class), None)
-        constants: dict = {}
+        ## The signal-ceiling cutoff is every type's (pyflic.base.ceiling): a
+        ## sensor at the top of its range shows no lick whatever is analysed.
+        from ..ceiling import DEFAULT_CONSTANTS as CEILING_DEFAULTS
+
+        constants: dict = dict(CEILING_DEFAULTS)
         for module in self.modules:
             constants.update(module.default_constants)
         constants.update(definition.constants)
@@ -422,6 +426,10 @@ class ExperimentType:
         if problem:
             problems.append(problem)
         problems += opto_constant_problems(g.get("constants"))
+        ## So is the signal-ceiling cutoff.
+        from ..ceiling import ceiling_problems
+
+        problems += ceiling_problems(g.get("constants"))
         for module in self.modules:
             problems += module.validate(g)
         problems += self._design_problems(g)

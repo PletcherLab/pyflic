@@ -96,14 +96,18 @@ Design's, in a Project):
   licks);
 - in a two-well experiment, an implausible median bout duration or event count at either
   well (`max_med_duration_cutoff`, `max_events_cutoff`);
+- a well resting at the [signal ceiling](config-structure.md#the-signal-ceiling), where no
+  lick can show, for more than `max_ceiling_minutes` (30 by default, every type) of the
+  analysed range;
 - in an optogenetic experiment with `exclude_failed_opto_chambers` on (it is off by
   default), every chamber of a linkage group that failed the light QC;
 - in a Progressive Ratio experiment, a chamber group whose training never finished
   (`require_training_complete`) or whose light the fly did not earn
   (`exclude_failed_pr_groups`).
 
-Each of the three numeric cutoffs is optional: unset or YAML `null` skips that check; only
-NaN lick values are always removed. Basic analysis, and the Hub's **Run analysis**, run
+Each of the numeric cutoffs is optional: YAML `null` skips that check, and so does an
+unset key for the three a type may leave without a default (the ceiling's is 30
+everywhere); only NaN lick values are always removed. Basic analysis, and the Hub's **Run analysis**, run
 auto-removal once per member, before writing the summary, and its reasons are in the
 member's `analysis/removed_chambers.csv`, in `summary.txt`, and in the Project Report's
 exclusions table alongside the declared ones. The sheet has nothing to do with it: one is

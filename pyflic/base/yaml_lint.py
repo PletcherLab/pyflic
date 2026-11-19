@@ -228,6 +228,10 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
         _emit(issues, "error", problem, path=f"global.{_opto.SETTING_KEY}")
     for problem in opto_constant_problems(g.get("constants")):
         _emit(issues, "error", problem, path="global.constants")
+    from .ceiling import ceiling_problems
+
+    for problem in ceiling_problems(g.get("constants")):
+        _emit(issues, "error", problem, path="global.constants")
     program = None
     try:
         program_path = (_opto.find_program(data_folder)

@@ -2,28 +2,37 @@
 
 ``tests/v4_fixtures.py`` reimplements DFMV3_V2's ``src/LEDControl.c`` in
 Python; that file is the authority.  Here it is compiled with the ``ziglang``
-package's C compiler into ``tests/ledcontrol_harness.c``, fed the same
-millisecond signals (as sums of 128 scans), the same 63-byte instructions at
-the same milliseconds and the same Linkage, and the two are compared: the LED
-mask after Linkage every millisecond, and every record's instruction number,
-Paradigm type, Phase bits, OnMs, Activations, Requirement and Progress.
+package's C compiler (or, without it, ``CC`` or a ``gcc``, ``clang`` or ``cc``
+on the PATH, as DFMV3_V2's ``tests/run_tests.py`` does) into
+``tests/ledcontrol_harness.c``, fed the same millisecond signals (as sums of
+128 scans), the same 63-byte instructions at the same milliseconds and the
+same Linkage, and the two are compared: the LED mask after Linkage every
+millisecond, and every record's instruction number, Paradigm type, Phase
+bits, OnMs, Activations, Requirement and Progress.  The instructions carry
+the Contact counter's flag (firmware 4.1.0) where the Paradigm counts
+Contact, whose Requirement and Progress the firmware reports in units of
+10 ms and PyMCU writes in ms.
 
 Skipped unless the DFMV3_V2 source is found (``DFMV3_V2_DIR``, default the
-sibling checkout) and some Python has ``ziglang``.
+sibling checkout) and a C compiler is.
 """
 
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from v4_fixtures import (
+    CONTACT_UNIT_MS,
     FAMILY_SPEC_KEYS,
     THRESHOLD_OFF,
     THRESHOLD_ON,
@@ -31,6 +40,8 @@ from v4_fixtures import (
     RecordingSpec,
     SimResult,
     choice_pr_spec,
+    contact_pr_spec,
+    contact_stress_spec,
     family_specs,
     firmware_inputs,
     fixed_ratio_spec,
@@ -61,20 +72,58 @@ def _python_with_zig() -> list[str] | None:
     return None
 
 
-@pytest.fixture(scope="module")
-def harness(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    if not (SRC / "LEDControl.c").is_file():
-        pytest.skip(f"DFMV3_V2 source not found at {SRC} (set DFMV3_V2_DIR)")
+def _c_compiler() -> list[str] | None:
+    """``zig cc`` from the first Python with ``ziglang``, else ``CC`` or the
+    first of ``gcc``, ``clang`` and ``cc`` on the PATH."""
     python = _python_with_zig()
-    if python is None:
-        pytest.skip("no Python with the ziglang package")
-    out = tmp_path_factory.mktemp("harness")
+    if python is not None:
+        return python + ["-m", "ziglang", "cc"]
+    if os.environ.get("CC"):
+        return shlex.split(os.environ["CC"])
+    for name in ("gcc", "clang", "cc"):
+        if shutil.which(name):
+            return [name]
+    return None
+
+
+def _build(compiler: list[str], out: Path) -> Path | None:
+    """The harness built in *out*, or ``None`` when *out* can't run programs
+    (a ``noexec`` temporary folder)."""
     exe = out / "harness.exe"
-    build = python + ["-m", "ziglang", "cc", "-std=c99", "-O2", "-I", str(SRC),
-                      str(HERE / "ledcontrol_harness.c"), str(SRC / "LEDControl.c"), "-o", str(exe), "-lm"]
+    build = compiler + ["-std=c99", "-O2", "-I", str(SRC),
+                        str(HERE / "ledcontrol_harness.c"), str(SRC / "LEDControl.c"), "-o", str(exe), "-lm"]
     done = subprocess.run(build, capture_output=True, text=True, cwd=out, timeout=600)
     assert done.returncode == 0, f"harness build failed:\n{done.stdout}\n{done.stderr}"
+    try:
+        # Without arguments it only prints its usage.
+        subprocess.run([str(exe)], capture_output=True, timeout=60)
+    except PermissionError:
+        return None
     return exe
+
+
+@pytest.fixture(scope="module")
+def harness(tmp_path_factory: pytest.TempPathFactory):
+    if not (SRC / "LEDControl.c").is_file():
+        pytest.skip(f"DFMV3_V2 source not found at {SRC} (set DFMV3_V2_DIR)")
+    compiler = _c_compiler()
+    if compiler is None:
+        pytest.skip("no C compiler: no Python with the ziglang package, no CC, gcc, clang or cc")
+    exe = _build(compiler, tmp_path_factory.mktemp("harness"))
+    if exe is not None:
+        yield exe
+        return
+    # The temporary folder is noexec: build beside the tests, in the git-ignored __pycache__.
+    cache = HERE / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    out = Path(tempfile.mkdtemp(prefix="ledcontrol-harness-", dir=cache))
+    try:
+        exe = _build(compiler, out)
+        if exe is None:
+            pytest.skip(f"neither the temporary folder nor {cache} can run the harness")
+        yield exe
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
 
 
 def _run_firmware(exe: Path, inputs: FirmwareInputs, dfm_id: int, work: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -150,6 +199,16 @@ def _compare(exe: Path, spec: RecordingSpec, work: Path) -> None:
         def well_frame(prefix: str) -> np.ndarray:
             return np.stack([rows[f"{prefix}{w}"].to_numpy() for w in range(1, 13)], axis=1)
 
+        # PyMCU writes a Contact counter's Requirement and Progress in ms; the firmware reports units.
+        contact_names = [name for name, p in spec.paradigms.items() if p.counts_contact]
+        unit = np.where(rows["Paradigm"].isin(contact_names).to_numpy(dtype=bool, na_value=False),
+                        CONTACT_UNIT_MS, 1)[:, None]
+
+        def firmware_units(prefix: str) -> np.ndarray:
+            values = rows[[f"{prefix}{w}" for w in range(1, 13)]].fillna(0).to_numpy(np.int64)
+            assert not (values % unit).any(), f"{label}: {prefix} under Contact is not whole units"
+            return values // unit
+
         phase = (well_frame("Phase") == "A").astype(np.int64)
         our_bits = (phase << np.arange(12)).sum(axis=1)
         checks = {
@@ -158,9 +217,8 @@ def _compare(exe: Path, spec: RecordingSpec, work: Path) -> None:
             "OnMs": (well_frame("OnMs").astype(np.int64), on_ms),
             "Activations": (well_frame("Activations").astype(np.int64) % 65536, activations),
             # The firmware reports 0 where PyMCU writes NA.
-            "Requirement": (rows[[f"Requirement{w}" for w in range(1, 13)]].fillna(0).to_numpy(np.int64),
-                            requirement),
-            "Progress": (rows[[f"Progress{w}" for w in range(1, 13)]].fillna(0).to_numpy(np.int64), progress),
+            "Requirement": (firmware_units("Requirement"), requirement),
+            "Progress": (firmware_units("Progress"), progress),
         }
         for name, (simulated, firmware) in checks.items():
             assert np.array_equal(simulated, firmware), f"{label}: " + _first_difference(
@@ -187,6 +245,16 @@ def test_the_repeating_and_yoked_recordings_match_the_firmware(harness: Path, tm
 @pytest.mark.parametrize("seed", [7, 8, 9])
 def test_the_engine_edge_cases_match_the_firmware(harness: Path, tmp_path: Path, seed: int) -> None:
     _compare(harness, stress_spec(minutes=8.0, seed=seed), tmp_path)
+
+
+def test_the_contact_counter_paired_yoked_recording_matches_the_firmware(harness: Path, tmp_path: Path) -> None:
+    # Acclimation, then Requirements of k s of contact on the paired wells; the yoked wells are Off.
+    _compare(harness, contact_pr_spec(minutes=12.0), tmp_path)
+
+
+@pytest.mark.parametrize("seed", [7, 8, 9])
+def test_the_contact_counter_edge_cases_match_the_firmware(harness: Path, tmp_path: Path, seed: int) -> None:
+    _compare(harness, contact_stress_spec(minutes=8.0, seed=seed), tmp_path)
 
 
 #: Every Paradigm Family spec but the restart, which is PyMCU's and the power

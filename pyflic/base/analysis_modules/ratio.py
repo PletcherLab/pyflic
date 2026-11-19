@@ -46,6 +46,8 @@ class RatioModule(AnalysisModule):
         ## minutes, that ends a fly's responding.  pr_test_window_min (a cap
         ## on every group's Test window) has no default: unset means off.
         **BREAK_CONSTANTS,
+        ## The Simulated Yoked Breaking Point (ADR-0023), opt-in.
+        "pr_simulated_yoked_bp": False,
     }
     plots = ("timecourse_pr_diff", "scatter_pr_breaking_point", "dot_pr_breaking_point")
     outputs = ("paired_yoked_diff.csv", "pr_cumulative_diff.csv",
@@ -172,6 +174,7 @@ class RatioModule(AnalysisModule):
                                          "counted light event met, as the firmware "
                                          "recorded it (medians per treatment)",
                     formats={"Breaking point": "{:g}", "Break requirement": "{:g}"}))
+            blocks += _simulated_yoked_blocks(project, bp, settings, factors, names, half)
 
         test = (diff[diff["Facet"].astype(str) == "Test"]
                 if diff is not None and not diff.empty else None)
@@ -205,6 +208,53 @@ class RatioModule(AnalysisModule):
                             title=rc.metric_label("dPersistA", names), width=half),
                 ], height=3.0))
         return blocks
+
+
+def _simulated_yoked_blocks(project, bp, settings, factors, names, half) -> list:
+    """The pooled Simulated Yoked Breaking Point (ADR-0023): one point per
+    Chamber Group for it and for ``dBreakingPoint``, with their treatment
+    comparisons and ``dBreakingPoint`` tested against zero.  Nothing when no
+    Member computed it (``pr_simulated_yoked_bp`` off)."""
+    from .. import report_content as rc
+    from .. import report_layout as rl
+
+    sim = project.simulated_yoked_frame(bp)
+    if sim is None:
+        if "SimulatedYokedBreakingPoint" in bp.columns:
+            return [rl.Heading("Simulated yoked breaking point", level=2),
+                    rl.Callout("No chamber group could be replayed: the replay needs a "
+                               "firmware 4 recording whose ratio Paradigm counts Contact "
+                               "(see each member's summary.txt).", tone="warning")]
+        return []
+    simulated, difference, zero = project.simulated_yoked_rows(bp)
+    return [
+        rl.Heading("Simulated yoked breaking point", level=2),
+        rl.Paragraph(
+            f"The test paradigm replayed on each yoked fly's own sucrose-well contact, from "
+            f"its group's training end and over the same Test window, and scored like the "
+            f"paired fly's lights (pause longer than {settings.gap_min:g} minutes): the "
+            f"breaking point background feeding alone would have earned.  The paired "
+            f"fly's breaking point minus it is the contingent part of the paired fly's "
+            f"number.  One point per chamber group ({len(sim)} groups)."),
+        rl.PlotRow([
+            rl.Plot(lambda: rc.censored_dot_plot(
+                sim, "SimulatedYokedBreakingPoint", y_label="Simulated light events",
+                censored_col="SimulatedYokedCensored", factors=factors),
+                title="Simulated yoked breaking point", width=half),
+            rl.Plot(lambda: rc.dot_plot(sim, "dBreakingPoint",
+                                        y_label="Paired − simulated yoked",
+                                        factors=factors, hline_at=0.0),
+                    title="Paired − simulated yoked breaking point", width=half),
+        ], height=3.0),
+        *rc.stats_table(simulated, caption="Treatment comparisons: simulated yoked "
+                                           "breaking point", well_names=names,
+                        show_phase=False),
+        *rc.stats_table(difference, caption="Treatment comparisons: paired − simulated "
+                                            "yoked breaking point", well_names=names,
+                        show_phase=False),
+        *rc.zero_test_table(zero, caption="Paired − simulated yoked breaking point "
+                                          "against zero", well_names=names),
+    ]
 
 
 RATIO = RatioModule()

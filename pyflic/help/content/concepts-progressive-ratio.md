@@ -352,6 +352,43 @@ The number moves with the gap, so `summary.txt`, and the log of **Run analysis**
 minutes beside the configured value. Read that table before settling on a gap, and set it once, in the Project's design,
 so every member is analysed under one rule.
 
+### The simulated yoked breaking point
+
+Stimulation can raise feeding by itself, without any motivation to earn the light: in a
+yoked design this shows as yoked flies of one genotype feeding more than yoked controls.
+A paired fly's breaking point then mixes that background feeding with the effect of the
+contingency. With `pr_simulated_yoked_bp: true`, pyflic asks what the background feeding
+alone would have earned. It replays the group's Test Paradigm on the **yoked** fly's own
+sucrose-well signal, as if that well had been the trigger, then scores the simulated
+lights like the paired fly's real ones.
+
+- **Same rules as the firmware.** Contact is the signal above the yoked well's own
+  baseline plus the paired trigger well's threshold. Light *k* needs the program's *k*-th
+  requirement of contact. Contact during a light does not count, and contact that carries
+  on after a light counts toward the next.
+- **Same window as the paired fly.** The replay starts at the group's training end with the
+  first requirement and runs over the group's Test window, so both flies are measured over
+  the same minutes.
+- **Same scoring.** Lick-free simulated lights neither count nor end a pause, and the gap is
+  `pr_break_gap_min`.
+- **Calibrated and checked on the paired flies.** The data hold one sample every 200 ms,
+  but the firmware counts contact per millisecond. The contact a record is worth is fitted
+  on the paired trigger wells, whose `Progress` the firmware recorded. The same replay of
+  each paired fly gives `ReplayBreakingPoint`, and `summary.txt` says how often it matches
+  the real breaking point (a warning below 80% within one light).
+
+`pr_breaking_point.csv` gains `YokedChamber`, `SimulatedYokedBreakingPoint`,
+`SimulatedYokedBreakMin`, `SimulatedYokedCensored`, `dBreakingPoint` (the breaking point
+minus the simulated one, the contingent part) and `ReplayBreakingPoint`.
+`pr_simulated_yoked_lights.csv` lists every simulated light. The Combined Analysis compares
+treatments on the simulated breaking point (log-rank included) and on `dBreakingPoint`, and
+tests `dBreakingPoint` against zero within each treatment.
+
+The replay needs a firmware 4 recording (PyMCU 4.0.1 or later, which records the baseline
+in force) whose ratio Paradigm counts **Contact**. An Events counter cannot be replayed from
+5 Hz records, because its 100-ms Event gap is finer than a record. A group that cannot be
+replayed has NA, and `summary.txt` says why. The design decision is ADR-0023.
+
 ## Sucrose persistence
 
 The breaking point's rule applied to feeding: for **either** fly, the minutes from training

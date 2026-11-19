@@ -77,8 +77,8 @@ the save (see [Exclusion Groups and Slices](#exclusion-groups-and-slices)).
 
 ### Auto-filter thresholds
 
-Each of **Min Untransformed Licks**, **Max Median Duration** and **Max Events** has a
-**Use** checkbox and a value field:
+Each of **Min Untransformed Licks**, **Max Median Duration**, **Max Events** and **Max
+Minutes at Ceiling** has a **Use** checkbox and a value field:
 
 - Uncheck **Use** to turn that filter off. The editor writes YAML `null`, so a typed
   experiment does not fall back to its default.
@@ -86,8 +86,9 @@ Each of **Min Untransformed Licks**, **Max Median Duration** and **Max Events** 
   grey placeholder text.
 - Check **Use** and type a number to override it.
 
-A Custom Experiment has no defaults, so there the filter runs only when **Use** is checked
-and a number is typed. What each cutoff removes is in
+A Custom Experiment has no defaults for the first three, so there those filters run only
+when **Use** is checked and a number is typed. **Max Minutes at Ceiling** defaults to 30
+under every type, Custom included. What each cutoff removes is in
 [Automatic exclusion](config-dfms-chambers.md#automatic-exclusion).
 
 ### Progressive Ratio settings

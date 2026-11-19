@@ -171,8 +171,9 @@ not exist is simply empty.
 
 ## Automatic exclusion
 
-`auto_remove_chambers()` removes chambers that fail the cutoffs in `global.constants`, and
-always removes chambers whose lick value is `NaN`. See
+`auto_remove_chambers()` removes chambers that fail the cutoffs in `global.constants`,
+including a well at the [signal ceiling](config-structure.md#the-signal-ceiling) for more
+than `max_ceiling_minutes`, and always removes chambers whose lick value is `NaN`. See
 [`global.constants`](config-structure.md#globalconstants). It updates the design in place
 and clears the feeding-summary cache, so everything computed afterwards reflects the
 filtered set.

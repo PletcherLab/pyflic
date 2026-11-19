@@ -449,6 +449,9 @@ class DFM:
     dual_feeding_data: pd.DataFrame | None = None
     in_training_data: pd.DataFrame | None = None
     chambers: list[OneWellChamber | TwoWellChamber] | None = None
+    #: Every well's per-minute Resting Level (:meth:`resting_levels`), taken
+    #: once: it reads the raw signal, which no parameter changes.
+    resting_level_cache: pd.DataFrame | None = None
 
     @classmethod
     def load(
@@ -528,6 +531,7 @@ class DFM:
             well_names=self.well_names,
             in_training_data=(None if self.in_training_data is None
                               else self.in_training_data.copy()),
+            resting_level_cache=self.resting_level_cache,
         )
         new.recompute_all(correct_for_dual_feeding=bool(new_params.correct_for_dual_feeding))
         return new
@@ -861,6 +865,52 @@ class DFM:
         return df[(df["Minutes"] > a) & (df["Minutes"] <= b)]
 
     # ---- QC ----
+    def resting_levels(self) -> pd.DataFrame:
+        """Every well's Resting Level: the per-minute median of its raw signal
+        (training flag removed), indexed by whole minute, ``W1``-``W12`` as
+        columns (:func:`pr_light_qc.resting_levels`)."""
+        if self.resting_level_cache is None:
+            from .pr_light_qc import resting_levels
+
+            if "Minutes" not in self.raw_df.columns:
+                self.resting_level_cache = pd.DataFrame()
+            else:
+                minutes = pd.to_numeric(self.raw_df["Minutes"], errors="coerce")
+                self.resting_level_cache = resting_levels(self.raw_df,
+                                                          minutes.to_numpy(dtype=float))
+        return self.resting_level_cache
+
+    def ceilings(self, *, range_minutes: Sequence[float] = (0, 0)) -> dict:
+        """The wells at the signal ceiling inside *range_minutes*, by well
+        number (:func:`ceiling.well_ceilings`); empty when none was."""
+        from . import ceiling
+
+        return ceiling.well_ceilings(self.resting_levels(), range_minutes)
+
+    def ceiling_board_minutes(self, *, range_minutes: Sequence[float] = (0, 0)) -> int:
+        """Minutes with every well at the signal ceiling together."""
+        from . import ceiling
+
+        return ceiling.board_minutes(self.resting_levels(), range_minutes)
+
+    def _print_ceiling(self, ceilings: dict, board: int) -> None:
+        """The integrity text's ``## Signal ceiling``, then a blank line."""
+        from .ceiling import CEILING_LEVEL
+
+        print("## Signal ceiling")
+        if not ceilings:
+            print(f"No well rested at the ceiling (a per-minute median of "
+                  f"{CEILING_LEVEL:g} or more).\n")
+            return
+        print(f"Wells resting at the ceiling (a per-minute median of {CEILING_LEVEL:g} "
+              f"or more), where no lick can show:")
+        for well in sorted(ceilings):
+            print(f"  {ceilings[well].describe()}")
+        if board:
+            print(f"Every well at the ceiling together for {board} min: the whole DFM, "
+                  f"not one pad.")
+        print()
+
     def data_breaks(self, *, multiplier: float = 4.0) -> pd.DataFrame | None:
         """Port of FindDataBreaks() from QC.R: the rows that follow a gap in
         time longer than *multiplier* sample periods.
@@ -1050,6 +1100,9 @@ class DFM:
         elif self.generation == GENERATION_EMPTY:
             print("## Paradigm state")
             print("None: every Paradigm column is NA (DFM firmware older than 4.0.0).\n")
+        ceilings = self.ceilings()
+        board = self.ceiling_board_minutes()
+        self._print_ceiling(ceilings, board)
         found = self._messages()
         if state is not None:
             restarts = self._restarts(found)
@@ -1073,6 +1126,10 @@ class DFM:
             "late_records": late,
             "paradigm_sequence": sequence,
             "restarts": restarts,
+            ## One cell each for the integrity CSV; :meth:`ceilings` has the rest.
+            "ceiling_wells": ", ".join(f"W{w} {ceilings[w].minutes} min"
+                                       for w in sorted(ceilings)),
+            "ceiling_board_minutes": board,
         }
 
     def _print_lost_and_repeated(self, gaps: list[tuple[int, int, float]]) -> None:

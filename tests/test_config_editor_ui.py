@@ -952,7 +952,8 @@ def test_progressive_ratio_constants_show_for_that_type_only(editor):
     assert set(w) == {"require_training_complete", "exclude_failed_pr_groups",
                       "pr_lick_free_run", "pr_trend_min_events", "pr_trend_min_rho",
                       "pr_resting_level_rise", "pr_resting_level_ratio",
-                      "pr_break_gap_min", "pr_test_window_min"}
+                      "pr_break_gap_min", "pr_test_window_min", "pr_simulated_yoked_bp"}
+    assert w["pr_simulated_yoked_bp"].itemText(0) == "default: off"
     ## The type's defaults are placeholders, never values (ADR-0011).
     assert "120" in w["pr_break_gap_min"].placeholderText()
     assert "no cap" in w["pr_test_window_min"].placeholderText()

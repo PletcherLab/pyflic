@@ -529,6 +529,17 @@ PR_CONSTANT_FIELDS: tuple[ConstantField, ...] = (
         "minutes after its own training end, so a group that trained late is not "
         "measured over less time than the rest.  Blank (the default) or 0: no cap.",
         "break", minimum=0, blank="no cap"),
+    ConstantField(
+        "pr_simulated_yoked_bp", "Simulate the yoked fly's breaking point",
+        "pr_simulated_yoked_bp — replays the Test Paradigm on each yoked fly's own "
+        "sucrose-well contact from its group's training end, and scores the "
+        "simulated lights like the paired fly's: the Simulated Yoked Breaking "
+        "Point, what background feeding alone would have earned.  Adds it and "
+        "dBreakingPoint (paired minus simulated yoked) to pr_breaking_point.csv.  "
+        "Needs a firmware 4 recording whose ratio Paradigm counts Contact.  Off "
+        "by default (ADR-0023).",
+        "switch", short_label="Simulated yoked BP",
+        choices=("simulate it", "off")),
 )
 
 

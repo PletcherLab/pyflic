@@ -1582,6 +1582,70 @@ class Project:
 
         return breaking_point_comparisons(breaking, mixed_p=self._mixed_p)
 
+    @staticmethod
+    def simulated_yoked_frame(breaking: pd.DataFrame | None) -> pd.DataFrame | None:
+        """The pooled breaking point rows that carry a Simulated Yoked
+        Breaking Point (ADR-0023), or ``None`` when no Member computed one."""
+        if breaking is None or "SimulatedYokedBreakingPoint" not in breaking.columns:
+            return None
+        value = pd.to_numeric(breaking["SimulatedYokedBreakingPoint"], errors="coerce")
+        frame = breaking[value.notna()]
+        return None if frame.empty else frame
+
+    def simulated_yoked_rows(self, breaking: pd.DataFrame | None
+                             ) -> tuple[list[dict], list[dict], list[dict]]:
+        """``(simulated, difference, zero)`` for the pooled Simulated Yoked
+        Breaking Point (ADR-0023), one observation per Chamber Group:
+        treatments compared on it as on the Breaking Point (log-rank
+        included), on ``dBreakingPoint`` as on any Paired-Yoked Difference,
+        and ``dBreakingPoint`` tested against zero within each treatment."""
+        frame = self.simulated_yoked_frame(breaking)
+        if frame is None:
+            return [], [], []
+        from .analytics import breaking_point_comparisons, treatment_comparisons, zero_tests
+
+        simulated = breaking_point_comparisons(
+            frame, value_col="SimulatedYokedBreakingPoint",
+            censored_col="SimulatedYokedCensored", mixed_p=self._mixed_p)
+        difference = treatment_comparisons([("Test", frame)], ["dBreakingPoint"],
+                                           mixed_p=self._mixed_p)
+        zero = zero_tests([("Test", frame)], ["dBreakingPoint"], mixed_p0=self._mixed_p0)
+        return simulated, difference, zero
+
+    def _simulated_yoked_stat_lines(self, breaking: pd.DataFrame, table, zero_table) -> list[str]:
+        """The Stats text's Simulated Yoked Breaking Point block."""
+        from .analytics import as_bool
+
+        frame = self.simulated_yoked_frame(breaking)
+        out = ["Simulated Yoked Breaking Point (yoked fly; pr_simulated_yoked_bp, ADR-0023)"]
+        if frame is None:
+            return out + ["(no chamber group could be replayed)", ""]
+        censored = (int(as_bool(frame["SimulatedYokedCensored"]).sum())
+                    if "SimulatedYokedCensored" in frame.columns else 0)
+        out.append(f"Chamber groups pooled : {len(frame)} ({censored} censored)")
+        if "ReplayBreakingPoint" in breaking.columns:
+            both = breaking[pd.to_numeric(breaking["ReplayBreakingPoint"], errors="coerce").notna()]
+            if len(both):
+                gap = (pd.to_numeric(both["ReplayBreakingPoint"])
+                       - pd.to_numeric(both["BreakingPoint"])).abs()
+                out.append(f"Replay check          : the paired fly's replay gives its real "
+                           f"Breaking Point within one light in {int((gap <= 1).sum())} of "
+                           f"{len(both)} groups ({int((gap == 0).sum())} exactly)")
+        out.append("The test paradigm replayed on each yoked fly's own sucrose contact from its "
+                   "group's training end: what background feeding alone would have earned.")
+        out.append("")
+        simulated, difference, zero = self.simulated_yoked_rows(breaking)
+        out.extend(table(simulated, logrank=True) if simulated
+                   else ["(no comparable treatment groups found)"])
+        out += ["", "dBreakingPoint = BreakingPoint − SimulatedYokedBreakingPoint, the "
+                    "contingent part of the paired fly's breaking point", ""]
+        out.extend(table(difference) if difference else ["(no comparable treatment groups found)"])
+        out.append("")
+        out.extend(zero_table(zero) if zero
+                   else ["(no treatment with two or more differences to test)"])
+        out.append("")
+        return out
+
     def _compare_frames(self, frames: list[tuple[str, pd.DataFrame]],
                         metrics: list[str], *, transformed: bool = False) -> list[dict]:
         from .analytics import treatment_comparisons
@@ -1825,7 +1889,9 @@ class Project:
             return lines
 
         def _zero_table(table_rows: list[dict]) -> list[str]:
-            header = (f"{'Metric':<14}{'Facet':<10}{'Treatment':<14}{'n':>4}"
+            ## The metric column widens to fit (dBreakingPoint fills 14).
+            w = max([14, *(len(str(r["metric"])) + 1 for r in table_rows)])
+            header = (f"{'Metric':<{w}}{'Facet':<10}{'Treatment':<14}{'n':>4}"
                       f"{'mean':>11}{'sem':>10}{'p_t':>10}{'p_wilcoxon':>12}"
                       f"{'p_mixed':>10}")
             lines = [header, "-" * len(header)]
@@ -1834,7 +1900,7 @@ class Project:
                 p_m = "n/a" if row["p_mixed"] is None else f"{row['p_mixed']:.4g}"
                 star = " *" if row["significant"] else ""
                 lines.append(
-                    f"{row['metric']:<14}{row['phase']:<10}{row['treatment']:<14}"
+                    f"{row['metric']:<{w}}{row['phase']:<10}{row['treatment']:<14}"
                     f"{row['n']:>4}{row['mean']:>11.4g}{row['sem']:>10.4g}"
                     f"{row['p_t']:>10.4g}{p_w:>12}{p_m:>10}{star}")
             return lines
@@ -1909,6 +1975,8 @@ class Project:
                 else:
                     out.append("(no comparable treatment groups found)")
                 out.append("")
+                if "SimulatedYokedBreakingPoint" in breaking.columns:
+                    out.extend(self._simulated_yoked_stat_lines(breaking, _table, _zero_table))
             out.append("Per-chamber metrics (secondary)")
             out.append("")
         if not rows:

@@ -53,6 +53,28 @@ How a recording is made, per DFM:
   program that ran (``program_paradigms``) and a misreported LED
   (:class:`OnMsFault`).  They change the files only, never the truth.
 
+Two later formats, both opt-in, so a spec that asks for neither writes what
+it always did:
+
+* **The Contact counter** (firmware 4.1.0, ``ParadigmSpec(counter="Contact")``
+  on a ratio type).  PyMCU sends flag bit 1 (``INSTRUCTION_COUNT_CONTACT``)
+  and the Requirement settings in units of :data:`CONTACT_UNIT_MS`; the
+  firmware's ``StepRatio`` then adds one unit of Progress for every 10 ms of
+  contact outside the Well's own Activation, summed across bouts, and starts
+  the Activation in the millisecond the contact reaches the Requirement.
+  Contact in the Activation's other milliseconds does not count; contact that
+  carries on after it ends counts toward the next.  Acclimation ignores the
+  bit.  The spec's ``first_requirement``, ``step``, ``cap``, ``ratio`` (and
+  an exponential ``scale``) are in ms, as ``Program.txt`` prints them, and
+  PyMCU writes ``Requirement`` and ``Progress`` in ms (``DFM.py``,
+  ``_AddParadigmState``), as :class:`SimTruth` gives ``requirement_met``.
+* **PyMCU 4.0.1's Baseline sets** (``RecordingSpec(baseline_sets=True)``): a
+  91st column, ``BaselineSet``, naming a set of the recording's
+  ``Baselines.csv`` (:func:`baselines_text`): set 1, the Starting baseline
+  the thresholds were built on, from the first program record on; ``NA`` in
+  the lead-in, under a restart's idle instruction and with ``Baseline: No``.
+  Written by PyMCU for every firmware, so a generation-2 file has it too.
+
 Times in :class:`SimTruth` are 1 ms steps from the start of the recording; the
 record holding step ``t`` has ``Index`` ``t // 200 + 1``.
 """
@@ -96,6 +118,12 @@ PARADIGM_COLUMNS: tuple[str, ...] = (
     *(f"{name}{w}" for name in ("Phase", "Activations", "Requirement", "Progress", "OnMs")
       for w in range(1, 13)))
 COLUMNS: tuple[str, ...] = DATA_COLUMNS + PARADIGM_COLUMNS
+#: PyMCU 4.0.1's 91st column (``RecordingSpec.baseline_sets``), and the file
+#: whose sets it names.
+BASELINE_SET_COLUMN = "BaselineSet"
+BASELINES_FILE = "Baselines.csv"
+BASELINES_HEADER: tuple[str, ...] = ("DFM", "Set", "Date", "Time", "Reason",
+                                     *(f"Baseline{w}" for w in range(1, 13)))
 
 #: The ``read_csv`` dtypes ``PyMCU/docs/DataFileColumns.md`` prescribes.
 DATA_FILE_DTYPES: dict[str, str] = {
@@ -121,6 +149,14 @@ _MAIN, _ACCLIMATION = 0, 1
 _PARADIGM_INSTRUCTION = 0xF7
 _PARADIGM_INSTRUCTION_SIZE = 63
 _KEEP_STATE = 0x01
+_COUNT_CONTACT = 0x02              # INSTRUCTION_COUNT_CONTACT, firmware 4.1.0
+#: The ratio types' counters (PyMCU ``Paradigm.COUNTER_NAMES``).
+COUNTERS = ("Events", "Contact")
+#: Under the Contact counter the firmware counts contact in steps of this many
+#: ms (``CONTACT_UNIT_MS``), and the Requirement settings are ms in multiples
+#: of it, up to :data:`MAX_CONTACT_MS` (PyMCU ``Paradigm.MAX_CONTACT_MS``).
+CONTACT_UNIT_MS = 10
+MAX_CONTACT_MS = 0xFFFF * CONTACT_UNIT_MS
 _NEVER = 1 << 62
 #: PyMCU's ``ResendWindow`` for a 4.0.0 DFM (2 * ``COMM.MAX_STATUS_PACKETS_V4``):
 #: a record count that goes back further than this is a restart, not a resend.
@@ -136,6 +172,13 @@ _PROGRAM, _DOWN, _BOOT = "program", "down", "boot"
 
 @dataclass(frozen=True)
 class ParadigmSpec:
+    """A ``[Paradigm]`` of the program.  Under ``counter="Contact"`` (the
+    ratio types only, firmware 4.1.0) the Requirement settings,
+    ``first_requirement``, ``step``, ``cap`` and ``ratio``, are ms of contact
+    in multiples of :data:`CONTACT_UNIT_MS`, and an exponential ``scale`` is
+    in ms; otherwise they count Events.  ``first_requirement`` and ``cap``
+    default to PyMCU's defaults for the counter: 1 and 65535 Events, or 10 and
+    655350 ms."""
     name: str
     type: str                      # OpenLoop | ClosedLoop | FixedInterval | NonFeeding | ProgressiveRatio | FixedRatio
     frequency: int = 40
@@ -146,20 +189,46 @@ class ParadigmSpec:
     lockout_ms: int = 0            # FixedInterval
     on_delay_ms: int = 0           # NonFeeding
     series: str = "Arithmetic"     # ProgressiveRatio: Arithmetic | Exponential
-    first_requirement: int = 1
+    first_requirement: int = None  # type: ignore[assignment]  # 1 Event / 10 ms, see the class doc
     step: int = 0
     scale: float = 5.0
     rate: float = 0.2
-    cap: int = 65535
+    cap: int = None                # type: ignore[assignment]  # 65535 Events / 655350 ms
     ratio: int = 0                 # FixedRatio
     event_gap_ms: int = 100
     acclimation: int = 0           # FixedInterval and ratio types
+    counter: str = "Events"        # ratio types: Events | Contact (firmware 4.1.0)
 
     def __post_init__(self) -> None:
         if self.type not in PARADIGM_TYPES:
             raise ValueError(f"Paradigm {self.name}: unknown type {self.type!r}")
         if self.series not in ("Arithmetic", "Exponential"):
             raise ValueError(f"Paradigm {self.name}: unknown Series {self.series!r}")
+        if self.counter not in COUNTERS:
+            raise ValueError(f"Paradigm {self.name}: Counter must be Events or Contact, not {self.counter!r}")
+        contact = self.counter == "Contact"
+        if contact and self.type not in ("ProgressiveRatio", "FixedRatio"):
+            raise ValueError(f"Paradigm {self.name}: {self.type} Paradigms don't use Counter")
+        # PyMCU's defaults (Paradigm.__init__): the smallest and largest Requirement of the counter.
+        if self.first_requirement is None:
+            object.__setattr__(self, "first_requirement", CONTACT_UNIT_MS if contact else 1)
+        if self.cap is None:
+            object.__setattr__(self, "cap", MAX_CONTACT_MS if contact else 0xFFFF)
+        if contact:
+            # PyMCU's _CheckRequirement: ms of contact the DFM counts in steps of CONTACT_UNIT_MS.
+            settings = {"Ratio": self.ratio} if self.type == "FixedRatio" else (
+                {"Cap": self.cap} if self.series == "Exponential"
+                else {"FirstRequirement": self.first_requirement, "Step": self.step, "Cap": self.cap})
+            for setting, value in settings.items():
+                low = 0 if setting == "Step" else CONTACT_UNIT_MS
+                if int(value) % CONTACT_UNIT_MS or not low <= int(value) <= MAX_CONTACT_MS:
+                    raise ValueError(f"Paradigm {self.name}: with Counter Contact, {setting} is ms of contact, a "
+                                     f"multiple of {CONTACT_UNIT_MS} from {low} to {MAX_CONTACT_MS}, not {value}")
+
+    @property
+    def counts_contact(self) -> bool:
+        """Whether the firmware counts Contact (flag bit 1) rather than Events."""
+        return self.counter == "Contact"
 
 
 #: PyMCU's own Paradigm (``Paradigm.Idle``): ClosedLoop at 40 Hz and 8 ms.
@@ -244,6 +313,9 @@ class RecordingSpec:
     samples_per_second: int = 5
     seed: int = 7
     lead_in_records: int = 25      # Interval 0 rows before the first instruction
+    #: PyMCU 4.0.1's format: the rows gain ``BaselineSet`` (91 columns) and
+    #: the folder ``Baselines.csv``.  Off, the 90 columns PyMCU 4.0.0 wrote.
+    baseline_sets: bool = False
 
 
 @dataclass
@@ -258,8 +330,10 @@ class SimTruth:                    # per DFM, what the engine did, for assertion
     recording, what happened after a restart included.
     """
     activation_onset_ms: dict[int, list[int]]        # well -> ms of each Activation start
-    requirement_met: dict[int, list[int | None]]     # well -> Requirement each Activation met (None outside ratio types)
-    event_spans_ms: dict[int, list[tuple[int, int]]] # well -> Firmware Events
+    #: well -> the Requirement each Activation met, in Events, or ms of contact
+    #: under the Contact counter, as the data file writes it (None outside ratio types).
+    requirement_met: dict[int, list[int | None]]
+    event_spans_ms: dict[int, list[tuple[int, int]]] # well -> Firmware Events (Progress under Events only)
     acclimation_end_ms: dict[int, int | None]
     on_ms_total: dict[int, int]
     # Additions to the plan's contract.
@@ -279,7 +353,7 @@ class SimTruth:                    # per DFM, what the engine did, for assertion
 
 @dataclass
 class SimResult:
-    rows: pd.DataFrame             # the 90 columns, typed as pandas reads them
+    rows: pd.DataFrame             # the 90 columns (91 with baseline_sets), typed as pandas reads them
     truth: SimTruth
 
 
@@ -311,15 +385,23 @@ class _Instruction:
     interval: int | None           # from 0; None outside the program
     cycle: int | None
     kind: str = _PROGRAM           # _PROGRAM, or a restart's _DOWN and _BOOT
+    contact: bool = False          # flag bit 1: the ratio types count Contact
 
 
 def _type_code(paradigm: ParadigmSpec) -> int:
     return PARADIGM_TYPES.index(paradigm.type)
 
 
+def _unit(p: ParadigmSpec) -> int:
+    """ms per unit of a Requirement setting on the wire: 1 under Events."""
+    return CONTACT_UNIT_MS if p.counts_contact else 1
+
+
 def _settings_words(p: ParadigmSpec) -> tuple[int, int, int, int, int]:
-    """The 5 type-dependent numbers of the instruction (Paradigm.SettingsWords)."""
+    """The 5 type-dependent numbers of the instruction (Paradigm.SettingsWords).
+    Under Contact the Requirement settings go in units of CONTACT_UNIT_MS."""
     code = _type_code(p)
+    unit = _unit(p)
     if code == _CLOSEDLOOP:
         words = [p.hold_ms, p.max_on_ms]
     elif code == _FIXEDINTERVAL:
@@ -328,11 +410,11 @@ def _settings_words(p: ParadigmSpec) -> tuple[int, int, int, int, int]:
         words = [p.on_delay_ms, p.max_on_ms]
     elif code == _PROGRESSIVERATIO:
         if p.series == "Exponential":
-            words = [p.activation_ms, 1, round(p.scale * 1000), round(p.rate * 1000), p.cap]
+            words = [p.activation_ms, 1, round(p.scale * 1000 / unit), round(p.rate * 1000), p.cap // unit]
         else:
-            words = [p.activation_ms, 0, p.first_requirement, p.step, p.cap]
+            words = [p.activation_ms, 0, p.first_requirement // unit, p.step // unit, p.cap // unit]
     elif code == _FIXEDRATIO:
-        words = [p.activation_ms, p.ratio]
+        words = [p.activation_ms, p.ratio // unit]
     else:
         words = []
     words = [int(w) for w in words] + [0] * (5 - len(words))
@@ -353,7 +435,7 @@ def _instruction(p: ParadigmSpec, *, ms: int = 0, number: int = 0, keep: bool = 
                  interval: int | None = None, cycle: int | None = None) -> _Instruction:
     return _Instruction(ms, number, p, _type_code(p), keep, dark, _wire_gap(p) & 0xFFFF,
                         _wire_acclimation(p) & 0xFFFF, _settings_words(p),
-                        tuple(int(t) for t in thresholds), interval, cycle)
+                        tuple(int(t) for t in thresholds), interval, cycle, contact=p.counts_contact)
 
 
 #: InitializeLEDControl's instruction: ClosedLoop, every Well Off, number 0.
@@ -361,9 +443,10 @@ _IDLE_INSTRUCTION = _instruction(IDLE_PARADIGM)
 
 
 def _requirement_for(ins: _Instruction, k: int) -> int:
-    """LEDControl.c RequirementFor: Events needed for the k-th Main Activation.
-    The exponential series is computed in single precision, as the firmware
-    does, so the rounding at the halves matches."""
+    """LEDControl.c RequirementFor: Events (or units of CONTACT_UNIT_MS of
+    contact) needed for the k-th Main Activation.  The exponential series is
+    computed in single precision, as the firmware does, so the rounding at
+    the halves matches."""
     s = ins.settings
     if ins.type == _FIXEDRATIO:
         value = s[1]
@@ -387,16 +470,20 @@ def _requirement_for(ins: _Instruction, k: int) -> int:
 
 
 def requirement_series(paradigm: ParadigmSpec, n: int) -> list[int]:
-    """The Requirements of the first *n* Main Activations under *paradigm*."""
+    """The Requirements of the first *n* Main Activations under *paradigm*:
+    Events, or ms of contact under the Contact counter (as the data file)."""
     ins = _instruction(paradigm)
-    return [_requirement_for(ins, k) for k in range(1, n + 1)]
+    return [_requirement_for(ins, k) * _unit(paradigm) for k in range(1, n + 1)]
 
 
 def paradigm_frame(dfm_id: int, number: int, paradigm: ParadigmSpec, *, keep: bool, dark: bool,
                    thresholds: Sequence[int]) -> bytes:
     """The decoded 0xF7 instruction (``ParseParadigmInstruction``'s input):
-    ID, command, the body of ``COMM.ParadigmInstructionPayload``, checksum."""
-    body = struct.pack(">HBBBHHHH", number & 0xFFFF, _type_code(paradigm), _KEEP_STATE if keep else 0,
+    ID, command, the body of ``COMM.ParadigmInstructionPayload``, checksum.
+    The flags byte is keep-state (bit 0) and, from the Paradigm, the Contact
+    counter (bit 1, ``Paradigm.InstructionFlags``)."""
+    flags = (_KEEP_STATE if keep else 0) | (_COUNT_CONTACT if paradigm.counts_contact else 0)
+    body = struct.pack(">HBBBHHHH", number & 0xFFFF, _type_code(paradigm), flags,
                        1 if dark else 0, paradigm.frequency, paradigm.pulse_width,
                        _wire_gap(paradigm), _wire_acclimation(paradigm))
     body += struct.pack(">5I", *_settings_words(paradigm))
@@ -670,7 +757,7 @@ class _Well:
     """A Well's WellState (LEDControl.c), plus what the simulation records."""
     __slots__ = ("phase", "in_bout", "was_lit", "cut_off", "gap_ms", "hold_left", "activation_left",
                  "lockout_left", "on_ms", "delay_left", "max_on_left", "main_activations",
-                 "acclimation_done", "activations", "requirement", "progress",
+                 "acclimation_done", "activations", "requirement", "progress", "contact_ms",
                  "event_open", "event_start", "events", "onsets", "met", "onset_phase", "acclimation_end")
 
     def __init__(self) -> None:
@@ -680,7 +767,7 @@ class _Well:
         self.gap_ms = self.hold_left = self.activation_left = self.lockout_left = 0
         self.on_ms = self.delay_left = self.max_on_left = 0
         self.main_activations = self.acclimation_done = self.activations = 0
-        self.requirement = self.progress = 0
+        self.requirement = self.progress = self.contact_ms = 0
         self.event_open = False
         self.event_start = 0
         self.events: list[tuple[int, int]] = []
@@ -695,7 +782,7 @@ class _Well:
         self.was_lit = self.cut_off = False
         self.hold_left = self.activation_left = self.lockout_left = self.on_ms = self.delay_left = 0
         self.max_on_left = ins.settings[1] if ins.type == _NONFEEDING else 0
-        self.main_activations = self.acclimation_done = self.progress = 0
+        self.main_activations = self.acclimation_done = self.progress = self.contact_ms = 0
         self.requirement = _requirement_for(ins, 1)
 
     def power_off(self, t: int) -> None:
@@ -801,16 +888,28 @@ def _step(s: _Well, ins: _Instruction, contact: bool, t: int) -> bool:
         if lit and not s.was_lit:
             s.count(t, None)
     else:
-        # StepRatio: the Event that meets the Requirement starts an Activation.
-        if event_started:
+        # StepRatio: the Event that meets the Requirement starts an Activation.  With the
+        # Contact counter, every CONTACT_UNIT_MS of contact outside the Activation is one unit
+        # of Progress (activation_left is read before this step's decrement, so contact in the
+        # Activation's first ms, the one that met the Requirement, is the only one that counts).
+        met = False
+        if ins.contact:
+            if contact and s.activation_left == 0:
+                s.contact_ms += 1
+                if s.contact_ms >= CONTACT_UNIT_MS:
+                    s.contact_ms = 0
+                    s.progress = (s.progress + 1) & 0xFFFF
+                    met = s.progress >= s.requirement
+        elif event_started:
             s.progress = (s.progress + 1) & 0xFFFF
-            if s.progress >= s.requirement:
-                met = s.requirement
-                s.progress = 0
-                s.main_activations += 1
-                s.requirement = _requirement_for(ins, s.main_activations + 1)
-                s.activation_left = a[0]
-                s.count(t, met)
+            met = s.progress >= s.requirement
+        if met:
+            requirement = s.requirement
+            s.progress = 0
+            s.main_activations += 1
+            s.requirement = _requirement_for(ins, s.main_activations + 1)
+            s.activation_left = a[0]
+            s.count(t, requirement * (CONTACT_UNIT_MS if ins.contact else 1))
         lit = s.activation_left > 0
         if lit:
             s.activation_left -= 1
@@ -831,7 +930,7 @@ def _skip(s: _Well, ins: _Instruction, contact: bool, limit: int) -> int:
         k_bout = max(max(ins.gap, 1) - s.gap_ms - 1, 0) if s.in_bout else _NEVER
 
     a = ins.settings
-    hold = activation = delay = max_on = on_ms = False
+    hold = activation = delay = max_on = on_ms = contact_ms = False
     if s.phase == _ACCLIMATION:
         if contact:
             lit, k = True, _NEVER
@@ -872,7 +971,12 @@ def _skip(s: _Well, ins: _Instruction, contact: bool, limit: int) -> int:
             lit, k = False, _NEVER
     else:
         if s.activation_left > 0:
+            # Contact during the Activation doesn't count, under either counter.
             lit, k, activation = True, s.activation_left, True
+        elif contact and ins.contact:
+            # Each step adds a ms toward the next unit of Progress; the step that completes
+            # the unit (and may meet the Requirement) is left to an exact step.
+            lit, k, contact_ms = False, CONTACT_UNIT_MS - 1 - s.contact_ms, True
         else:
             lit, k = False, _NEVER
 
@@ -883,6 +987,8 @@ def _skip(s: _Well, ins: _Instruction, contact: bool, limit: int) -> int:
         s.hold_left -= k
     if activation:
         s.activation_left -= k
+    if contact_ms:
+        s.contact_ms += k
     if delay:
         s.delay_left -= k
     if max_on:
@@ -939,8 +1045,8 @@ def _run_well(w: int, sums: np.ndarray, schedule: list[_Instruction], n_ms: int,
             log(s0)
             previous = ins
             continue
-        # ApplyParadigmInstruction: keep only with the flag and the same type.
-        if not (ins.keep and ins.type == previous.type):
+        # ApplyParadigmInstruction: keep only with the flag, the same type and the same counter.
+        if not (ins.keep and ins.type == previous.type and ins.contact == previous.contact):
             s.reset(ins)
         previous = ins
         log(s0)
@@ -1095,17 +1201,26 @@ def _simulate_dfm(spec: RecordingSpec, dfm: DFMSpec, step_every_ms: bool) -> Sim
         state[:, w, :] = run.log_values[np.searchsorted(run.log_t, rec_t, side="right") - 1]
     in_acclimation = (state[:, :, 3] == _ACCLIMATION) & numeric
     shows_ratio = ratio[:, None] & numeric
+    # PyMCU writes a Contact counter's Requirement and Progress in ms (DFM._AddParadigmState).
+    unit = np.where(np.asarray([ins.contact for ins in table])[pick], CONTACT_UNIT_MS, 1)
     for w in range(12):
         cols[f"Phase{w + 1}"] = pd.array(np.where(in_acclimation[:, w], "A", "M").astype(object), dtype="string")
     for w in range(12):
         cols[f"Activations{w + 1}"] = _na_ints(state[:, w, 0], np.zeros(n_rec, dtype=bool))
     for w in range(12):
-        cols[f"Requirement{w + 1}"] = _na_ints(state[:, w, 1], ~shows_ratio[:, w])
+        cols[f"Requirement{w + 1}"] = _na_ints(state[:, w, 1] * unit, ~shows_ratio[:, w])
     for w in range(12):
-        cols[f"Progress{w + 1}"] = _na_ints(state[:, w, 2], ~shows_ratio[:, w])
+        cols[f"Progress{w + 1}"] = _na_ints(state[:, w, 2] * unit, ~shows_ratio[:, w])
     for w in range(12):
         cols[f"OnMs{w + 1}"] = _na_ints(on_ms[:, w], np.zeros(n_rec, dtype=bool))
-    rows = pd.DataFrame(cols, columns=list(COLUMNS))
+    columns = list(COLUMNS)
+    if spec.baseline_sets:
+        # PyMCU 4.0.1: set 1 (the Starting baseline) behind every program instruction; none
+        # before the program, under a restart's idle instruction or without a baseline.
+        cols[BASELINE_SET_COLUMN] = _na_ints(np.ones(n_rec, dtype=np.int64),
+                                             unnamed | np.full(n_rec, not spec.baseline))
+        columns.append(BASELINE_SET_COLUMN)
+    rows = pd.DataFrame(cols, columns=columns)
     if down.any():
         # Index and the times carry on across a restart; Sample counts the rows PyMCU wrote.
         rows = rows.loc[~down].reset_index(drop=True)
@@ -1175,17 +1290,22 @@ def _describe(p: ParadigmSpec) -> str:
         parts += [ms("ActivationMs", p.activation_ms), ms("LockoutMs", p.lockout_ms), gap, acclimation]
     elif code == _NONFEEDING:
         parts += [ms("OnDelayMs", p.on_delay_ms), ms("MaxOnMs", p.max_on_ms)]
-    elif code == _PROGRESSIVERATIO:
-        ## PyMCU 4.0.1 writes the Counter on every ratio Paradigm; the
-        ## fixtures simulate Event counting.
-        parts += [ms("ActivationMs", p.activation_ms), "Counter Events", f"Series {p.series}"]
-        if p.series == "Exponential":
-            parts += [f"Scale {p.scale:g}", f"Rate {p.rate:g}"]
+    elif code in _RATIO_TYPES:
+        ## PyMCU 4.0.1 writes the Counter on every ratio Paradigm.  Under
+        ## Contact the Requirement settings (and Scale) are ms of contact and
+        ## carry " ms", as Paradigm.Describe prints them.
+        unit = " ms" if p.counts_contact else ""
+        parts += [ms("ActivationMs", p.activation_ms), f"Counter {p.counter}"]
+        if code == _FIXEDRATIO:
+            parts += [f"Ratio {p.ratio}{unit}"]
         else:
-            parts += [f"FirstRequirement {p.first_requirement}", f"Step {p.step}"]
-        parts += [f"Cap {p.cap}", gap, acclimation]
-    elif code == _FIXEDRATIO:
-        parts += [ms("ActivationMs", p.activation_ms), "Counter Events", f"Ratio {p.ratio}", gap, acclimation]
+            parts += [f"Series {p.series}"]
+            if p.series == "Exponential":
+                parts += [f"Scale {p.scale:g}{unit}", f"Rate {p.rate:g}"]
+            else:
+                parts += [f"FirstRequirement {p.first_requirement}{unit}", f"Step {p.step}{unit}"]
+            parts += [f"Cap {p.cap}{unit}"]
+        parts += [gap, acclimation]
     return f"{p.name} ({p.type}): {', '.join(parts)}"
 
 
@@ -1295,6 +1415,27 @@ def messages_text(spec: RecordingSpec, *,
     return s
 
 
+def baselines_text(spec: RecordingSpec) -> str:
+    """PyMCU 4.0.1's ``Baselines.csv`` (``RecordingSpec.baseline_sets``):
+    one row per DFM and Baseline set, ``DFM, Set, Date, Time, Reason,
+    Baseline1``-``12``.  The fixtures make one set per DFM, Set 1, Reason
+    ``Start``: the Starting baseline (:func:`_pymcu_baseline`, the values in
+    ``SimTruth.baseline``), dated when the first program instruction applies.
+    With ``Baseline: No`` there is no set, and the file is its header."""
+    _validate(spec)
+    P = _record_ms(spec)
+    n_ms = _n_records(spec) * P
+    when = spec.start + timedelta(milliseconds=spec.lead_in_records * P)
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(BASELINES_HEADER)
+    if spec.baseline:
+        for d in sorted(spec.dfms, key=lambda d: d.dfm_id):
+            writer.writerow([d.dfm_id, 1, when.strftime("%m/%d/%Y"), when.strftime("%H:%M:%S"), "Start",
+                             *(_baseline_of(spec.seed, d, w, n_ms, P) for w in range(1, 13))])
+    return out.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Files
 # ---------------------------------------------------------------------------
@@ -1370,6 +1511,10 @@ def _write(data_dir: Path, spec: RecordingSpec, results: Mapping[int, SimResult]
         path = data_dir / "Messages.csv"
         path.write_text(messages_text(spec, index_gaps=index_gaps), encoding="utf-8", newline="\n")
         written[path.name] = path
+    if spec.baseline_sets:
+        path = data_dir / BASELINES_FILE
+        path.write_text(baselines_text(spec), encoding="utf-8", newline="\n")
+        written[path.name] = path
     return written
 
 
@@ -1383,8 +1528,9 @@ def write_v4_recording(data_dir: Path, spec: RecordingSpec, *, split_hours: floa
                        on_ms_faults: Mapping[int, Sequence[OnMsFault]] | None = None) -> dict[str, Path]:
     """Writes the recording folder PyMCU 4.0.0 leaves for a 4.0.0 DFM:
     ``DFM<id>_<n>.csv`` (a new file, with its header, every *split_hours*),
-    ``Program.txt`` and ``Messages.csv``.  Returns file name -> path.
-    *results* reuses a :func:`simulate` of the same spec.
+    ``Program.txt`` and ``Messages.csv``; with ``spec.baseline_sets``,
+    PyMCU 4.0.1's 91-column files and ``Baselines.csv`` too.  Returns file
+    name -> path.  *results* reuses a :func:`simulate` of the same spec.
 
     Two faults, in the files only (the truth is the simulation's):
 
@@ -1415,8 +1561,9 @@ def write_gen2_recording(data_dir: Path, spec: RecordingSpec, *, split_hours: fl
 
 
 def read_v4_csv(path: Path) -> pd.DataFrame:
-    """A data file read as ``DataFileColumns.md`` says to."""
-    return pd.read_csv(path, dtype=DATA_FILE_DTYPES)
+    """A data file read as ``DataFileColumns.md`` says to (``BaselineSet``,
+    when there, as ``Int64``)."""
+    return pd.read_csv(path, dtype={**DATA_FILE_DTYPES, BASELINE_SET_COLUMN: "Int64"})
 
 
 # ---------------------------------------------------------------------------
@@ -1541,8 +1688,8 @@ def _healthy_dfm(dfm_id: int, intervals: tuple[IntervalSpec, ...], minutes: floa
 def one_of_each_spec(minutes: float = 30.0, *, seed: int = 7) -> RecordingSpec:
     """One DFM per Paradigm type, every fly healthy, laid out as PyMCU's
     ``ParadigmExamples.txt`` was before 4.0.1, when its ratio Paradigms
-    counted Events (this simulator counts Events only; the 4.0.1 file counts
-    contact on DFMs 5 to 7).  DFM 1 OpenLoop (A wells On, Lit), 2 ClosedLoop,
+    counted Events (the 4.0.1 file counts contact on DFMs 5 to 7; for the
+    Contact counter see :func:`contact_pr_spec`).  DFM 1 OpenLoop (A wells On, Lit), 2 ClosedLoop,
     3 FixedInterval, 4 NonFeeding, 5 Closed for a twelfth of the run then PR10,
     6 FixedRatio (FR5); A wells 20 and B wells Off elsewhere."""
     def one(name: str, dark: bool = True, thresholds: tuple[int | str, ...] = CHOICE_THRESHOLDS,
@@ -1610,8 +1757,54 @@ def stress_spec(minutes: float = 8.0, *, seed: int = 7) -> RecordingSpec:
     midnight), DFM 4 Constant with every Well linked.  Bouts are dense, with
     dips shorter and longer than every Event gap, and two Wells per DFM sit
     noisily at their threshold."""
-    rng = np.random.default_rng([seed, 99])
-    names = [p.name for p in STRESS_PARADIGMS]
+    return _stress_spec(minutes, seed, STRESS_PARADIGMS, 99, lambda interval: {
+        2: ((interval("PR1", 0.4), interval("PR1", 0.3), interval("CL3", 0.5)), CHOICE_LINKAGE, "Repeating"),
+        3: ((interval("FR1", 1438.0), interval("FI1", 2.0)), tuple(range(1, 13)), "Circadian"),
+        4: ((interval("NF1", 1.0), interval("CL2", 5.0)), (1,) * 12, "Constant"),
+    })
+
+
+#: The Paradigms of :func:`contact_stress_spec`: the Contact counter (firmware
+#: 4.1.0) with Activations shorter than a unit of contact and longer than the
+#: Event gap, Requirements of one unit, the exponential series (Scale in ms),
+#: FixedRatio, Acclimation, and an Events Paradigm of the same type to switch to.
+CONTACT_STRESS_PARADIGMS: tuple[ParadigmSpec, ...] = (
+    ParadigmSpec("PRc1", "ProgressiveRatio", activation_ms=60, first_requirement=20, step=10, cap=40,
+                 acclimation=2, counter="Contact"),
+    ParadigmSpec("PRc2", "ProgressiveRatio", activation_ms=250, series="Exponential", scale=50.0, rate=0.2,
+                 event_gap_ms=30, counter="Contact"),
+    ParadigmSpec("PRc3", "ProgressiveRatio", activation_ms=5, first_requirement=10, step=0, cap=10,
+                 event_gap_ms=0, counter="Contact"),
+    ParadigmSpec("FRc1", "FixedRatio", activation_ms=40, ratio=30, event_gap_ms=150, acclimation=1,
+                 counter="Contact"),
+    ParadigmSpec("PRe", "ProgressiveRatio", activation_ms=60, first_requirement=2, step=1, cap=4, acclimation=2),
+    ParadigmSpec("CLx", "ClosedLoop", hold_ms=150, max_on_ms=400),
+)
+
+
+def contact_stress_spec(minutes: float = 8.0, *, seed: int = 7) -> RecordingSpec:
+    """:func:`stress_spec` for the Contact counter, for the firmware
+    cross-check: DFM 1 Linear through short Intervals of
+    :data:`CONTACT_STRESS_PARADIGMS` (keep-state under Contact where a name
+    repeats), DFM 2 Repeating ``PRc1``, ``PRc1`` (kept), then the Events
+    ``PRe`` of the same type (reset) and back on the wrap, DFM 3 Circadian
+    ``FRc1`` then ``PRc2``, DFM 4 Constant ``PRc3`` (one unit of contact
+    per 5 ms Activation) with every Well linked.  The same dense bouts and
+    noisy Wells, whose flicker adds up contact a few ms at a time."""
+    return _stress_spec(minutes, seed, CONTACT_STRESS_PARADIGMS, 98, lambda interval: {
+        2: ((interval("PRc1", 0.4), interval("PRc1", 0.3), interval("PRe", 0.5)), CHOICE_LINKAGE, "Repeating"),
+        3: ((interval("FRc1", 1438.0), interval("PRc2", 2.0)), tuple(range(1, 13)), "Circadian"),
+        4: ((interval("PRc3", 1.0), interval("CLx", 5.0)), (1,) * 12, "Constant"),
+    })
+
+
+def _stress_spec(minutes: float, seed: int, paradigms: Sequence[ParadigmSpec], salt: int,
+                 fixed_plans) -> RecordingSpec:
+    """The stress specs' layout: DFM 1 Linear through random Intervals of
+    *paradigms*, DFMs 2 on as *fixed_plans* (given the Interval maker) lays
+    them out, dense random bouts drawn from ``[seed, salt, dfm, well]``."""
+    rng = np.random.default_rng([seed, salt])
+    names = [p.name for p in paradigms]
 
     def thresholds() -> tuple[int | str, ...]:
         out: list[int | str] = []
@@ -1628,18 +1821,13 @@ def stress_spec(minutes: float = 8.0, *, seed: int = 7) -> RecordingSpec:
         same = k > 0 and rng.random() < 0.35
         name = linear[-1].paradigm if same else names[int(rng.integers(len(names)))]
         linear.append(interval(name, round(float(rng.uniform(0.25, 0.75)), 3)))
-    plans = {
-        1: (tuple(linear), (1, 1, 2, 3, 3, 4, 5, 5, 6, 7, 8, 8), "Linear"),
-        2: ((interval("PR1", 0.4), interval("PR1", 0.3), interval("CL3", 0.5)), CHOICE_LINKAGE, "Repeating"),
-        3: ((interval("FR1", 1438.0), interval("FI1", 2.0)), tuple(range(1, 13)), "Circadian"),
-        4: ((interval("NF1", 1.0), interval("CL2", 5.0)), (1,) * 12, "Constant"),
-    }
+    plans = {1: (tuple(linear), (1, 1, 2, 3, 3, 4, 5, 5, 6, 7, 8, 8), "Linear"), **fixed_plans(interval)}
     dfms = []
     end_s = minutes * 60.0
     for dfm_id, (intervals, linkage, ptype) in plans.items():
         bouts: dict[int, tuple[Bout, ...]] = {}
         for w in range(1, 13):
-            wr = np.random.default_rng([seed, 99, dfm_id, w])
+            wr = np.random.default_rng([seed, salt, dfm_id, w])
             t, out = _FIRST_BOUT_S, []
             while t < end_s:
                 duration = float(wr.uniform(0.005, 2.0)) if wr.random() < 0.7 else float(wr.uniform(0.005, 0.08))
@@ -1653,7 +1841,7 @@ def stress_spec(minutes: float = 8.0, *, seed: int = 7) -> RecordingSpec:
                             noise_sd={w: 2.0 for w in noisy}, drift={w: Ramp(3.0, 4.0, 18.0) for w in noisy},
                             noise_step_ms=10))
     return RecordingSpec(start=datetime(2026, 10, 16, 23, 56, 0), duration_min=minutes,
-                         paradigms={p.name: p for p in STRESS_PARADIGMS}, dfms=tuple(dfms), seed=seed)
+                         paradigms={p.name: p for p in paradigms}, dfms=tuple(dfms), seed=seed)
 
 
 def yoked_controls_spec(minutes: float = 30.0, *, seed: int = 7) -> RecordingSpec:
@@ -1664,6 +1852,118 @@ def yoked_controls_spec(minutes: float = 30.0, *, seed: int = 7) -> RecordingSpe
     intervals = (IntervalSpec("Closed", True, thresholds, minutes),)
     return RecordingSpec(start=START, duration_min=minutes, paradigms={"Closed": CLOSED},
                          dfms=(_healthy_dfm(1, intervals, minutes, seed, linkage=YOKED_LINKAGE),), seed=seed)
+
+
+# ---------------------------------------------------------------------------
+# Progressive ratio counting Contact, Paired and Yoked (firmware 4.1.0, PyMCU 4.0.1)
+# ---------------------------------------------------------------------------
+
+#: Wells 1-4, 5-8 and 9-12 linked, one Chamber Group each, as the Jove
+#: recordings (``test_data/Jove/Males/Christi_11_16_26``): the group's four
+#: LEDs show its Paired fly's light.
+CONTACT_PR_LINKAGE: tuple[int, ...] = (1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3)
+#: The Jove recordings' ratio Paradigm, as their ``Program.txt`` prints it:
+#: ``BreakPt (ProgressiveRatio): Frequency 40 Hz, PulseWidth 8 ms,
+#: ActivationMs 500 ms, Counter Contact, Series Arithmetic, FirstRequirement
+#: 1000 ms, Step 1000 ms, Cap 655350 ms, EventGapMs 100 ms, Acclimation 10``.
+#: The k-th Test light takes k s of contact outside the light.
+BREAKPT = ParadigmSpec("BreakPt", "ProgressiveRatio", activation_ms=500, counter="Contact",
+                       first_requirement=1000, step=1000, cap=MAX_CONTACT_MS, event_gap_ms=100, acclimation=10)
+#: DFM -> its Paired chambers in :func:`contact_pr_spec`, one per Chamber
+#: Group (``(chamber + 1) // 2``); the group's other chamber is Yoked.  Every
+#: sucrose well is the chamber's A well (``pi_direction: left``), as on the
+#: Jove recordings' DFMs 1 and 2.
+CONTACT_PR_PAIRED: dict[int, tuple[int, int, int]] = {1: (1, 3, 5), 2: (2, 4, 6)}
+#: Chamber Group -> (its Paired fly, its Yoked fly) in :func:`contact_pr_spec`,
+#: both DFMs alike; :data:`CONTACT_PR_BOUTS` has the bouts each name stands for.
+CONTACT_PR_CASES: dict[int, tuple[str, str]] = {1: ("busy", "matched"), 2: ("busy_late", "half"),
+                                                3: ("quitter", "sparse")}
+#: Each sucrose feeding pattern of :func:`contact_pr_spec`: ``(first bout s,
+#: every s, bout length s, last bout ends by s)``, regular bouts of amplitude
+#: 40.  The Yoked patterns start 6 s after the Paired ones' grid, so the two
+#: flies of a group never feed at once.
+CONTACT_PR_BOUTS: dict[str, tuple[float, float, float, float]] = {
+    "busy": (6.0, 12.0, 3.0, 1200.0),        # 15 s of contact a minute, to minute 20
+    "busy_late": (120.0, 12.0, 3.0, 1200.0),  # the same from minute 2: Training ends about 2 min later
+    "quitter": (6.0, 12.0, 3.0, 480.0),      # the same, but stops at minute 8
+    "matched": (12.0, 12.0, 3.0, 1200.0),    # as much as "busy", to minute 20
+    "half": (12.0, 24.0, 3.0, 1200.0),       # half that: 7.5 s a minute, to minute 20
+    "sparse": (30.0, 60.0, 1.0, 1200.0),     # 1 s a minute, to minute 20
+}
+#: The yeast (B) well of every chamber: a 2 s bout every 3 min, all recording.
+_CONTACT_PR_YEAST = (90.0, 180.0, 2.0)
+
+
+def _regular_train(first_s: float, every_s: float, length_s: float, end_s: float,
+                   amplitude: float = 40.0) -> tuple[Bout, ...]:
+    """Bouts of *length_s* every *every_s* from *first_s*, each ending by *end_s*."""
+    out, k = [], 0
+    while first_s + k * every_s + length_s <= end_s + 1e-9:
+        out.append(Bout(round(first_s + k * every_s, 3), length_s, amplitude))
+        k += 1
+    return tuple(out)
+
+
+def contact_pr_spec(minutes: float = 70.0, *, dfm_ids: Sequence[int] = (1, 2), seed: int = 7,
+                    baseline_sets: bool = True) -> RecordingSpec:
+    """A Paired/Yoked progressive ratio counting Contact, as the Jove
+    recordings ran it (firmware 4.1.0, PyMCU 4.0.1): one Interval of
+    :data:`BREAKPT` (Lit) for the whole run, :data:`CONTACT_PR_LINKAGE`,
+    and on each DFM (1 and/or 2) its Paired chambers'
+    (:data:`CONTACT_PR_PAIRED`) A wells at threshold 20 above baseline, every
+    other well Off.  ``baseline_sets`` (default on) writes PyMCU 4.0.1's
+    ``BaselineSet`` column and ``Baselines.csv``.
+
+    Each Chamber Group acts out :data:`CONTACT_PR_CASES` with the regular
+    sucrose bouts of :data:`CONTACT_PR_BOUTS` (3 s every 12 s is 15 s of
+    contact a minute).  The Paired fly's first ten bouts are its Acclimation
+    lights; each later Test light takes k s of contact for the k-th.  The
+    Yoked fly's sucrose well is Off, so the firmware ignores it, but its own
+    feeding is in its signal (and its LED is its partner's):
+
+    * group 1, ``busy`` / ``matched``: the Paired fly feeds from 6 s to
+      minute 20 (Training ends near minute 2, about 21 Test lights); the
+      Yoked fly feeds just as much, 6 s out of step.
+    * group 2, ``busy_late`` / ``half``: the Paired fly feeds as ``busy``
+      but starts at minute 2 (Training ends near minute 4, about 19 Test
+      lights); the Yoked fly feeds half as much from 12 s to minute 20.
+    * group 3, ``quitter`` / ``sparse``: the Paired fly feeds as ``busy``
+      but stops at minute 8 (about 11 Test lights); the Yoked fly feeds 1 s
+      a minute from 30 s to minute 20.
+
+    Every chamber's B (yeast) well has a 2 s bout every 3 minutes all along.
+    Nothing touches a sucrose well after minute 20, so the default 70 minutes
+    leaves every Paired fly a gap of over 45 minutes before the end: a
+    first-gap break that is not censored.  The exact Test lights are in
+    ``SimTruth`` (``activation_phase`` "M"); ``requirement_met`` there and
+    the data file's Requirement and Progress are ms of contact.
+    """
+    unknown = sorted(set(dfm_ids) - set(CONTACT_PR_PAIRED))
+    if unknown or not dfm_ids:
+        raise ValueError(f"contact_pr_spec lays out DFMs 1 and 2, not {unknown or 'none'}")
+    end_s = minutes * 60.0
+
+    def train(case: str) -> tuple[Bout, ...]:
+        first, every, length, last = CONTACT_PR_BOUTS[case]
+        return _regular_train(first, every, length, min(last, end_s))
+
+    dfms = []
+    for dfm_id in dfm_ids:
+        thresholds: list[int | str] = [OFF] * 12
+        bouts: dict[int, tuple[Bout, ...]] = {}
+        for chamber in range(1, 7):
+            group = (chamber + 1) // 2
+            paired, yoked = CONTACT_PR_CASES[group]
+            is_paired = chamber in CONTACT_PR_PAIRED[dfm_id]
+            sucrose, yeast = 2 * chamber - 1, 2 * chamber
+            if is_paired:
+                thresholds[sucrose - 1] = 20
+            bouts[sucrose] = train(paired if is_paired else yoked)
+            bouts[yeast] = _regular_train(*_CONTACT_PR_YEAST, end_s, amplitude=35.0)
+        dfms.append(DFMSpec(dfm_id=dfm_id, intervals=(IntervalSpec(BREAKPT.name, False, tuple(thresholds), minutes),),
+                            bouts=bouts, linkage=CONTACT_PR_LINKAGE))
+    return RecordingSpec(start=START, duration_min=minutes, paradigms={BREAKPT.name: BREAKPT}, dfms=tuple(dfms),
+                         seed=seed, baseline_sets=baseline_sets)
 
 
 # ---------------------------------------------------------------------------

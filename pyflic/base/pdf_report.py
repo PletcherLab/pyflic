@@ -317,6 +317,19 @@ def _error_flags(experiment: Experiment, dfm_id: int) -> int:
     return total
 
 
+def _ceiling_cell(experiment: Experiment, dfm_id: int) -> str:
+    """The DFM's wells at the signal ceiling for longer than
+    ``max_ceiling_minutes`` (its default when the removal is off: the time is
+    lost from the record either way), as ``W4 538 min, …``; ``""`` for none."""
+    from . import ceiling
+
+    limit = ceiling.max_minutes(experiment.global_constants)
+    limit = float(ceiling.DEFAULT_MAX_MINUTES) if limit is None else limit
+    found = experiment.dfms[dfm_id].ceilings()
+    return ", ".join(f"W{w} {found[w].minutes} min" for w in sorted(found)
+                     if found[w].minutes > limit)
+
+
 def _integrity_frame(experiment: Experiment, qc: dict) -> pd.DataFrame:
     rows = []
     for dfm_id in sorted(experiment.dfms):
@@ -328,8 +341,9 @@ def _integrity_frame(experiment: Experiment, qc: dict) -> pd.DataFrame:
         breaks = int(r.get("data_breaks_count", 0) or 0)
         errors = _error_flags(experiment, dfm_id)
         lost = integrity.get("lost_records")
+        ceiling_wells = _ceiling_cell(experiment, dfm_id)
         verdict = "ok" if (breaks == 0 and errors == 0 and index_ok is not False
-                           and not lost) else "warning"
+                           and not lost and not ceiling_wells) else "warning"
         rows.append({
             "DFM": dfm_id,
             "Samples": int(integrity.get("n_rawdata") or len(experiment.dfms[dfm_id].raw_df)),
@@ -339,6 +353,7 @@ def _integrity_frame(experiment: Experiment, qc: dict) -> pd.DataFrame:
             "Lost records": np.nan if lost is None else int(lost),
             "Data breaks": breaks,
             "Error flags": errors,
+            "At signal ceiling": ceiling_wells or "–",
             "Verdict": verdict,
         })
     return pd.DataFrame(rows)
@@ -348,13 +363,16 @@ def _integrity_callout(experiment: Experiment, qc: dict) -> rl.Callout:
     frame = _integrity_frame(experiment, qc)
     bad = frame[frame["Verdict"] != "ok"]
     if bad.empty:
-        return rl.Callout("No data breaks, no firmware error flags, and a continuous "
-                          "sample index on every DFM.", tone="ok", title="Data integrity")
+        return rl.Callout("No data breaks, no firmware error flags, a continuous "
+                          "sample index and no well at the signal ceiling on every DFM.",
+                          tone="ok", title="Data integrity")
     detail = "; ".join(
         f"DFM {int(r.DFM)}: {int(r['Data breaks'])} data break(s), "
         f"{int(r['Error flags'])} error flag(s)"
         + (f", {int(r['Lost records'])} lost record(s)"
            if pd.notna(r["Lost records"]) and r["Lost records"] > 0 else "")
+        + (f", at the signal ceiling {r['At signal ceiling']}"
+           if r["At signal ceiling"] != "–" else "")
         for _, r in bad.iterrows())
     return rl.Callout(detail + ".  See Quality control.", tone="warning",
                       title="Data integrity")
@@ -520,8 +538,10 @@ def _qc_blocks(experiment: Experiment, qc: dict) -> list[Any]:
         rl.Paragraph("Per DFM: samples recorded, gaps in the sample clock longer than "
                      f"{qc.get(next(iter(qc), 0), {}).get('data_breaks_multiplier', 4.0):g}× "
                      "the sampling interval (data breaks), non-zero firmware error codes, "
-                     "and whether the sample index runs without a gap, with the records "
-                     "its gaps lost."),
+                     "whether the sample index runs without a gap, with the records "
+                     "its gaps lost, and the wells that rested at the signal ceiling "
+                     "(the top of the sensor's range, where no lick can show) for longer "
+                     "than max_ceiling_minutes."),
         rl.Table(_integrity_frame(experiment, qc), caption="Data integrity by DFM",
                  formats={"Hours": "{:.1f}"}, status={"Verdict": rl.tone_of}),
     ]

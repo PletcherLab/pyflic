@@ -393,6 +393,9 @@ def definition_problems(definition: TypeDefinition) -> list[str]:
     from ..opto_qc import opto_constant_problems
 
     problems += opto_constant_problems(definition.constants)
+    from ..ceiling import ceiling_problems
+
+    problems += ceiling_problems(definition.constants)
     for module in modules:
         problems += module.constant_problems(definition.constants)
     return problems

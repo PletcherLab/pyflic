@@ -104,7 +104,8 @@ open, so you can step through the DFMs comparing like with like.
 
 The DFM's integrity report from `qc/integrity/`: the table above, the text report below —
 rows, time span, gaps and data breaks, lost and repeated records, error flags, the Paradigm
-sequence and the DFM's restarts (these two not on a generation 1 or 2 recording). Below the
+sequence and the DFM's restarts (these two not on a generation 1 or 2 recording), and the
+wells that rested at the [signal ceiling](config-structure.md#the-signal-ceiling). Below the
 report, the recording's `Messages.csv` for this DFM and the MCU, when `data/` holds one.
 
 ### The messages table

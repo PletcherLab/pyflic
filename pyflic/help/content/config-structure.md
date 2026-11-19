@@ -191,13 +191,34 @@ The QC Viewer's **Auto Filter** and the Python API run the same removal on deman
 | `min_untransformed_licks_cutoff` | all experiment types | Remove a chamber if any of its wells has a lick count below this |
 | `max_med_duration_cutoff` | every two-well type | Remove a chamber if `MedDurationA` or `MedDurationB` is above this |
 | `max_events_cutoff` | every two-well type | Remove a chamber if `EventsA` or `EventsB` is above this |
+| `max_ceiling_minutes` | every experiment type (default `30`) | Remove a chamber if any of its wells rests at the [signal ceiling](#the-signal-ceiling) for more than this many minutes of the analysed range |
 
-An Experiment Type supplies its own defaults for these (Hedonic and Progressive Ratio set
-all three). A yaml number always wins over the default. A yaml `null` also wins and means
-**that filter is off** (the Config Editor and Project Design dialog write `null` when the
-cutoff's **Use** checkbox is unchecked). An omitted key still inherits the type's default.
-A Custom Experiment has no defaults, and there an unset or null key means the check is not
-performed — pyflic reports it as "not configured" rather than substituting a number.
+An Experiment Type supplies its own defaults for the first three (Hedonic and Progressive
+Ratio set all three); `max_ceiling_minutes` defaults to 30 under every type, Custom and a
+lab's own included. A yaml number always wins over the default. A yaml `null` also wins and
+means **that filter is off** (the Config Editor and Project Design dialog write `null` when
+the cutoff's **Use** checkbox is unchecked). An omitted key still inherits the default.
+A Custom Experiment has no defaults for the first three, and there an unset or null key
+means the check is not performed — pyflic reports it as "not configured" rather than
+substituting a number.
+
+### The signal ceiling
+
+A DFM reads each well through a 10-bit converter, so its signal cannot exceed 1023, and
+many boards saturate a little below that (1014 to 1022, always the same level on the same
+board). A well that rests up there cannot rise when the fly touches it, so its licks
+vanish for as long as it stays. A wet pad, food wicking onto it or condensation usually
+climbs there over hours.
+
+pyflic counts a well **at the ceiling** in each minute whose per-minute median raw signal
+(its resting level) is 1000 or more. The median ignores the fly's brief contacts, so a hard
+lick that touches 1023 never counts. Every DFM's integrity report lists each well's minutes
+at the ceiling, and the minutes every well spent there together, which point to the board
+itself rather than one pad. `max_ceiling_minutes` then removes a chamber with a well at the
+ceiling for longer than the cutoff, counting only the minutes inside the analysed range: a
+pad that saturated at hour 10 leaves the whole recording and stays in a Slice that ends at
+hour 6. With the cutoff off, the integrity report and the experiment report still list the
+wells.
 
 A type with the Progressive Ratio analysis (the shipped `ProgressiveRatio`, or a lab type
 built with it) adds its own, all with defaults:
@@ -213,6 +234,7 @@ built with it) adds its own, all with defaults:
 | `pr_resting_level_ratio` | `3` | Times the DFM's other sucrose wells a paired sucrose well may rest at before the *elevated* warning |
 | `pr_break_gap_min` | `120` | Minutes. A pause longer than this ends a fly's responding: the breaking point counts the paired fly's lick-backed Test light events before its first such pause, and sucrose persistence is the time to either fly's last sucrose feeding event before one |
 | `pr_test_window_min` | unset (off) | Minutes. Caps every chamber group's Test window at this long after its own training end, so a group that trained late is not measured over less time; `0` or unset means no cap |
+| `pr_simulated_yoked_bp` | `false` | Adds the **Simulated Yoked Breaking Point**: the Test Paradigm replayed on each yoked fly's own sucrose contact, which gives the breaking point background feeding alone would have earned. Also adds `dBreakingPoint`, paired minus simulated yoked. Needs a firmware 4 recording whose ratio Paradigm counts Contact |
 
 What the light QC checks, and how the breaking point is defined, is in
 [Progressive Ratio experiments](concepts-progressive-ratio.md). The Project Design dialog

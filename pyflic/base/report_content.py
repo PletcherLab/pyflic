@@ -39,6 +39,8 @@ METRIC_LABELS: dict[str, str] = {
     "dPersistA": "Δ {A} persistence, min (paired − yoked)",
     "PersistA": "{A} persistence (min)",
     "BreakingPoint": "Breaking point (light events earned)",
+    "SimulatedYokedBreakingPoint": "Simulated yoked breaking point",
+    "dBreakingPoint": "Δ breaking point (paired − simulated yoked)",
 }
 #: Single-well layouts have no A/B.
 SINGLE_WELL_LABELS: dict[str, str] = {

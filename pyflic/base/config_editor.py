@@ -2060,6 +2060,15 @@ class FLICConfigEditor(QMainWindow):
         self._max_events_row = self._exp_form.rowCount()
         self._exp_form.addRow("Max Events:", events_row)
 
+        ## Every type's, both layouts (pyflic.base.ceiling).
+        from .ceiling import CEILING_CONSTANT_FIELDS
+
+        self._ceiling_check, self._ceiling_edit, ceiling_row = (
+            self._make_threshold_control())
+        self._ceiling_edit.setToolTip(CEILING_CONSTANT_FIELDS[0].tooltip)
+        self._ceiling_row = self._exp_form.rowCount()
+        self._exp_form.addRow("Max Minutes at Ceiling:", ceiling_row)
+
         ## Progressive Ratio's own constants — the switches that decide which
         ## failed chamber groups leave, the light QC's thresholds and the
         ## breaking point's rule — shown only for a type that carries them.
@@ -2506,6 +2515,8 @@ class FLICConfigEditor(QMainWindow):
              "max_med_duration_cutoff"),
             (self._max_events_check, self._max_events_edit,
              "max_events_cutoff"),
+            (self._ceiling_check, self._ceiling_edit,
+             "max_ceiling_minutes"),
         )
 
     def _threshold_fields(self) -> tuple[tuple[QLineEdit, str], ...]:
@@ -2670,6 +2681,7 @@ class FLICConfigEditor(QMainWindow):
         defaults = self._current_type().default_constants or {}
         self._exp_form.setRowVisible(self._filter_header_row, True)
         self._exp_form.setRowVisible(self._min_raw_licks_row, True)
+        self._exp_form.setRowVisible(self._ceiling_row, True)
         self._exp_form.setRowVisible(
             self._max_dur_row, two_well or "max_med_duration_cutoff" in defaults)
         self._exp_form.setRowVisible(
@@ -2678,7 +2690,7 @@ class FLICConfigEditor(QMainWindow):
     def _threshold_row_visible(self, key: str) -> bool:
         two_well = self._chamber_size() == 2
         defaults = self._current_type().default_constants or {}
-        if key == "min_untransformed_licks_cutoff":
+        if key in ("min_untransformed_licks_cutoff", "max_ceiling_minutes"):
             return True
         return two_well or key in defaults
 

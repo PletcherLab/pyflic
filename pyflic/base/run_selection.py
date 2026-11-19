@@ -438,7 +438,15 @@ def _write_core(exp, run: SelectionRun, todo: list[Item], ctx: _Context) -> list
     summary = exp.write_summary()
     _append_selection(summary, run, todo)
     written.append(summary)
-    written.append(exp.write_feeding_summary(range_minutes=WHOLE_RECORDING))
+    feeding = exp.write_feeding_summary(range_minutes=WHOLE_RECORDING)
+    written.append(feeding)
+    ## Beside it, the settings it was computed from, which the stale rule
+    ## compares with the config as it stands (ADR-0022).
+    from . import analysis_settings
+
+    settings_record = feeding.parent / analysis_settings.RECORD_FILENAME
+    if getattr(exp, "analysis_settings", None) is not None and settings_record.is_file():
+        written.append(settings_record)
     facet = exp.write_feeding_summary_facet()
     if facet is None:
         ctx.log("  Not faceted: no feeding_summary_facet.csv.")
