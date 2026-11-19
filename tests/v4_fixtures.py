@@ -1880,15 +1880,15 @@ CONTACT_PR_CASES: dict[int, tuple[str, str]] = {1: ("busy", "matched"), 2: ("bus
                                                 3: ("quitter", "sparse")}
 #: Each sucrose feeding pattern of :func:`contact_pr_spec`: ``(first bout s,
 #: every s, bout length s, last bout ends by s)``, regular bouts of amplitude
-#: 40.  The Yoked patterns start 6 s after the Paired ones' grid, so the two
-#: flies of a group never feed at once.
+#: 40.  Paired bouts start at 6 s past a multiple of 12 s and Yoked ones on a
+#: multiple, so the two flies of a group never feed at once.
 CONTACT_PR_BOUTS: dict[str, tuple[float, float, float, float]] = {
     "busy": (6.0, 12.0, 3.0, 1200.0),        # 15 s of contact a minute, to minute 20
-    "busy_late": (120.0, 12.0, 3.0, 1200.0),  # the same from minute 2: Training ends about 2 min later
+    "busy_late": (126.0, 12.0, 3.0, 1200.0),  # the same from minute 2.1: Training ends 2 min later
     "quitter": (6.0, 12.0, 3.0, 480.0),      # the same, but stops at minute 8
     "matched": (12.0, 12.0, 3.0, 1200.0),    # as much as "busy", to minute 20
     "half": (12.0, 24.0, 3.0, 1200.0),       # half that: 7.5 s a minute, to minute 20
-    "sparse": (30.0, 60.0, 1.0, 1200.0),     # 1 s a minute, to minute 20
+    "sparse": (36.0, 60.0, 1.0, 1200.0),     # 1 s a minute, to minute 20
 }
 #: The yeast (B) well of every chamber: a 2 s bout every 3 min, all recording.
 _CONTACT_PR_YEAST = (90.0, 180.0, 2.0)
@@ -1922,21 +1922,34 @@ def contact_pr_spec(minutes: float = 70.0, *, dfm_ids: Sequence[int] = (1, 2), s
     feeding is in its signal (and its LED is its partner's):
 
     * group 1, ``busy`` / ``matched``: the Paired fly feeds from 6 s to
-      minute 20 (Training ends near minute 2, about 21 Test lights); the
-      Yoked fly feeds just as much, 6 s out of step.
+      minute 20: Training (Acclimation) ends at 117.5 s, minute 1.96, then
+      22 Test lights, the last at minute 19.5 (Requirement 22000 ms).  The
+      Yoked fly feeds just as much, 6 s out of step: 270 s of contact from
+      its group's Training end to minute 20, which its partner's schedule
+      would reward with 22 lights too.
     * group 2, ``busy_late`` / ``half``: the Paired fly feeds as ``busy``
-      but starts at minute 2 (Training ends near minute 4, about 19 Test
-      lights); the Yoked fly feeds half as much from 12 s to minute 20.
+      from 126 s: Training ends at 237.5 s, minute 3.96, then 20 Test
+      lights, the last at minute 18.7.  The Yoked fly feeds half as much (3 s
+      every 24 s) from 12 s to minute 20: 120 s of contact after its group's
+      Training end, 14 lights' worth.
     * group 3, ``quitter`` / ``sparse``: the Paired fly feeds as ``busy``
-      but stops at minute 8 (about 11 Test lights); the Yoked fly feeds 1 s
-      a minute from 30 s to minute 20.
+      but stops at minute 8: Training ends at minute 1.96, then 12 Test
+      lights, the last at minute 7.5.  The Yoked fly feeds 1 s a minute from
+      36 s to minute 20: 18 s of contact after Training end, 5 lights' worth,
+      the last at minute 16.6.
 
-    Every chamber's B (yeast) well has a 2 s bout every 3 minutes all along.
-    Nothing touches a sucrose well after minute 20, so the default 70 minutes
-    leaves every Paired fly a gap of over 45 minutes before the end: a
-    first-gap break that is not censored.  The exact Test lights are in
-    ``SimTruth`` (``activation_phase`` "M"); ``requirement_met`` there and
-    the data file's Requirement and Progress are ms of contact.
+    (A Yoked fly's "lights' worth" is the firmware's rule run on its own
+    contact from its group's Training end, to the millisecond, with the 500
+    ms after each light not counting; the 200 ms records can move it by
+    one.)  Every chamber's B (yeast) well has a 2 s bout (amplitude 35)
+    every 3 minutes from 90 s to the end.  Nothing touches a sucrose well
+    after minute 20, so the default 70 minutes leaves every Paired fly over
+    45 minutes of silence before the end: with ``pr_break_gap_min: 45``
+    pyflic's breaking points are 22, 20 and 12, none censored.  The numbers
+    hold for any seed (the noise never reaches a threshold) and any
+    *minutes* from 20 on.  The Test lights are in ``SimTruth``
+    (``activation_phase`` "M"); ``requirement_met`` there and the data
+    file's Requirement and Progress are ms of contact.
     """
     unknown = sorted(set(dfm_ids) - set(CONTACT_PR_PAIRED))
     if unknown or not dfm_ids:
