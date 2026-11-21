@@ -1332,14 +1332,28 @@ class Project:
           a missing CSV is usually a copy that has not finished.
 
         ``global:`` holds the Design Copy (ADR-0025) — what the recording is,
-        so the config reads on its own — and inherits the rest.  The first
-        Member's ``data_folder:`` and ``about:`` are not copied: they describe
-        *that* Member's recording, and a copied ``data_folder:`` would make the
-        new Member its duplicate (ADR-0021).  Only ``dfms:`` is copied.
+        so the config reads on its own — and inherits the rest.
+
+        ``about:`` holds the first Member's **shared About** (ADR-0026): who
+        ran it, the series, the flies, the protocol, and what the Design's
+        factors and levels mean, each level's whole entry included.  Members
+        of one design share those, so nobody types them twice.  Its title,
+        purpose, notes and ``run:`` are that recording's alone and are never
+        copied, and nor is its ``data_folder:``, which would make the new
+        Member its duplicate (ADR-0021).
         """
+        from .about import ABOUT_KEY
+
         notes: list[str] = []
         template: list = []
         head: dict = {}
+        if self.member_names:
+            shared = self.shared_about_of(self.member_names[0])
+            if shared:
+                head[ABOUT_KEY] = shared
+                notes.append(
+                    f"about: {', '.join(shared)} copied from '{self.member_names[0]}' — "
+                    f"check them, and give this member its own title, purpose and notes")
         copied = design_copy(self.design_global)
         if copied:
             head["global"] = copied
@@ -1368,6 +1382,24 @@ class Project:
                 f"added with chambers unassigned")
         dfms = [by_id[i] for i in sorted(by_id)]
         return {**head, "dfms": dfms}, notes
+
+    def shared_about_of(self, name: str) -> dict:
+        """The shared About of Member *name* (``about.shared_about``), for
+        another Member of this Project to start from: limited to the factors
+        and levels the design declares, and never its title, purpose, notes
+        or ``run:``.
+
+        Read from the Member's config as it is on disk now, because a
+        catalogue may have rewritten the section since this Project was
+        loaded (ADR-0026); a file that is gone or no longer parses leaves the
+        section the Project read.
+        """
+        from .about import read_about, shared_about
+
+        found, about = about_on_disk(os.path.join(self.member_dir(name), CONFIG_FILENAME))
+        if not found:
+            about = read_about(self.configs.get(name))
+        return shared_about(about, self.design_factors)
 
     def _blank_chamber_block(self, template: list) -> dict:
         """An unassigned chamber mapping shaped like the template's.

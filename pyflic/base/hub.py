@@ -2694,14 +2694,24 @@ class AnalysisHubWindow(QMainWindow):
         ## data_folder: names the source member's own recording (ADR-0021):
         ## copied, it would make this member a duplicate of that one, or —
         ## being relative to the other folder — point somewhere else entirely.
-        ## Only then is the YAML rewritten (its comments lost); otherwise the
-        ## file is copied byte for byte, as it always was.
+        ## about: is copied as scaffolding copies it (ADR-0026): the shared
+        ## part only, never the title, the purpose, the notes or run:, which
+        ## are that recording's alone.  Only when one of the two is left out
+        ## is the YAML rewritten (its comments lost); otherwise the file is
+        ## copied byte for byte, as it always was.
+        from . import about as about_mod
+
         dropped = (isinstance(config, dict)
                    and config.get(layout_mod.DATA_FOLDER_KEY) is not None)
+        about = config.get(about_mod.ABOUT_KEY) if isinstance(config, dict) else None
+        shared = about_mod.shared_about(about, project.design_factors)
+        trimmed = isinstance(about, dict) and shared != about_mod.clean_about(about)
         try:
-            if dropped:
+            if dropped or trimmed:
                 kept = {k: v for k, v in config.items()
                         if k != layout_mod.DATA_FOLDER_KEY}
+                if trimmed:
+                    kept = project_mod.with_about(kept, shared or None)
                 target.write_text(
                     _yaml.safe_dump(kept, sort_keys=False, allow_unicode=True),
                     encoding="utf-8")
@@ -2717,6 +2727,13 @@ class AnalysisHubWindow(QMainWindow):
                 f"[member]   {layout_mod.DATA_FOLDER_KEY}: was not copied — it names "
                 f"{source.parent.name}'s recording; {name} reads its own data/ "
                 f"until its config names another.")
+        if trimmed:
+            self.log.append_line(
+                f"[member]   about: only what members share was copied"
+                + (f" ({', '.join(shared)})" if shared else "")
+                + f" — the title, purpose, notes and run: are {source.parent.name}'s "
+                f"own, and what it says of a factor or level this design does not "
+                f"declare was left out.")
         ## Conforming is not the same as ready: a copied config carries the
         ## other member's chamber assignments, which are about that plate.
         self.log.append_line(

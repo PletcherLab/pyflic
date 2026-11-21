@@ -311,3 +311,97 @@ def test_a_member_that_states_no_layout_takes_the_designs():
     ## A legacy chamber_size is a statement, and this one disagrees.
     assert any("two_well" in p for p in project_mod.description_conflicts(
         {"global": {"params": {"chamber_size": 2}}, "dfms": []}, single))
+
+
+# ---------------------------------------------------------------------------
+# Scaffolding: a new Member starts from the first one's shared About (ADR-0026)
+# ---------------------------------------------------------------------------
+#
+# Replicates share who ran them, the series, the flies, the protocol and what
+# each factor and level means, so a scaffolded Member takes those from the
+# first Member.  The title, the purpose, the notes and run: are one
+# recording's alone, and are never copied.
+
+FILED = {
+    "run": "R-20261121-scott-01",
+    "title": "Hedonic panel, replicate 1",
+    "purpose": "Whether silencing MBON10 changes hedonic feeding.",
+    "experimenter": "scott",
+    "series": "hedonic-2026",
+    "organism": "Drosophila melanogaster",
+    "sex": ["female"],
+    "age_at_start": "5-7 days",
+    "protocol": {"name": "FLIC hedonic", "version": "2"},
+    "notes": "Lid 3 was replaced.",
+    "factors": {
+        "Genotype": {"kind": "genotype", "levels": {
+            "Ctrl": {"definition": "w1118 > UAS-GtACR1", "term": "GEN-0012",
+                     "label": "w1118 x UAS-GtACR1", "role": "reference"},
+            "MBON10": "R12C11-GAL4 > UAS-GtACR1"}},
+        "Sex": {"kind": "sex"},
+    },
+    "x_lab": {"a": 1},
+}
+
+
+def _recording(root: Path, name: str) -> None:
+    (root / name / "data").mkdir(parents=True)
+    (root / name / "data" / "DFM1_0.csv").write_text("Sample,Seconds\n")
+
+
+def test_a_scaffolded_member_holds_the_first_members_shared_about(tmp_path):
+    root = _project(tmp_path, {"rep1": {"about": FILED, "global": COPY, "dfms": DFMS}})
+    _recording(root, "rep2")
+    path, notes = Project(root).scaffold_member("rep2")
+    config = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    assert list(config) == ["about", "global", "dfms"]
+    assert config["about"] == {key: FILED[key] for key in about_mod.SHARED_KEYS}
+    for key in ("run", "title", "purpose", "notes", "x_lab"):
+        assert key not in config["about"]
+    ## Each level's whole entry: what a catalogue standardised once travels.
+    assert config["about"]["factors"]["Genotype"]["levels"]["Ctrl"]["term"] == "GEN-0012"
+    assert any(note.startswith("about:") and "rep1" in note for note in notes)
+    ## The first Member's own file is only read.
+    assert yaml.safe_load((root / "rep1" / "flic_config.yaml").read_text())["about"] == FILED
+    project = Project(root)
+    assert project.member_names == ["rep1", "rep2"]
+    assert not [w for w in project.warnings if w.startswith("about:")]
+
+
+def test_scaffolding_reads_the_first_members_about_as_it_is_on_disk(tmp_path):
+    """The Hub keeps one Project open while a catalogue files its Members."""
+    typed = {"about": {"title": "rep1", "series": "typed"}, "global": COPY, "dfms": DFMS}
+    root = _project(tmp_path, {"rep1": typed})
+    _recording(root, "rep2")
+    project = Project(root)
+    _write(root / "rep1" / "flic_config.yaml", {**typed, "about": FILED})
+    config, _notes = project.scaffold_member_config("rep2")
+    assert config["about"]["series"] == "hedonic-2026"
+    assert config["about"]["factors"]["Genotype"]["levels"]["Ctrl"]["term"] == "GEN-0012"
+    ## A file that is gone leaves what the Project read when it opened.
+    (root / "rep1" / "flic_config.yaml").unlink()
+    config, _notes = project.scaffold_member_config("rep2")
+    assert config["about"] == {"series": "typed"}
+
+
+def test_a_scaffold_takes_only_what_the_design_declares_of_the_factors(tmp_path):
+    about = {"series": "s", "factors": {
+        "Genotype": {"kind": "genotype",
+                     "levels": {"Ctrl": "w1118", "Gone": "a level the design dropped"}},
+        "Dose": {"kind": "treatment", "levels": {"1": "1 mM"}}}}
+    root = _project(tmp_path, {"rep1": {"about": about, "global": COPY, "dfms": DFMS}})
+    _recording(root, "rep2")
+    config, _notes = Project(root).scaffold_member_config("rep2")
+    assert config["about"] == {"series": "s", "factors": {
+        "Genotype": {"kind": "genotype", "levels": {"Ctrl": "w1118"}}}}
+
+
+def test_a_first_member_that_shares_nothing_leaves_a_scaffold_without_about(tmp_path):
+    only_its_own = {"run": "R-20261121-scott-01", "title": "rep1", "purpose": "p",
+                    "notes": "n", "x_lab": {"a": 1}}
+    root = _project(tmp_path, {"rep1": {"about": only_its_own, "global": COPY,
+                                        "dfms": DFMS}})
+    _recording(root, "rep2")
+    config, notes = Project(root).scaffold_member_config("rep2")
+    assert "about" not in config
+    assert not any(note.startswith("about:") for note in notes)

@@ -344,3 +344,62 @@ def test_double_clicking_a_config_less_member_offers_to_make_one(
 
     assert (project / "rep2" / "flic_config.yaml").exists()
     assert opened and opened[0].parent.name == "rep2"
+
+
+# ---------------------------------------------------------------------------
+# A copied config takes the shared About, never what is one recording's alone
+# ---------------------------------------------------------------------------
+
+def test_a_copied_config_takes_only_the_shared_about(hub, project, monkeypatch):
+    """about.run is the id a catalogue gave *that* recording, and the title,
+    the purpose and the notes are its own too (ADR-0026): Copy config from…
+    takes the rest, as scaffolding does."""
+    from pyflic.base import about as about_mod
+
+    _silence(monkeypatch)
+    about = {"run": "R-20261121-scott-01", "title": "Replicate 1", "purpose": "Why.",
+             "experimenter": "scott", "series": "hedonic-2026", "sex": ["female"],
+             "notes": "Lid 3 was replaced.",
+             "factors": {"Treatment": {"kind": "treatment", "levels": {
+                 "Ctrl": {"definition": "vehicle", "term": "TRT-0001", "role": "reference"},
+                 "Exp": "1 mM drug", "Gone": "not in the design"}}},
+             "x_lab": {"a": 1}}
+    source = project / "rep1" / "flic_config.yaml"
+    _write(source, {"about": about, **MEMBER})
+    hub._reload_project()
+    hub._scaffold_member("rep2")
+    hub._reload_project()
+    monkeypatch.setattr(
+        "PyQt6.QtWidgets.QFileDialog.getOpenFileName",
+        staticmethod(lambda *a, **k: (str(source), "")))
+
+    assert hub._copy_member_config("rep2", project / "rep2") is True
+    copied = yaml.safe_load((project / "rep2" / "flic_config.yaml").read_text())
+    assert copied["dfms"] == MEMBER["dfms"]
+    assert set(copied["about"]) <= set(about_mod.SHARED_KEYS)
+    assert copied["about"] == {
+        "experimenter": "scott", "series": "hedonic-2026", "sex": ["female"],
+        "factors": {"Treatment": {"kind": "treatment", "levels": {
+            "Ctrl": {"definition": "vehicle", "term": "TRT-0001", "role": "reference"},
+            "Exp": "1 mM drug"}}}}
+    assert yaml.safe_load(source.read_text())["about"] == about      # only read
+    assert any("about" in line and "run" in line for line in hub.log.toPlainText().splitlines())
+    assert project_mod.Project(project).member_names == ["rep1", "rep2"]
+
+
+def test_a_copied_config_whose_about_is_all_shared_is_copied_byte_for_byte(
+        hub, project, monkeypatch):
+    _silence(monkeypatch)
+    source = project / "rep1" / "flic_config.yaml"
+    source.write_text("# the plate layout of the first run\n"
+                      + yaml.safe_dump({"about": {"series": "hedonic-2026"}, **MEMBER},
+                                       sort_keys=False), encoding="utf-8")
+    hub._reload_project()
+    hub._scaffold_member("rep2")
+    hub._reload_project()
+    monkeypatch.setattr(
+        "PyQt6.QtWidgets.QFileDialog.getOpenFileName",
+        staticmethod(lambda *a, **k: (str(source), "")))
+
+    assert hub._copy_member_config("rep2", project / "rep2") is True
+    assert (project / "rep2" / "flic_config.yaml").read_text() == source.read_text()
