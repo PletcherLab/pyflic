@@ -33,14 +33,28 @@ The shape::
 
 A level's meaning is a line of text; a mapping with a ``definition:`` key is
 read the same way, so a later field beside it does not change the shape.
+
+**Another program may write here** (ADR-0026).  A catalogue that files the
+recording rewrites the section to match its own record: it adds ``run:`` (the
+recording's id there) and, inside a level's mapping, ``term:``, ``label:`` and
+``role:``.  pyflic shows ``run:``, keeps every key it does not edit, and edits
+only a level's ``definition`` (:func:`with_meaning`).  A new recording starts
+from an earlier one's shared part (:func:`shared_about`, :func:`start_from`),
+which never includes ``run:``, the title, the purpose or the notes.
+
+PyTrackingAnalysis keeps a verbatim copy of this module: change it here first.
 """
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from typing import Any
 
 ABOUT_KEY = "about"
+#: The recording's id in the catalogue that filed it.  Written by the
+#: catalogue, shown here, never typed and never copied to another recording.
+RUN_KEY = "run"
 
 #: One-line or free-text fields, in the order the section is written.
 TEXT_FIELDS: tuple[str, ...] = (
@@ -55,10 +69,22 @@ FACTORS_KEY = "factors"
 #: What kind of variable a design factor is.
 FACTOR_KINDS: tuple[str, ...] = ("genotype", "treatment", "diet", "condition", "sex", "other")
 
+#: In a level's mapping: the person's words, and the registry term a catalogue
+#: gave the level.  Any other key there is kept as it is.
+DEFINITION_KEY = "definition"
+TERM_KEY = "term"
+
 #: The order ``about:`` is written in; a key not listed follows, as written.
 KEY_ORDER: tuple[str, ...] = (
-    "title", "purpose", "experimenter", "series", "organism", SEX_KEY,
+    RUN_KEY, "title", "purpose", "experimenter", "series", "organism", SEX_KEY,
     "age_at_start", PROTOCOL_KEY, "notes", FACTORS_KEY,
+)
+
+#: The part of ``about:`` that replicate recordings share.  The title, the
+#: purpose, the notes and ``run:`` are one recording's alone.
+SHARED_KEYS: tuple[str, ...] = (
+    "experimenter", "series", "organism", SEX_KEY, "age_at_start", PROTOCOL_KEY,
+    FACTORS_KEY,
 )
 
 #: A title longer than this no longer fits on one line of a list of runs.
@@ -93,8 +119,32 @@ def sex_values(value: Any) -> list[str]:
 def level_meaning(entry: Any) -> str:
     """A level's meaning: its text, or a mapping's ``definition:``."""
     if isinstance(entry, Mapping):
-        return _text(entry.get("definition"))
+        return _text(entry.get(DEFINITION_KEY))
     return _text(entry)
+
+
+def level_term(entry: Any) -> str:
+    """The registry term a catalogue gave a level, or ``""``: only a
+    mapping holds one."""
+    return _text(entry.get(TERM_KEY)) if isinstance(entry, Mapping) else ""
+
+
+def with_meaning(entry: Any, text: Any) -> Any:
+    """*entry* -- a level's text, mapping or nothing -- with its meaning set
+    to *text*.
+
+    Text stays text.  A mapping keeps every other key it holds and takes
+    *text* as its ``definition:``, first; a blank *text* removes the
+    definition and keeps the rest.  ``None`` when nothing is left to write.
+    *entry* itself is not changed.
+    """
+    text = _text(text)
+    if isinstance(entry, Mapping):
+        rest = {key: copy.deepcopy(value) for key, value in entry.items()
+                if key != DEFINITION_KEY and value not in (None, "")}
+        if rest:
+            return {**({DEFINITION_KEY: text} if text else {}), **rest}
+    return text or None
 
 
 def factor_notes(about: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -126,7 +176,7 @@ def clean_about(about: Mapping[str, Any]) -> dict:
         if key not in about:
             continue
         value = about[key]
-        if key in TEXT_FIELDS:
+        if key in TEXT_FIELDS or key == RUN_KEY:
             text = _text(value)
             if text:
                 out[key] = text
@@ -197,7 +247,7 @@ def about_problems(about: Any, factors: Mapping[str, Any] | None = None
     if not isinstance(about, Mapping):
         return [(ABOUT_KEY, "about: must be a mapping of fields, such as "
                             "title: and purpose:")]
-    for key in TEXT_FIELDS:
+    for key in (RUN_KEY, *TEXT_FIELDS):
         value = about.get(key)
         if isinstance(value, (Mapping, list, tuple)):
             problems.append((f"{ABOUT_KEY}.{key}", f"about.{key} should be text"))
@@ -257,29 +307,102 @@ def about_problems(about: Any, factors: Mapping[str, Any] | None = None
     return problems
 
 
+def shared_about(about: Any, factors: Mapping[str, Any] | None = None) -> dict:
+    """The part of *about* a replicate recording shares (:data:`SHARED_KEYS`),
+    as a copy: who ran it, the series, the flies, the protocol, and each
+    factor's kind and each level's whole entry -- a mapping's ``term:`` and
+    the rest included, so a name a catalogue standardised once travels to the
+    next recording.
+
+    With *factors* (an ``experimental_design_factors`` mapping), only the
+    factors and levels it declares are kept: a description of a level this
+    recording does not have would only draw a warning.
+    """
+    about = about if isinstance(about, Mapping) else {}
+    shared = clean_about({key: copy.deepcopy(about[key]) for key in SHARED_KEYS
+                          if key in about})
+    if factors is None or FACTORS_KEY not in shared:
+        return shared
+    declared = {str(name).strip(): {str(level).strip() for level in (levels or [])}
+                for name, levels in factors.items()} if isinstance(factors, Mapping) else {}
+    kept: dict[str, Any] = {}
+    for name, body in shared[FACTORS_KEY].items():
+        if str(name).strip() not in declared:
+            continue
+        body = dict(body)
+        levels = body.get("levels")
+        if isinstance(levels, Mapping):
+            levels = {level: entry for level, entry in levels.items()
+                      if str(level).strip() in declared[str(name).strip()]}
+            if levels:
+                body["levels"] = levels
+            else:
+                body.pop("levels")
+        if body:
+            kept[name] = body
+    if kept:
+        shared[FACTORS_KEY] = kept
+    else:
+        shared.pop(FACTORS_KEY)
+    return shared
+
+
+def start_from(about: Any, earlier: Any, factors: Mapping[str, Any] | None = None) -> dict:
+    """*about* started from an *earlier* recording's: every shared field
+    *earlier* states (:func:`shared_about`) replaces this one's, and nothing
+    else changes -- the title, the purpose, the notes, ``run:`` and any key
+    this module does not know stay this recording's own.  A shared field
+    *earlier* does not state is left as it is.  Neither argument is changed.
+    """
+    about = about if isinstance(about, Mapping) else {}
+    return clean_about({**copy.deepcopy(dict(about)), **shared_about(earlier, factors)})
+
+
 def meaning_spread(abouts: Mapping[str, Mapping[str, Any]]) -> list[str]:
     """Where Members describe one factor or level differently, one line each.
 
     *abouts* is each Member's ``about:`` by Member name.  A Member that says
     nothing about a factor or level is not a difference; two that say
     different things are, because the Combined Analysis pools levels by name.
+
+    Where every Member that describes a level cites a registry ``term:``, the
+    terms are compared and the wording is free: one term is one level however
+    it is put.  Otherwise the words are compared, among the Members that give
+    any.
     """
     kinds: dict[str, dict[str, list[str]]] = {}
-    meanings: dict[tuple[str, str], dict[str, list[str]]] = {}
+    said: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
     for member, about in abouts.items():
-        for factor, note in factor_notes(about).items():
-            if note["kind"]:
-                kinds.setdefault(factor, {}).setdefault(note["kind"], []).append(member)
-            for level, meaning in note["levels"].items():
-                if meaning:
-                    meanings.setdefault((factor, level), {}).setdefault(
-                        meaning, []).append(member)
+        raw = about.get(FACTORS_KEY) if isinstance(about, Mapping) else None
+        if not isinstance(raw, Mapping):
+            continue
+        for name, body in raw.items():
+            if not isinstance(body, Mapping):
+                continue
+            factor = str(name).strip()
+            kind = _text(body.get("kind")).lower()
+            if kind:
+                kinds.setdefault(factor, {}).setdefault(kind, []).append(member)
+            levels = body.get("levels")
+            if not isinstance(levels, Mapping):
+                continue
+            for level, entry in levels.items():
+                meaning, term = level_meaning(entry), level_term(entry)
+                if meaning or term:
+                    said.setdefault((factor, str(level).strip()), []).append(
+                        (member, meaning, term))
     lines: list[str] = []
     for factor, seen in kinds.items():
         if len(seen) > 1:
             detail = "; ".join(f"{kind}: {', '.join(names)}" for kind, names in seen.items())
             lines.append(f"about: members give factor {factor} different kinds ({detail})")
-    for (factor, level), seen in meanings.items():
+    for (factor, level), entries in said.items():
+        by_term = all(term for _member, _meaning, term in entries)
+        seen = {}
+        for member, meaning, term in entries:
+            key = term if by_term else meaning
+            if key:
+                seen.setdefault(key, []).append(member)
         if len(seen) > 1:
             detail = "; ".join(f"{text!r}: {', '.join(names)}" for text, names in seen.items())
             lines.append(f"about: members describe {factor} {level!r} differently "
