@@ -669,3 +669,389 @@ def test_saving_as_into_another_folder_does_not_take_run_along(app, tmp_path, mo
     finally:
         editor.close()
     assert _read(beside)["about"] == ABOUT
+
+
+# ---------------------------------------------------------------------------
+# Start from another recording (ADR-0026)
+# ---------------------------------------------------------------------------
+#
+# Replicate recordings share most of their description.  The action takes an
+# earlier recording's config and fills the form with its shared About: who
+# ran it, the series, the flies, the protocol, and each factor's kind and each
+# level's whole entry.  The title, the purpose, the notes and run: stay this
+# recording's own.  A recording with no design yet takes the earlier one's
+# design and chamber map too.  Nothing is written until the person saves.
+
+SHARED = ("experimenter", "series", "organism", "sex", "age_at_start", "protocol", "factors")
+EARLIER = {
+    "about": ABOUT,
+    "global": FULL["global"],
+    "dfms": [{"id": 1, "optogenetics": False, "params": {"pi_direction": "right"},
+              "note": "lid cracked", "chambers": {1: "Ctrl", 2: "Exp"}},
+             {"id": 2, "chambers": {1: "Exp"}},
+             {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}}],
+    "scripts": FULL["scripts"],
+}
+
+
+def _earlier(tmp_path: Path, config: dict = EARLIER) -> Path:
+    path = tmp_path / "rep1" / "flic_config.yaml"
+    _write(path, config)
+    return path
+
+
+def _questions(monkeypatch, answer=QMessageBox.StandardButton.Yes) -> list[str]:
+    """Record what the editor asks, answering *answer*."""
+    asked: list[str] = []
+
+    def question(*args, **_kwargs):
+        asked.append(" ".join(str(a) for a in args if isinstance(a, str)))
+        return answer
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
+    return asked
+
+
+def test_starting_from_another_recording_fills_only_the_shared_about(
+        app, tmp_path, monkeypatch):
+    mine = {"run": "R-20261128-scott-01", "title": "Replicate 2", "purpose": "Mine.",
+            "notes": "My notes.", "experimenter": "someone", "organism": "D. simulans",
+            "x_mine": True}
+    path = _filed(tmp_path, mine, name="rep2")
+    earlier = _earlier(tmp_path)
+    before = path.read_bytes()
+    asked = _questions(monkeypatch)
+    editor = ExperimentEditor(path)
+    try:
+        editor.purpose_edit.setPlainText("Mine, as just typed.")
+        assert editor.start_from(earlier.parent)             # a folder holding one
+        assert path.read_bytes() == before                   # nothing is written yet
+        assert asked == []
+        ## The form shows what was taken, and what stayed.
+        assert editor.title_edit.text() == "Replicate 2"
+        assert editor.purpose_edit.toPlainText() == "Mine, as just typed."
+        assert editor.notes_edit.toPlainText() == "My notes."
+        assert editor.run_label.text() == "Filed as R-20261128-scott-01"
+        assert editor.experimenter_edit.text() == "scott"
+        assert editor.series_edit.text() == "hedonic-2026"
+        assert editor.organism_edit.text() == "Drosophila melanogaster"
+        assert editor.sex_checks["female"].isChecked()
+        assert editor.age_edit.text() == "5-7 days"
+        assert editor.protocol_edits["link"].text() == "https://example.org/h"
+        assert editor.factor_table.kinds() == {"Genotype": "genotype"}
+        assert _meaning(editor, "Genotype", "Ctrl").text() == "w1118 > UAS-GtACR1"
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    about = _read(path)["about"]
+    for key in SHARED:
+        assert about[key] == ABOUT[key]                      # mapping keys and all
+    assert about["run"] == "R-20261128-scott-01"
+    assert about["title"] == "Replicate 2"
+    assert about["purpose"] == "Mine, as just typed."
+    assert about["notes"] == "My notes."
+    assert about["x_mine"] is True
+    assert "x_lab" not in about                              # the earlier one's own
+    assert _read(earlier) == EARLIER                         # and it is only read
+
+
+def test_with_a_design_here_only_the_shared_about_is_taken_and_nothing_is_asked(
+        app, tmp_path, monkeypatch):
+    path = _filed(tmp_path, {"title": "Replicate 2"}, name="rep2")
+    other = {"about": {**ABOUT, "factors": {
+                 "Genotype": {"kind": "genotype",
+                              "levels": {"Ctrl": "w1118", "Exp": "the cross",
+                                         "Other": "not used here"}},
+                 "Dose": {"kind": "treatment", "levels": {"1": "1 mM"}}}},
+             "global": {"chamber_layout": "single_well", "params": {},
+                        "experimental_design_factors": {
+                            "Genotype": ["Ctrl", "Exp", "Other"], "Dose": ["1"]}},
+             "dfms": [{"id": 1, "chambers": {1: "Other, 1", 9: "Ctrl, 1"}}]}
+    earlier = _earlier(tmp_path, other)
+    asked = _questions(monkeypatch)
+    editor = ExperimentEditor(path)
+    try:
+        design = editor.design_section()
+        chambers = [w.get_dict() for w in editor._dfm_widgets]
+        assert editor.start_from(earlier)
+        assert asked == []
+        assert editor.design_section() == design
+        assert [w.get_dict() for w in editor._dfm_widgets] == chambers
+        about = editor.about_section()
+    finally:
+        editor.close()
+    assert about["experimenter"] == "scott"
+    assert about["title"] == "Replicate 2"
+    ## Limited to the factors and levels this recording declares.
+    assert about["factors"] == {"Genotype": {"kind": "genotype",
+                                             "levels": {"Ctrl": "w1118", "Exp": "the cross"}}}
+
+
+def test_a_new_recording_takes_the_design_and_the_chamber_map_for_its_dfms(
+        app, tmp_path, monkeypatch):
+    folder = tmp_path / "FLICMCU_11_28_2026_09_30"
+    for dfm_id in (1, 3, 5):
+        _dfm_csv(folder / "data", dfm_id)
+    earlier = _earlier(tmp_path)
+    asked = _questions(monkeypatch)
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor.start_from(earlier)
+        assert asked == []                                   # nothing here to replace
+        assert not (folder / "flic_config.yaml").exists()    # nothing written yet
+        assert editor.type_combo.currentData() == "Hedonic"
+        assert editor.factor_table.factors() == {"Genotype": ["Ctrl", "Exp"]}
+        assert editor.well_a_edit.text() == "S5"
+        ## The chamber map of the DFMs this recording's data holds: DFM 2 is
+        ## the earlier recording's alone, and DFM 5 this one's.  A DFM's
+        ## overrides and notes are the earlier recording's own.
+        assert [w.get_dict() for w in editor._dfm_widgets] == [
+            {"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+            {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}},
+            {"id": 5}]
+        editor.title_edit.setText("Hedonic, replicate 2")
+        assert editor.write(folder / "flic_config.yaml", confirm=False)
+    finally:
+        editor.close()
+    saved = _read(folder / "flic_config.yaml")
+    assert list(saved) == ["about", "global", "dfms"]
+    assert saved["about"] == {"title": "Hedonic, replicate 2",
+                              **{key: ABOUT[key] for key in SHARED}}
+    ## The design, and none of the earlier recording's analysis settings.
+    assert saved["global"] == {
+        "experiment_type": "Hedonic", "well_names": {"A": "S5", "B": "S5Y5"},
+        "experimental_design_factors": {"Genotype": ["Ctrl", "Exp"]}, "params": {}}
+    assert not [i for i in lint_flic_config(folder / "flic_config.yaml")
+                if i.severity == "error"]
+    assert sorted(load_experiment_yaml(folder, eager=False, use_disk_cache=False).dfms) \
+        == [1, 3, 5]
+
+
+def test_a_progressive_ratio_replicate_takes_its_chamber_groups_with_the_map(
+        app, tmp_path, monkeypatch):
+    six = {1: "Ctrl", 2: "Ctrl", 3: "Exp", 4: "Exp", 5: "Exp", 6: "Exp"}
+    other = {"global": {"experiment_type": "ProgressiveRatio",
+                        "well_names": {"A": "Sucrose", "B": "Yeast"}},
+             "dfms": {1: {"params": {"pi_direction": "left"},
+                          "paired_chambers": [1, 4, 5], "chambers": six},
+                      2: {"chamber_groups": "single", "chambers": six},
+                      3: {"chambers": six}}}
+    folder = tmp_path / "pr2"
+    for dfm_id in (1, 2, 3):
+        _dfm_csv(folder / "data", dfm_id)
+    earlier = _earlier(tmp_path, other)
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor.start_from(earlier)
+        assert editor.type_combo.currentData() == "ProgressiveRatio"
+        assert [w.get_dict() for w in editor._dfm_widgets] == [
+            {"id": 1, "paired_chambers": [1, 4, 5], "chambers": six},
+            {"id": 2, "chamber_groups": "single", "chambers": six},
+            {"id": 3, "chambers": six}]                      # its groups: Program.txt's
+    finally:
+        editor.close()
+
+
+def test_a_design_stated_here_is_replaced_only_after_asking(app, tmp_path, monkeypatch):
+    stated = {"global": {"experiment_type": "Hedonic", "params": {},
+                         "well_names": {"A": "Sucrose", "B": "Yeast"}},
+              "dfms": [{"id": 1}]}
+    path = tmp_path / "rep2" / "flic_config.yaml"
+    _write(path, stated)
+    earlier = _earlier(tmp_path)
+
+    asked = _questions(monkeypatch, QMessageBox.StandardButton.No)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(earlier)
+        assert len(asked) == 1 and "Well A" in asked[0] and "Sucrose" in asked[0]
+        ## Declined: the design and the chambers stay, the shared About is taken.
+        assert editor.well_a_edit.text() == "Sucrose"
+        assert editor.factor_table.factors() == {}
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        assert editor.experimenter_edit.text() == "scott"
+        ## It declares no factors to limit to, so the earlier recording's
+        ## descriptions come along, and the editor says they are undeclared.
+        assert editor.about_section()["factors"] == ABOUT["factors"]
+        assert any("Genotype" in problem for problem in editor.problems())
+    finally:
+        editor.close()
+
+    asked = _questions(monkeypatch, QMessageBox.StandardButton.Yes)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(earlier)
+        assert len(asked) == 1
+        assert editor.well_a_edit.text() == "S5"
+        assert editor.factor_table.factors() == {"Genotype": ["Ctrl", "Exp"]}
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1,
+                                                     "chambers": {1: "Ctrl", 2: "Exp"}}
+    finally:
+        editor.close()
+    assert _read(path) == stated                             # still nothing written
+
+
+def test_a_design_that_agrees_with_what_is_stated_here_is_taken_unasked(
+        app, tmp_path, monkeypatch):
+    path = tmp_path / "rep2" / "flic_config.yaml"
+    _write(path, {"global": {"experiment_type": "Hedonic", "params": {},
+                             "well_names": {"A": "S5"}},
+                  "dfms": [{"id": 1}]})
+    asked = _questions(monkeypatch)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(_earlier(tmp_path))
+        assert asked == []
+        assert editor.well_b_edit.text() == "S5Y5"
+        assert editor.factor_table.factors() == {"Genotype": ["Ctrl", "Exp"]}
+    finally:
+        editor.close()
+
+
+def test_a_member_takes_only_the_shared_about_its_design_is_the_projects(
+        app, tmp_path, monkeypatch):
+    path = _member(tmp_path, {"dfms": [{"id": 1}]})
+    other = {**EARLIER, "global": {**EARLIER["global"],
+                                   "well_names": {"A": "Water", "B": "Yeast"}}}
+    earlier = tmp_path / "elsewhere" / "flic_config.yaml"
+    _write(earlier, other)
+    asked = _questions(monkeypatch)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(earlier)
+        assert asked == []
+        assert editor.well_a_edit.text() == "S5"             # the Project design's
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        assert editor.factor_table.kinds() == {"Genotype": "genotype"}
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    saved = _read(path)
+    assert saved["global"] == project_mod.design_copy(DESIGN)
+    assert saved["about"] == {key: ABOUT[key] for key in SHARED}
+
+
+def test_the_earlier_recording_may_be_a_member_whose_design_is_its_projects(
+        app, tmp_path, monkeypatch):
+    member = _member(tmp_path, {"about": ABOUT,
+                                "dfms": [{"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}}]})
+    folder = tmp_path / "new"
+    _dfm_csv(folder / "data", 1)
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor.start_from(member)
+        assert editor.type_combo.currentData() == "Hedonic"
+        assert editor.factor_table.factors() == DESIGN["experimental_design_factors"]
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1,
+                                                     "chambers": {1: "Ctrl", 2: "Exp"}}
+    finally:
+        editor.close()
+
+
+def test_starting_from_nothing_usable_changes_nothing(app, tmp_path, monkeypatch):
+    path = _filed(tmp_path)
+    said: list[str] = []
+    for name in ("warning", "information"):
+        monkeypatch.setattr(QMessageBox, name, staticmethod(
+            lambda *a, **k: said.append(" ".join(str(x) for x in a if isinstance(x, str)))))
+    broken = tmp_path / "broken" / "flic_config.yaml"
+    broken.parent.mkdir()
+    broken.write_text("about: [not closed", encoding="utf-8")
+    editor = ExperimentEditor(path)
+    try:
+        before = editor.collect()
+        assert editor.start_from(path) is False              # its own config
+        assert editor.start_from(tmp_path / "no_such_folder") is False
+        assert editor.start_from(broken) is False
+        assert len(said) == 3
+        assert editor.collect() == before
+    finally:
+        editor.close()
+
+
+def test_the_action_is_on_the_about_tab_and_in_the_file_menu(app, tmp_path, monkeypatch):
+    from pyflic.base import experiment_editor as module
+
+    path = _filed(tmp_path, {"title": "Replicate 2"}, name="rep2")
+    earlier = _earlier(tmp_path)
+    chosen: list[str] = []
+
+    def pick(*args, **_kwargs):
+        chosen.append(args[1])
+        return str(earlier), ""
+
+    monkeypatch.setattr(module.QFileDialog, "getOpenFileName", staticmethod(pick))
+    editor = ExperimentEditor(path)
+    try:
+        actions = [a.text() for a in editor.menuBar().actions()[0].menu().actions()]
+        assert "Start &from another recording…" in actions
+        editor.start_from_button.click()
+        assert len(chosen) == 1
+        assert editor.experimenter_edit.text() == "scott"
+    finally:
+        editor.close()
+
+
+def _lab_type(folder: Path, monkeypatch) -> None:
+    """A lab Experiment Type with a Treatment control, in a library of its own."""
+    from pyflic.base.experiment_types import library
+    from pyflic.base.experiment_types.definition import parse_definition
+
+    folder.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv(library.ENV_LIBRARY, str(folder))
+    definition, problems = parse_definition(
+        {"name": "GenoPanel", "chamber_layout": "two_well", "required_wells": ["A", "B"],
+         "factors": ["Genotype"], "control": {"treatment": "Genotype"}})
+    assert problems == []
+    library.save_to_library(definition)
+
+
+PANEL = {"global": {"experiment_type": "GenoPanel",
+                    "well_names": {"A": "Sucrose", "B": "Yeast"},
+                    "experimental_design_factors": {"Genotype": ["w1118", "Gr5a"]},
+                    "control_level": "w1118"},
+         "dfms": [{"id": 1, "chambers": {1: "w1118", 2: "Gr5a"}}]}
+
+
+def test_a_lab_types_control_level_is_part_of_the_design_taken(app, tmp_path, monkeypatch):
+    _lab_type(tmp_path / "library", monkeypatch)
+    folder = tmp_path / "new"
+    _dfm_csv(folder / "data", 1)
+    earlier = _earlier(tmp_path, PANEL)
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor.start_from(earlier)
+        assert editor.type_combo.currentData() == "GenoPanel"
+        assert editor.design_section() == PANEL["global"]
+
+        ## Another control level stated here is something to ask about.
+        editor.control_edit.setText("Gr5a")
+        editor.factor_table.table.setRowCount(0)
+        for widget in editor._dfm_widgets:
+            widget.load_dict({"id": 1}, 2)
+        asked = _questions(monkeypatch, QMessageBox.StandardButton.No)
+        assert editor.start_from(earlier)
+        assert len(asked) == 1 and "Control Level: Gr5a → w1118" in asked[0]
+        assert editor.control_edit.text() == "Gr5a"
+    finally:
+        editor.close()
+
+
+def test_a_design_of_a_type_unknown_here_is_not_taken(app, tmp_path, monkeypatch):
+    folder = tmp_path / "new"
+    _dfm_csv(folder / "data", 1)
+    earlier = _earlier(tmp_path, {**PANEL, "about": ABOUT})
+    said: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(
+        lambda *a, **k: said.append(" ".join(str(x) for x in a if isinstance(x, str)))))
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor.start_from(earlier)
+        assert len(said) == 1 and "GenoPanel" in said[0]
+        ## The design is not guessed at: only the shared About is taken.
+        assert editor.type_combo.currentData() == "Custom"
+        assert editor.factor_table.factors() == {}
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        assert editor.experimenter_edit.text() == "scott"
+    finally:
+        editor.close()

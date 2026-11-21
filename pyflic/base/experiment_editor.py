@@ -261,6 +261,15 @@ class FactorTable(QWidget):
                 out[name] = kind
         return out
 
+    def set_kinds(self, kinds: dict[str, str]) -> None:
+        """Give every factor shown the kind *kinds* states for it, or none."""
+        self._loaded_kinds = dict(kinds)
+        for r in range(self.table.rowCount()):
+            name = (self.table.item(r, 0).text() if self.table.item(r, 0) else "").strip()
+            combo = self.table.cellWidget(r, 1)
+            if combo is not None:
+                self._set_kind(combo, kinds.get(name, ""))
+
     def set_read_only(self, read_only: bool, reason: str = "") -> None:
         self._read_only = read_only
         for r in range(self.table.rowCount()):
@@ -380,6 +389,7 @@ class ExperimentEditor(QMainWindow):
                 ("&Open…", "Ctrl+O", self._open),
                 ("&Save", "Ctrl+S", self._save),
                 ("Save &As…", "Ctrl+Shift+S", self._save_as),
+                ("Start &from another recording…", None, self._start_from),
                 ("Open in the &Config Editor", None, self._open_config_editor)):
             action = QAction(text, self)
             if shortcut:
@@ -434,13 +444,29 @@ class ExperimentEditor(QMainWindow):
         ## about.run: the recording's id in the catalogue that filed it.  The
         ## catalogue writes it; it is shown here and written back as read.
         self.run_label = QLabel("")
-        self.run_label.setObjectName("PyflicCardSubtitle")
         self.run_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.run_label.setToolTip(
             "about.run: written by the catalogue that filed this recording.  "
             "Shown here, never edited, and never copied to another recording.")
         self.run_label.setVisible(False)
         card.add_body(self.run_label)
+        ## Replicates share most of what is on this tab (ADR-0026).
+        self.start_from_button = ActionButton("Start from another recording…",
+                                              Category.LOAD, icon_name="open")
+        self.start_from_button.setToolTip(
+            "Fill in who ran it, the series, the flies, the protocol and what each "
+            "factor and level means from an earlier recording's flic_config.yaml.  "
+            "The title, purpose and notes stay as they are.  A recording with no "
+            "design yet takes the earlier one's design and chamber map too.  "
+            "Nothing is saved until you save.")
+        self.start_from_button.clicked.connect(lambda _checked=False: self._start_from())
+        start_row = QHBoxLayout()
+        start_row.addWidget(self.start_from_button)
+        start_hint = QLabel("A replicate shares most of this with the recording before it.")
+        start_hint.setObjectName("PyflicCardSubtitle")
+        start_row.addWidget(start_hint)
+        start_row.addStretch(1)
+        card.add_body(start_row)
         form = self._form()
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("One line, such as: Progressive ratio, sucrose, replicate 1")
@@ -914,7 +940,9 @@ class ExperimentEditor(QMainWindow):
         for field, edit in self.protocol_edits.items():
             edit.setText(about_mod._text(protocol.get(field)))
 
-    def _load_design(self, g: dict, about: dict) -> None:
+    def _type_and_layout(self, g: dict):
+        """The Experiment Type and the Chamber Layout the design *g* means
+        for this recording.  A type unknown here is a Custom Experiment."""
         from . import experiment_types
 
         raw_type = g.get("experiment_type")
@@ -925,14 +953,16 @@ class ExperimentEditor(QMainWindow):
             item = experiment_types.get_experiment_type(None)
             key = str(raw_type or "").lower()
             legacy = "single_well" if "single" in key else "two_well" if "two" in key else None
-        self._fill_type_combo(item.name)
         if item.chamber_layout is not None:
-            layout = item.chamber_layout
-        else:
-            params = g.get("params", g.get("parameters")) or {}
-            size = params.get("chamber_size") if isinstance(params, dict) else None
-            layout = (legacy or _normalise_layout(g.get("chamber_layout"))
+            return item, item.chamber_layout
+        params = g.get("params", g.get("parameters")) or {}
+        size = params.get("chamber_size") if isinstance(params, dict) else None
+        return item, (legacy or _normalise_layout(g.get("chamber_layout"))
                       or ("single_well" if str(size) == "1" else "two_well"))
+
+    def _load_design(self, g: dict, about: dict) -> None:
+        item, layout = self._type_and_layout(g)
+        self._fill_type_combo(item.name)
         self._last_layout = layout
         self.layout_combo.blockSignals(True)
         self.layout_combo.setCurrentIndex(self.layout_combo.findData(layout))
@@ -965,6 +995,186 @@ class ExperimentEditor(QMainWindow):
                 "Project's, shown here and edited there.  Saving writes a copy of it "
                 "into this file, so the file reads on its own.  The About tab, the "
                 "factor kinds and meanings, and the chambers are this recording's.")
+
+    # ---- starting from another recording ---------------------------------
+
+    def _start_from(self) -> None:
+        """Ask for another recording's config and fill the form from it."""
+        here = self._where()
+        start = str(here.parent if here is not None else Path.cwd())
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Start from another recording's flic_config.yaml", start,
+            "FLIC config (*.yaml *.yml)")
+        if path:
+            self.start_from(path)
+
+    def start_from(self, source: str | Path) -> bool:
+        """Fill the form from another recording: *source* is its
+        ``flic_config.yaml``, or the folder that holds one (ADR-0026).
+
+        Its shared About replaces this one's (``about.start_from``): who ran
+        it, the series, the flies, the protocol, and each factor's kind and
+        each level's whole entry, limited to the factors and levels this
+        recording declares when it declares any.  The title, the purpose, the
+        notes and ``run:`` stay this recording's own.
+
+        A recording with no design factors and no chamber assignments yet,
+        and no Project design over it, also takes the other one's design
+        (type, layout, well names, factors, control level) and, for the DFMs
+        its own data holds, the other one's chamber map: each chamber's
+        levels and, for Progressive Ratio, the chamber groups.  It asks first
+        when that would replace a type, layout, well name or control level
+        stated here.
+
+        Nothing is written: the form is filled, and the person saves.
+        False, with the reason said, when *source* is not another recording's
+        config.
+        """
+        found = self._other_config(source)
+        if found is None:
+            return False
+        config, other = found
+        mine = self.about_section()            # before a new design changes the rows
+        took: list[str] = []
+        if (not self._design and not self.factor_table.factors()
+                and not any(w.assignments_beyond(0) for w in self._dfm_widgets)):
+            theirs = self._design_of(other, config.parent)
+            if self._may_take_design(theirs, config):
+                ids = self._take_design(theirs, other)
+                took.append("the design")
+                if ids:
+                    took.append(f"the chamber map of DFM {', '.join(map(str, ids))}")
+        factors = self.factor_table.factors()
+        merged = about_mod.start_from(mine, about_mod.read_about(other), factors or None)
+        raw = {k: v for k, v in self._loaded_raw.items() if k != about_mod.ABOUT_KEY}
+        self._loaded_raw = {**raw, about_mod.ABOUT_KEY: merged} if merged else raw
+        self._load_about(merged)
+        notes = about_mod.factor_notes(merged)
+        self.factor_table.set_kinds({k: v["kind"] for k, v in notes.items()})
+        self.meaning_table.refresh(factors, {k: v["levels"] for k, v in notes.items()})
+        self._note_declared()
+        self._refresh_data_label()
+        shared = about_mod.shared_about(about_mod.read_about(other), factors or None)
+        if shared:
+            took.insert(0, f"the shared About ({', '.join(shared)})")
+        self.statusBar().showMessage(
+            f"Filled in from {config}: {'; '.join(took)}.  Nothing is saved until you save."
+            if took else f"{config} had nothing to start from.")
+        return True
+
+    def _other_config(self, source: str | Path) -> tuple[Path, dict] | None:
+        """Another recording's config and where it is, or ``None`` (and the
+        reason said) when *source* is not one."""
+        given = Path(source).expanduser()
+        config = given / CONFIG_NAME if given.is_dir() else given
+        if given.is_dir() and not config.exists() and (given / "flic_config.yml").exists():
+            config = given / "flic_config.yml"
+        if not config.is_file():
+            QMessageBox.warning(self, WINDOW_TITLE, f"No {CONFIG_NAME} found at {given}.")
+            return None
+        if self._current_path is not None and _same_path(config, self._current_path):
+            QMessageBox.information(
+                self, WINDOW_TITLE,
+                "That is this recording's own config.  Choose an earlier recording's.")
+            return None
+        data = self._bytes_on_disk(config)
+        other = _parse_config(data) if data is not None else None
+        if other is None:
+            QMessageBox.warning(self, WINDOW_TITLE, f"{config} does not read as a config.")
+            return None
+        return config, other
+
+    @staticmethod
+    def _design_of(config: dict, directory: Path) -> dict:
+        """The design the recording in *directory* was run under: its
+        Project's, for a Member, else its own ``global:``."""
+        from . import project as project_mod
+
+        try:
+            design, _source = project_mod.design_for_member(directory)
+        except Exception:  # noqa: BLE001 - a bad project.yaml governs nothing
+            design = None
+        own = config.get("global")
+        return dict(design) if design else dict(own) if isinstance(own, dict) else {}
+
+    def _may_take_design(self, theirs: dict, config: Path) -> bool:
+        """Whether the design *theirs* may be shown here: its type must be one
+        this recording can name, and what it would replace of a design
+        already stated here is asked about first."""
+        from . import experiment_types
+        from .experiment_types import library, registry
+
+        name = theirs.get("experiment_type")
+        retired = {library.name_key(r) for r in registry.RETIRED_AS_LAYOUT}
+        if name not in (None, "") and library.name_key(name) not in retired:
+            try:
+                experiment_types.get_experiment_type(name, self._where())
+            except ValueError:
+                QMessageBox.warning(
+                    self, WINDOW_TITLE,
+                    f"{config} names the Experiment Type {name!r}, which this recording "
+                    "cannot use: it is neither in the lab's library nor beside this "
+                    "config.  Its design was not taken, only its shared About.")
+                return False
+        changes = self._design_changes(theirs)
+        if not changes:
+            return True
+        answer = QMessageBox.question(
+            self, "Replace this recording's design?",
+            f"{config} has another design than the one stated here:\n\n"
+            + "\n".join(f"  • {line}" for line in changes)
+            + "\n\nReplace this recording's design with that one's?\n\n"
+              "No keeps the design here and takes only the shared About.")
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _design_changes(self, theirs: dict) -> list[str]:
+        """What showing the design *theirs* would replace of a design already
+        stated here, one line each: a type other than Custom, a single-well
+        layout, a well name or a control level.  Empty when it only fills in."""
+        other, layout = self._type_and_layout(theirs)
+        mine = self.current_type()
+        changes: list[str] = []
+        if not mine.is_custom and other.name != mine.name:
+            changes.append(f"Experiment Type: {mine.display_name} → {other.display_name}")
+        elif mine.layout_free and self.chamber_layout() == "single_well" \
+                and layout != "single_well":
+            changes.append(f"Chamber Layout: {_LAYOUT_LABELS['single_well']} → "
+                           f"{_LAYOUT_LABELS.get(layout, layout)}")
+        wells = theirs.get("well_names") if isinstance(theirs.get("well_names"), dict) else {}
+        for label, edit, value in (
+                ("Well A", self.well_a_edit, wells.get("A")),
+                ("Well B", self.well_b_edit, wells.get("B")),
+                ("Control Level", self.control_edit, theirs.get("control_level"))):
+            here, there = _text(edit), about_mod._text(value)
+            if here and here != there:
+                changes.append(f"{label}: {here} → {there or 'none'}")
+        return changes
+
+    def _take_design(self, theirs: dict, other: dict) -> list[int]:
+        """Show the design *theirs* and, for the DFMs this recording's data
+        holds (its tabs, when no data is found), the chamber map of the config
+        *other*.  A DFM's overrides, optogenetics and notes are that
+        recording's own, and are not taken.  Returns the DFMs whose map was."""
+        self._load_design(theirs, {})
+        size = _layout_chamber_size(self.chamber_layout())
+        factors = self.factor_table.factors()
+        for widget in self._dfm_widgets:
+            widget.update_chamber_size(size)
+            widget.update_factors(factors)
+        theirs_by_id = {node["id"]: node for node in dfm_nodes(other)}
+        tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
+        taken: list[int] = []
+        for dfm_id in (self._found_dfms() or sorted(tabs)):
+            widget = tabs.get(dfm_id) or self._append_dfm(dfm_id)
+            node = theirs_by_id.get(dfm_id)
+            if node is None:
+                continue
+            shown = {k: node[k] for k in _DFM_KEYS[1:] if k in node}
+            shown.setdefault("chambers", node.get("Chambers") or {})
+            kept = {k: v for k, v in widget.get_dict().items() if k not in _DFM_KEYS[1:]}
+            widget.load_dict({**kept, **shown}, size)
+            taken.append(dfm_id)
+        return taken
 
     # ---- what is written -----------------------------------------------
 
