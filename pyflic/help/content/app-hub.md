@@ -204,7 +204,10 @@ with nothing to conform to is not a member.
   next button's job. Then it offers the two ways to finish: **Edit config…** opens the
   scaffold, **Copy config from…** replaces it with a config chosen from disk, *checked
   against the design before it is written*. A copy that would not conform is not made at
-  all; the mismatches are listed and the scaffold stays.
+  all; the mismatches are listed and the scaffold stays. Either way the new member starts
+  with what members share of the first member's `about:` (or of the config copied), and
+  never with its title, purpose, notes or catalogue id; see
+  [Adding a member](concepts-project.md#adding-a-member).
 - **Initialize existing directory… (n)** — the folder is already in the Project but has no
   config. It lists the candidates with what was found in each. Loose files are **filed
   first** — the recording into `data/`, everything else into `extra_files/` — and only then
@@ -420,6 +423,10 @@ Project open, use **AI narrative…** on the Project panel's Analysis card inste
 
 - **Config editor** — the [Config Editor](app-config-editor.md), on the selected folder's
   `flic_config.yaml`.
+- **Experiment editor** — the [Experiment Editor](app-experiment-editor.md), on the loaded
+  member's `flic_config.yaml`: what the recording is (its `about:`), its design and which
+  chamber had which levels. The Hub refreshes when it saves, as it does for the Config
+  Editor.
 - **Experiment type editor** — the [Experiment Type Editor](app-type-editor.md), for your
   lab's own types.
 - **Validate every YAML here** — parses every `project.yaml`, `batch.yaml` and

@@ -281,7 +281,11 @@ already works — the common case for the second and later members of a run. A c
 passes at load. That ordering is the point: a non-conforming member makes the whole Project
 refuse to load, and you would otherwise have to find and undo the copy by hand. A copy that
 conforms is still not necessarily *ready* — it carries the other member's chamber
-assignments, which are about that plate.
+assignments, which are about that plate. Two things are not copied, because they belong to
+the other member's recording: its `data_folder:`, and from its
+[`about:`](config-structure.md#about) the title, the purpose, the notes and the
+catalogue's id (`run:`). What members share of `about:` is copied, as scaffolding copies
+it (below).
 
 **Initialize existing directory…** files what is loose before it configures anything: the DFM
 CSVs into `data/`, everything else into `extra_files/`. A config written first would
@@ -294,6 +298,15 @@ the work worth avoiding — then reconciles it against the DFM ids actually in `
 - an id in the data with no entry is **added**, chambers unassigned
 - an entry with no data is **flagged**, never silently dropped, because a missing CSV is
   usually a copy that has not finished
+
+Scaffolding also copies what members share of the first member's
+[`about:`](config-structure.md#about): the experimenter, the series, the organism, the sex,
+the age at the start, the protocol, and what the design's factors and levels mean, with a
+level's registry term when a catalogue has given it one. Members of one design share
+those, so nobody types them twice. It never copies the title, the purpose, the notes or
+the catalogue's id (`run:`): give the new member its own in the
+[Experiment Editor](app-experiment-editor.md). The copy is made once; after that each
+member's `about:` is its own.
 
 An existing config is never overwritten.
 

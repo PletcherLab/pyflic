@@ -60,6 +60,7 @@ Member with no `global:` at all still loads and inherits everything. A new Membe
 `dfms:` block and reconciling it against the DFM ids actually present in
 `data/` (parsed from `DFM<id>_<n>.csv`): ids with no entry are added with
 chambers unassigned, entries with no data are flagged rather than dropped.
+It also takes the first Member's **Shared About** (ADR-0026).
 The Project panel lists experiment-shaped folders — a `data/` holding at
 least one `DFM*.csv` — that have no config yet as scaffolding candidates.
 Scaffolding never overwrites an existing config.
@@ -144,10 +145,26 @@ design factor's kind and each level's meaning (ADR-0024). pyflic never reads
 it for an analysis, and it changes no number, cache key or re-run verdict.
 It belongs to the recording, like the Data Folder: never in a Design, never
 inherited, never an error across Members — a Project only warns when two
-Members describe one level differently. Edited in the **Experiment Editor**
-(`pyflic-experiment`), which edits the About, the design and the chamber map
-and nothing else.
+Members describe one level differently. A catalogue that files the recording
+may rewrite it afterwards, adding `run:` (the recording's id there) and, in a
+level's mapping, `term:`, `label:` and `role:`. pyflic shows `run:`, keeps
+all four, and edits only a level's `definition:`; every writer keeps what it
+does not edit, and one that does not edit the section writes back the one on
+disk when it saves (ADR-0026). Edited in the **Experiment Editor**
+(`pyflic-experiment`, or the Hub's Tools panel), which edits the About, the
+design and the chamber map and nothing else, and never saves silently over a
+file that changed on disk.
 _Avoid_: metadata, info, notes (one of its fields), description.
+
+**Shared About**:
+The part of an About that replicate recordings share: experimenter, series,
+organism, sex, age at start, protocol, and each factor's kind and each
+level's whole entry, a mapping's `term:` included. Never the title, the
+purpose, the notes or `run:`, which are one recording's alone. It is what
+*Start from another recording…* in the Experiment Editor takes from an
+earlier recording's config, and what a scaffolded Member takes from the first
+Member (ADR-0026). Copied once and the new recording's own from then on.
+_Avoid_: template, defaults, inherited about (nothing is inherited).
 
 **Experiment Type**:
 A named, reusable definition of an assay's shape — its Chamber Layout, the

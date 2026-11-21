@@ -225,6 +225,13 @@ the keys the editor does not show, `scripts:` and `about:` above all, as they we
 For a recording's title, purpose, flies and what each level means, use the
 [Experiment Editor](app-experiment-editor.md).
 
+**`about:` is written back as it is on disk when you save**, for a member and for a
+standalone experiment alike. A catalogue that files the recording rewrites that section
+afterwards, perhaps while the config is open here. The editor does not edit it, so it
+reads it again at each save and writes that, never the copy it read when it opened the
+file. **Save As** into another recording's folder leaves out the catalogue's id (`run:`),
+which names the recording the config was read from.
+
 ## Things worth knowing
 
 **Old configurations migrate on save.** Configurations written before pyflic split

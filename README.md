@@ -12,7 +12,7 @@ pyflic is a complete port of the original R-based FLIC analysis pipeline (FLICFu
 - **Experiment Types** -- a named assay (Hedonic, Progressive Ratio, Custom, or one a lab builds in the Experiment Type Editor from pyflic's Analysis Modules) selects a chamber layout, states the light it expects, and constrains the facets, quality cutoffs, analyses, and report
 - **Facets** -- a time window is a column, not a directory: one `analysis/` per experiment carries every phase
 - **YAML configuration** -- experiment structure, parameters, factorial designs, and two levels of automated scripting
-- **Graphical tools** -- an Analysis Hub whose QC, Analyze and Plots panels are checkboxes over one button each, a config editor, a QC viewer, a project-level Plot Editor, and the Experiment Type Editor
+- **Graphical tools** -- an Analysis Hub whose QC, Analyze and Plots panels are checkboxes over one button each, a config editor, an Experiment Editor that says what a recording is, a QC viewer, a project-level Plot Editor, and the Experiment Type Editor
 - **Statistical analysis** -- ANOVA / linear mixed models, bootstrap confidence intervals, parameter sensitivity sweeps, light-phase summaries, and bout microstructure analysis
 - **Publication outputs** -- journal-ready vector figures (faceted metric plots and binned time courses) rendered from a saved Plot Spec + Plot Style, plus PDF experiment and project reports
 
@@ -95,6 +95,19 @@ pyflic config my_experiment/
 ```
 
 An example config, with scripts, is in [examples/flic_config.yaml](examples/flic_config.yaml).
+
+Say what the recording is — its title, purpose, flies and what each level means — in the
+config's optional `about:` section, which the Experiment Editor fills in and pyflic never
+analyses:
+
+```bash
+pyflic experiment my_experiment/
+```
+
+A replicate starts from the recording before it (**Start from another recording…**), so
+nobody types a description twice. A catalogue that files the recording may rewrite the
+section afterwards; every pyflic editor keeps what it wrote. See
+[`about`](pyflic/help/content/config-structure.md#about).
 
 Or validate an existing one:
 

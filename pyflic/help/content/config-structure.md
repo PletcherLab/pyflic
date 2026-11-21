@@ -94,6 +94,7 @@ no number, cached result or *re-run needed* depends on it. The
 
 ```yaml
 about:
+  run: R-20261121-scott-01           # written by a catalogue, once the recording is filed
   title: Progressive ratio, sucrose, replicate 1   # one line; 60 characters fit a list
   purpose: Whether silencing MBON10 changes how hard flies work for sucrose.
   experimenter: scott
@@ -107,16 +108,49 @@ about:
     Genotype:
       kind: genotype                 # genotype, treatment, diet, condition, sex or other
       levels:
-        MBON10: R12C11-GAL4 > UAS-GtACR1
-        Ctrl: w1118 > UAS-GtACR1
+        MBON10: R12C11-GAL4 > UAS-GtACR1     # text: what the level is
+        Ctrl:                                # or a mapping
+          definition: w1118 > UAS-GtACR1     # the same text
+          term: GEN-0012                     # written by a catalogue
+          label: w1118 x UAS-GtACR1          # written by a catalogue
+          role: reference                    # written by a catalogue
 ```
 
+**Who writes what.** You write the section, in your own words. A catalogue that files the
+recording, such as the lab's labdata, may then rewrite it to match its own record, and
+adds what only it knows:
+
+| Field | Written by |
+|---|---|
+| `run` | the catalogue only: the recording's id there. pyflic shows it and never edits it |
+| `title`, `purpose`, `experimenter`, `series`, `organism`, `sex`, `age_at_start`, `protocol`, `notes` | you; the catalogue after it has filed the recording |
+| a factor's `kind` | you; the catalogue after it has filed the recording |
+| a level's text, or its mapping's `definition` | you. A level is one line of text, or a mapping whose `definition` is that text |
+| a level mapping's `term`, `label`, `role` | the catalogue only: its registry's name for the level. pyflic keeps them and never edits them |
+
+A key pyflic does not know, anywhere in the section, is kept as it is. The section is
+written in the order above, with unknown keys last.
+
 - **This recording's alone,** like `data_folder`: never under `global:`, never in a
-  Project's design, never copied to another member.
+  Project's design, never inherited.
+- **A new recording may start from an earlier one.** Replicates share the experimenter,
+  the series, the flies, the protocol and what each factor and level means. The Experiment
+  Editor's [Start from another recording](app-experiment-editor.md#start-from-another-recording)
+  takes those from another config, and a member scaffolded in a Project takes them from
+  the first member. The `title`, the `purpose`, the `notes` and `run` are never copied:
+  they belong to one recording.
+- **Every save keeps it.** Whatever writes this file keeps the section. A window that does
+  not edit it — the Config Editor, the Script Editor, a tick in the Hub — writes back the
+  section as it is on disk at that moment, so a catalogue's rewrite made while the window
+  was open is not undone. The Experiment Editor, which does edit it,
+  [asks first](app-experiment-editor.md#when-the-file-changed-on-disk) when the file has
+  changed on disk.
 - **Never an error.** `pyflic lint` warns about a field it cannot read, an unknown factor
   kind, a long title, or a factor or level `experimental_design_factors` does not declare.
-  A Project warns when two members describe one level differently, since the pooled
-  results treat same-named levels as one group.
+  It says nothing about `run`, `term`, `label`, `role` or a key it does not know. A Project
+  warns when two members describe one level differently, since the pooled results treat
+  same-named levels as one group; members that give a level the same `term` describe it the
+  same, however they word it.
 - **The start date is not here.** It is read from `Program.txt`.
 
 ## `global.experiment_type`

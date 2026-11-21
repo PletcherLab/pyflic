@@ -1055,3 +1055,24 @@ def test_a_design_of_a_type_unknown_here_is_not_taken(app, tmp_path, monkeypatch
         assert editor.experimenter_edit.text() == "scott"
     finally:
         editor.close()
+
+
+def test_saving_as_over_another_recordings_config_keeps_that_recordings_run(app, tmp_path):
+    """Save As may replace another recording's config, but run: is the id of
+    the recording in that folder: this one's is not written there, and that
+    one's is not lost."""
+    path = _filed(tmp_path)
+    other = _filed(tmp_path, {"run": "R-20261128-scott-01", "title": "Replicate 2"},
+                   name="rep2")
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.write(other, confirm=False)
+        assert editor.run_label.text() == "Filed as R-20261128-scott-01"
+        assert "R-20261128-scott-01" not in editor.statusBar().currentMessage()
+        assert "run:" in editor.statusBar().currentMessage()
+    finally:
+        editor.close()
+    about = _read(other)["about"]
+    assert list(about)[0] == "run"
+    assert about == {**ABOUT, "run": "R-20261128-scott-01"}
+    assert _read(path)["about"] == ABOUT

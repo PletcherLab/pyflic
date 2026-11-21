@@ -517,7 +517,10 @@ def _resolved_layout(issues: list[LintIssue], path: Path, g: dict) -> str | None
 def _lint_about(issues: list[LintIssue], path: Path, cfg: dict, g: dict) -> None:
     """``about:`` (ADR-0024): what the recording is, for a reader.  Warnings
     only — pyflic never reads it for an analysis — checked against the factors
-    the loader will use: this config's, over a Member's Project design's."""
+    the loader will use: this config's, over a Member's Project design's.
+    What a catalogue writes there is accepted without a word (ADR-0026):
+    ``run:``, a level mapping's ``term:``, ``label:`` and ``role:``, and any
+    key pyflic does not know."""
     from .about import ABOUT_KEY, about_problems
     from .project import design_for_member
 

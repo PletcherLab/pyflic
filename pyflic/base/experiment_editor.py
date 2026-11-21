@@ -23,6 +23,19 @@ edited, and saving writes the Design Copy, as the Config Editor does.
 The ``global:`` it writes for a new recording is the smallest one the loader
 accepts: every analysis setting is the Experiment Type's default until the
 Config Editor or a Project Design says otherwise (ADR-0011).
+
+**Another program may write the file** (ADR-0026).  A catalogue that files
+the recording rewrites ``about:`` to match its record, adding ``run:`` and,
+in a level's mapping, ``term:``, ``label:`` and ``role:``.  So the editor:
+
+* shows ``run:`` and never edits it, and edits only a level's
+  ``definition:``, keeping every other key of the section as read;
+* never saves silently over a file that changed on disk since it was read:
+  it asks, and overwriting writes only what it edits over the file as it
+  then is (:meth:`ExperimentEditor.write`);
+* fills the form from an earlier recording's shared About, and for a
+  recording with no design yet its design and chamber map
+  (:meth:`ExperimentEditor.start_from`).
 """
 
 from __future__ import annotations
@@ -1396,7 +1409,7 @@ class ExperimentEditor(QMainWindow):
             if now is not None and now != self._read_bytes:
                 on_disk = _parse_config(now)
                 answer = if_changed or self._ask_changed_on_disk(path, on_disk is not None)
-                if answer == RELOAD:
+                if answer == RELOAD and on_disk is not None:
                     self.open_path(path)
                     self.statusBar().showMessage(
                         f"Read {path} again as it is on disk.  Nothing was saved.")
@@ -1415,6 +1428,7 @@ class ExperimentEditor(QMainWindow):
         ## run: names the recording in the folder this config was read from.
         elsewhere = self._read_path is not None and not _same_path(
             path.parent, self._read_path.parent)
+        left_out = None
         before = (self._loaded_raw, self._design, self._design_source)
         try:
             if on_disk is not None:
@@ -1425,9 +1439,7 @@ class ExperimentEditor(QMainWindow):
             if on_disk is not None:
                 cfg["dfms"] = _dfms_over(cfg["dfms"], on_disk)
             if elsewhere:
-                from . import project as project_mod
-
-                cfg = project_mod.without_run(cfg)
+                cfg, left_out = self._for_another_folder(cfg, path)
             path.write_text(
                 yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
             self._write_type_copy(path)
@@ -1443,9 +1455,28 @@ class ExperimentEditor(QMainWindow):
             self._set_base(cfg)
             self._read_path, self._read_bytes = path, self._bytes_on_disk(path)
         self.setWindowTitle(f"{WINDOW_TITLE} — {path}")
-        self.statusBar().showMessage(f"Saved {path}")
+        self.statusBar().showMessage(
+            f"Saved {path}" + (f".  run: {left_out} was not written there: it names the "
+                               f"recording this config was read from." if left_out else ""))
         self.saved.emit(str(path))
         return True
+
+    @staticmethod
+    def _for_another_folder(cfg: dict, path: Path) -> tuple[dict, Any]:
+        """*cfg* as it is written into another recording's folder: without
+        this recording's ``run:``, and with the ``run:`` a file written over
+        there already holds, which is the id of the recording in that folder.
+        Returns the config, and the ``run:`` left out, if any."""
+        from . import project as project_mod
+
+        left_out = about_mod.read_about(cfg).get(about_mod.RUN_KEY)
+        cfg = project_mod.without_run(cfg)
+        _found, theirs = project_mod.about_on_disk(path)
+        run = theirs.get(about_mod.RUN_KEY) if isinstance(theirs, dict) else None
+        if run not in (None, ""):
+            cfg = project_mod.with_about(
+                cfg, {about_mod.RUN_KEY: run, **about_mod.read_about(cfg)})
+        return cfg, left_out
 
     @staticmethod
     def _bytes_on_disk(path: Path) -> bytes | None:

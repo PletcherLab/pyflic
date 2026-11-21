@@ -2,6 +2,12 @@
 status: accepted
 ---
 
+> Amended by ADR-0026: a scaffolded Member now takes the first Member's shared
+> About, so "Scaffolding a Member does not copy another Member's" below no
+> longer holds.  ADR-0026 also adds what a catalogue writes in the section
+> (`run:`, and `term:`, `label:` and `role:` in a level's mapping) and what
+> pyflic does about a section rewritten on disk.
+
 # `about:` says what a recording is, and pyflic never analyses it
 
 ## Context
