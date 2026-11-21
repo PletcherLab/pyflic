@@ -1455,6 +1455,7 @@ class AnalysisHubWindow(QMainWindow):
         ## home beside the button that writes what it shows.
         for label, icon_name, handler in (
             ("Config editor", "config", self._open_config_editor),
+            ("Experiment editor", "info", self._open_experiment_editor),
             ("Experiment type editor", "settings", self._open_type_editor),
             ("Validate every YAML here", "lint", self._validate_yaml),
             ("Lint / migration check", "lint", self._run_lint),
@@ -3129,9 +3130,17 @@ class AnalysisHubWindow(QMainWindow):
         """
         from .config_editor import FLICConfigEditor
 
-        editors = getattr(self, "_config_editors", None)
+        editor = FLICConfigEditor(str(path) if path is not None else None)
+        self._config_editor = editor
+        return self._show_editor(editor, "_config_editors")
+
+    def _show_editor(self, editor, held_in: str):
+        """Show a config's *editor*, keep it alive in the list named
+        *held_in*, and refresh when it saves."""
+        editors = getattr(self, held_in, None)
         if editors is None:
-            editors = self._config_editors = []
+            editors = []
+            setattr(self, held_in, editors)
         ## Drop the ones the user has already closed, so the list does not
         ## grow for the life of the session.  A window whose C++ side has gone
         ## raises from isVisible() rather than answering.
@@ -3143,16 +3152,27 @@ class AnalysisHubWindow(QMainWindow):
             except RuntimeError:
                 pass
         editors[:] = kept
-        editor = FLICConfigEditor(str(path) if path is not None else None)
         ## A saved config can change what a Member's results should be: the
         ## Analyzed column re-reads it, and reads "re-run needed" if so.
         editor.saved.connect(self._config_saved)
         editors.append(editor)
-        self._config_editor = editor
         editor.show()
         editor.raise_()
         editor.activateWindow()
         return editor
+
+    def _open_experiment_editor(self):
+        """The Experiment Editor on the loaded experiment's or member's
+        ``flic_config.yaml``: its About, design and chamber map (ADR-0026).
+        Beside the Config Editor, which has every analysis setting, and
+        opened on the same file; with nothing loaded it opens empty."""
+        from .experiment_editor import ExperimentEditor
+
+        directory = self._current_dir()
+        config = os.path.join(directory, "flic_config.yaml") if directory else None
+        editor = ExperimentEditor(config if config and os.path.isfile(config) else None)
+        self._experiment_editor = editor
+        return self._show_editor(editor, "_experiment_editors")
 
     def _config_saved(self, path: str) -> None:
         """A config editor wrote *path*: refresh, so the Project's Analyzed

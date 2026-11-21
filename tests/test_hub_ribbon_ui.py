@@ -874,3 +874,69 @@ def test_the_muted_notes_are_readable_in_the_light_theme_and_after_a_toggle(app,
     hub._toggle_theme()                       # and back
     app.processEvents()
     assert min(_note_contrasts(hub).values()) >= 3.0
+
+
+# ---------------------------------------------------------------------------
+# The Experiment Editor, beside the Config Editor in the Tools panel (ADR-0026)
+# ---------------------------------------------------------------------------
+
+def _tool(hub, label: str) -> ActionButton:
+    return next(b for b in hub.panels["tools"].findChildren(ActionButton)
+                if b.text() == label)
+
+
+def test_the_tools_panel_lists_the_experiment_editor_beside_the_config_editor(hub):
+    labels = [b.text() for b in hub.panels["tools"].findChildren(ActionButton)]
+    assert labels.index("Experiment editor") == labels.index("Config editor") + 1
+
+
+def test_the_experiment_editor_opens_on_the_loaded_members_config(hub, tmp_path,
+                                                                 monkeypatch):
+    member = tmp_path / "Proj" / "rep1"
+    config = member / "flic_config.yaml"
+    _write_yaml(config, {"about": {"title": "Replicate 1"},
+                         "global": {"chamber_layout": "two_well", "params": {}},
+                         "dfms": [{"id": 1, "chambers": {1: "Ctrl"}}]})
+    _member(hub, directory=member)
+    _tool(hub, "Experiment editor").click()
+    editor = hub._experiment_editor
+    try:
+        assert editor._current_path == config
+        assert editor.title_edit.text() == "Replicate 1"
+        ## A save there is one the Hub hears, as it hears the Config Editor's:
+        ## it re-reads what it shows.
+        refreshed: list[bool] = []
+        monkeypatch.setattr(hub, "refresh", lambda: refreshed.append(True))
+        editor.title_edit.setText("Replicate 1, renamed")
+        assert editor.write(config, confirm=False)
+        assert refreshed == [True]
+        assert _last_line(hub.log) == f"Wrote {config}"
+        assert _read_yaml(config)["about"]["title"] == "Replicate 1, renamed"
+    finally:
+        editor.close()
+
+
+def test_two_experiment_editors_opened_from_the_hub_both_stay_open(hub, tmp_path):
+    first = tmp_path / "rep1"
+    second = tmp_path / "rep2"
+    for member in (first, second):
+        _write_yaml(member / "flic_config.yaml", {"dfms": [{"id": 1}]})
+    _member(hub, directory=first)
+    one = hub._open_experiment_editor()
+    _member(hub, directory=second, name="Rep2")
+    two = hub._open_experiment_editor()
+    try:
+        assert one._current_path == first / "flic_config.yaml"
+        assert two._current_path == second / "flic_config.yaml"
+        assert one.isVisible() and two.isVisible()
+    finally:
+        one.close()
+        two.close()
+
+
+def test_with_nothing_loaded_the_experiment_editor_opens_empty(hub):
+    editor = hub._open_experiment_editor()
+    try:
+        assert editor._current_path is None
+    finally:
+        editor.close()
