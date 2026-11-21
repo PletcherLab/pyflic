@@ -82,6 +82,27 @@ def _text(widget) -> str:
     return widget.text().strip()
 
 
+def dfm_nodes(config: Any) -> list[dict]:
+    """The ``dfms:`` entries of *config*, one mapping per DFM, each with its
+    ``id``.  The section is a list of entries or a mapping keyed by DFM id, as
+    the loader reads it; an entry with no integer id is left out."""
+    section = config.get("dfms", config.get("DFMs")) if isinstance(config, dict) else None
+    if isinstance(section, dict):
+        ## Keyed by id: the key is the id unless the entry states its own.
+        entries = [{"id": key, **(node if isinstance(node, dict) else {})}
+                   for key, node in section.items()]
+    else:
+        entries = [node for node in (section or []) if isinstance(node, dict)]
+    out: list[dict] = []
+    for node in entries:
+        try:
+            dfm_id = int(node.get("id", node.get("ID")))
+        except (TypeError, ValueError):
+            continue
+        out.append({**{k: v for k, v in node.items() if k != "ID"}, "id": dfm_id})
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Factors: name, kind and levels
 # ---------------------------------------------------------------------------
@@ -743,14 +764,8 @@ class ExperimentEditor(QMainWindow):
         self._load_design(shown, about)
         self._clear_dfms()
         chamber_size = _layout_chamber_size(self.chamber_layout())
-        for node in (raw.get("dfms") or raw.get("DFMs") or []):
-            if not isinstance(node, dict):
-                continue
-            try:
-                dfm_id = int(node.get("id", node.get("ID")))
-            except (TypeError, ValueError):
-                continue
-            widget = self._append_dfm(dfm_id)
+        for node in dfm_nodes(raw):
+            widget = self._append_dfm(node["id"])
             widget.load_dict(node, chamber_size)
         self._apply_governance()
         self._refresh_data_label()

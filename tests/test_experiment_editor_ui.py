@@ -244,3 +244,27 @@ def test_a_conflicting_member_keeps_its_description(app, tmp_path):
     finally:
         editor.close()
     assert _read(path)["global"] == own
+
+
+# ---------------------------------------------------------------------------
+# dfms: in its mapping form
+# ---------------------------------------------------------------------------
+
+def test_a_config_whose_dfms_are_keyed_by_id_keeps_its_chambers(app, tmp_path):
+    """``dfms:`` may be a mapping keyed by DFM id, as the loader and the Config
+    Editor read it: the editor must show those DFMs, not save an empty list."""
+    path = tmp_path / "exp" / "flic_config.yaml"
+    _write(path, {"global": {"chamber_layout": "two_well", "params": {}},
+                  "dfms": {1: {"chambers": {1: "Ctrl", 2: "Exp"}},
+                           4: {"params": {"pi_direction": "right"},
+                               "chambers": {3: "Exp"}}}})
+    editor = ExperimentEditor(path)
+    try:
+        assert [w._id_spin.value() for w in editor._dfm_widgets] == [1, 4]
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    saved = _read(path)
+    assert saved["dfms"] == [{"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+                             {"id": 4, "params": {"pi_direction": "right"},
+                              "chambers": {3: "Exp"}}]
