@@ -268,3 +268,231 @@ def test_a_config_whose_dfms_are_keyed_by_id_keeps_its_chambers(app, tmp_path):
     assert saved["dfms"] == [{"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
                              {"id": 4, "params": {"pi_direction": "right"},
                               "chambers": {3: "Exp"}}]
+
+
+# ---------------------------------------------------------------------------
+# about: as a catalogue leaves it (ADR-0026)
+# ---------------------------------------------------------------------------
+#
+# A catalogue that files the recording rewrites about: to match its record:
+# it writes run:, and inside a level's mapping term:, label: and role:.  The
+# editor shows run:, edits only a level's definition, and writes back
+# everything it does not show.
+
+ABOUT = {
+    "run": "R-20261121-scott-01",
+    "title": "Hedonic, replicate 1",
+    "purpose": "Whether silencing MBON10 changes hedonic feeding.",
+    "experimenter": "scott",
+    "series": "hedonic-2026",
+    "organism": "Drosophila melanogaster",
+    "sex": ["female"],
+    "age_at_start": "5-7 days",
+    "protocol": {"name": "FLIC hedonic", "version": "2", "link": "https://example.org/h",
+                 "x_doi": "kept"},
+    "notes": "Lid 3 was replaced.",
+    "factors": {
+        "Genotype": {
+            "kind": "genotype",
+            "levels": {
+                "Exp": "R12C11-GAL4 > UAS-GtACR1",
+                "Ctrl": {"definition": "w1118 > UAS-GtACR1", "term": "GEN-0012",
+                         "label": "w1118 x UAS-GtACR1", "role": "reference",
+                         "x_other": "kept"},
+            },
+            "x_factor": "kept",
+        },
+    },
+    "x_lab": {"a": 1},
+}
+ABOUT_ORDER = ["run", "title", "purpose", "experimenter", "series", "organism", "sex",
+               "age_at_start", "protocol", "notes", "factors", "x_lab"]
+
+
+def _filed(tmp_path: Path, about: dict = ABOUT, name: str = "exp") -> Path:
+    path = tmp_path / name / "flic_config.yaml"
+    _write(path, {**FULL, "about": about})
+    return path
+
+
+def _meaning(editor: ExperimentEditor, factor: str, level: str):
+    table = editor.meaning_table
+    for row in range(table.rowCount()):
+        if (table.item(row, 0).text(), table.item(row, 1).text()) == (factor, level):
+            return table.item(row, 2)
+    raise AssertionError(f"no row for {factor} {level}")
+
+
+def test_a_save_that_edits_nothing_keeps_about_as_a_catalogue_left_it(app, tmp_path):
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    about = _read(path)["about"]
+    assert about == ABOUT
+    assert list(about) == ABOUT_ORDER
+    ## Unknown keys beside kind: and levels: are a factor's too, and the levels
+    ## stay in the order the file had them.
+    assert about["factors"]["Genotype"]["x_factor"] == "kept"
+    assert list(about["factors"]["Genotype"]["levels"]) == ["Exp", "Ctrl"]
+
+
+def test_editing_a_meaning_changes_only_the_definition(app, tmp_path):
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        assert _meaning(editor, "Genotype", "Ctrl").text() == "w1118 > UAS-GtACR1"
+        _meaning(editor, "Genotype", "Ctrl").setText("the control cross")
+        _meaning(editor, "Genotype", "Exp").setText("the silenced cross")
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    about = _read(path)["about"]
+    levels = about["factors"]["Genotype"]["levels"]
+    was = ABOUT["factors"]["Genotype"]["levels"]["Ctrl"]
+    assert levels["Ctrl"] == {**was, "definition": "the control cross"}
+    assert list(levels["Ctrl"])[0] == "definition"
+    assert levels["Exp"] == "the silenced cross"             # text stays text
+    about["factors"]["Genotype"]["levels"] = ABOUT["factors"]["Genotype"]["levels"]
+    assert about == ABOUT                                    # and nothing else changed
+
+
+def test_a_meaning_cleared_from_a_mapping_keeps_its_other_keys(app, tmp_path):
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        _meaning(editor, "Genotype", "Ctrl").setText("")
+        _meaning(editor, "Genotype", "Exp").setText("  ")
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    levels = _read(path)["about"]["factors"]["Genotype"]["levels"]
+    assert levels == {"Ctrl": {"term": "GEN-0012", "label": "w1118 x UAS-GtACR1",
+                               "role": "reference", "x_other": "kept"}}
+
+
+def test_run_is_shown_never_edited_and_written_back_first(app, tmp_path):
+    from PyQt6.QtWidgets import QLabel
+
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.run_label.text() == "Filed as R-20261121-scott-01"
+        assert not editor.run_label.isHidden()
+        assert type(editor.run_label) is QLabel              # nothing to type into
+        editor.title_edit.setText("A better title")
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    about = _read(path)["about"]
+    assert list(about)[0] == "run"
+    assert about["run"] == "R-20261121-scott-01"
+    assert about["title"] == "A better title"
+
+    plain = tmp_path / "unfiled" / "flic_config.yaml"
+    _write(plain, {**FULL, "about": {"title": "Not filed yet"}})
+    editor = ExperimentEditor(plain)
+    try:
+        assert editor.run_label.isHidden()
+        assert editor.run_label.text() == ""
+        assert editor.write(plain, confirm=False)
+    finally:
+        editor.close()
+    assert "run" not in _read(plain)["about"]
+
+
+def test_what_the_form_never_showed_is_kept_and_what_a_rename_removes_is_dropped(
+        app, tmp_path):
+    """The design here declares Genotype: Ctrl, Exp.  The file also describes
+    a level and a factor it does not declare: they have no row, so they are
+    written back as read (and still warned of).  A level renamed in this
+    editor loses its description, as it always has."""
+    old = {"definition": "retired cross", "term": "GEN-0009"}
+    dose = {"kind": "treatment", "levels": {"2": "2% sucrose"}}
+    path = _filed(tmp_path, {"title": "T", "factors": {
+        "Genotype": {"kind": "genotype",
+                     "levels": {"Ctrl": "w1118", "Old": old,
+                                "Exp": {"definition": "x", "term": "GEN-0002"}}},
+        "Dose": dose}})
+    editor = ExperimentEditor(path)
+    try:
+        editor.factor_table.table.item(0, 2).setText("Ctrl, Exp2")
+        assert any("Old" in problem for problem in editor.problems())
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    factors = _read(path)["about"]["factors"]
+    assert factors == {"Genotype": {"kind": "genotype",
+                                    "levels": {"Ctrl": "w1118", "Old": old}},
+                       "Dose": dose}
+
+
+def test_a_level_declared_here_shows_what_the_file_already_says_about_it(app, tmp_path):
+    old = {"definition": "retired cross", "term": "GEN-0009"}
+    path = _filed(tmp_path, {"factors": {"Genotype": {"levels": {"Ctrl": "w1118",
+                                                                   "Old": old}}}})
+    editor = ExperimentEditor(path)
+    try:
+        editor.factor_table.table.item(0, 2).setText("Ctrl, Exp, Old")
+        assert _meaning(editor, "Genotype", "Old").text() == "retired cross"
+        ## A rename and back: the file's words return, not a blank.
+        editor.factor_table.table.item(0, 2).setText("Control, Exp, Old")
+        editor.factor_table.table.item(0, 2).setText("Ctrl, Exp, Old")
+        assert _meaning(editor, "Genotype", "Ctrl").text() == "w1118"
+        ## What is typed in a row that stays is kept, a blank included.
+        _meaning(editor, "Genotype", "Ctrl").setText("")
+        editor.factor_table.table.item(0, 2).setText("Ctrl, Exp, Old, New")
+        assert _meaning(editor, "Genotype", "Ctrl").text() == ""
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert _read(path)["about"]["factors"] == {"Genotype": {"levels": {"Old": old}}}
+
+
+def test_a_factor_named_here_takes_the_kind_the_file_gives_it(app, tmp_path):
+    path = tmp_path / "exp" / "flic_config.yaml"
+    _write(path, {"about": {"factors": {"Dose": {"kind": "treatment",
+                                                 "levels": {"2": "2% sucrose"}}}},
+                  "global": {"chamber_layout": "two_well", "params": {}},
+                  "dfms": [{"id": 1}]})
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.factor_table.factors() == {}
+        editor.factor_table.add_row()
+        editor.factor_table.table.item(0, 0).setText("Dose")
+        editor.factor_table.table.item(0, 2).setText("2, 4")
+        assert editor.factor_table.kinds() == {"Dose": "treatment"}
+        assert _meaning(editor, "Dose", "2").text() == "2% sucrose"
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert _read(path)["about"]["factors"] == {
+        "Dose": {"kind": "treatment", "levels": {"2": "2% sucrose"}}}
+
+
+def test_sex_is_written_as_the_file_had_it_until_it_is_changed(app, tmp_path):
+    path = _filed(tmp_path, {"sex": ["Male", "female", "mixed"]})
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.write(path, confirm=False)
+        assert _read(path)["about"]["sex"] == ["Male", "female", "mixed"]
+        editor.sex_checks["male"].setChecked(False)
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert _read(path)["about"]["sex"] == ["female", "mixed"]
+
+
+def test_an_about_that_is_not_a_mapping_is_kept_until_something_is_typed(app, tmp_path):
+    path = _filed(tmp_path, "see the lab book")
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.write(path, confirm=False)
+        assert _read(path)["about"] == "see the lab book"
+        editor.title_edit.setText("A title")
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert _read(path)["about"] == {"title": "A title"}

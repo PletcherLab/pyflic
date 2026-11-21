@@ -27,6 +27,7 @@ Config Editor or a Project Design says otherwise (ADR-0011).
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 from typing import Any
@@ -129,7 +130,7 @@ class FactorTable(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(110)
-        self.table.itemChanged.connect(lambda _item: self.changed.emit())
+        self.table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.table)
         row = QHBoxLayout()
         self.add_button = ActionButton("Add factor", Category.LOAD, icon_name="new")
@@ -141,15 +142,31 @@ class FactorTable(QWidget):
         row.addStretch(1)
         layout.addLayout(row)
         self._read_only = False
+        #: The kind the file gives each factor it describes, by name.
+        self._loaded_kinds: dict[str, str] = {}
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() == 0:
+            ## A factor named here that the file already describes takes the
+            ## kind the file gives it, unless one is chosen.
+            combo = self.table.cellWidget(item.row(), 1)
+            kind = self._loaded_kinds.get(item.text().strip())
+            if combo is not None and kind and not combo.currentData():
+                self._set_kind(combo, kind)
+        self.changed.emit()
+
+    @staticmethod
+    def _set_kind(combo, kind: str) -> None:
+        if kind and combo.findData(kind) < 0:
+            combo.addItem(kind, kind)          # kept as the file has it
+        combo.setCurrentIndex(max(combo.findData(kind), 0))
 
     def _kind_combo(self, kind: str) -> NoWheelComboBox:
         combo = NoWheelComboBox()
         combo.addItem("", "")
         for value in about_mod.FACTOR_KINDS:
             combo.addItem(value, value)
-        if kind and combo.findData(kind) < 0:
-            combo.addItem(kind, kind)          # kept as the file has it
-        combo.setCurrentIndex(max(combo.findData(kind), 0))
+        self._set_kind(combo, kind)
         combo.setToolTip("What kind of variable this factor is (about.factors)")
         combo.currentIndexChanged.connect(lambda _i: self.changed.emit())
         return combo
@@ -176,6 +193,9 @@ class FactorTable(QWidget):
             self.changed.emit()
 
     def load(self, factors: dict, kinds: dict[str, str]) -> None:
+        """Show *factors*; *kinds* is the kind the file gives each factor it
+        describes, declared here or not."""
+        self._loaded_kinds = dict(kinds)
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self.table.blockSignals(False)
@@ -221,7 +241,9 @@ class FactorTable(QWidget):
 
 class MeaningTable(QTableWidget):
     """What each level means (``about.factors.<factor>.levels``): one row per
-    declared level, rebuilt when the factors change, keeping what was typed."""
+    declared level, rebuilt when the factors change.  A row that stays keeps
+    what is typed in it; a level declared here shows what the file already
+    says about it."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, 3, parent)
@@ -234,10 +256,22 @@ class MeaningTable(QTableWidget):
         self.setMinimumHeight(140)
         self.setToolTip("A few words per level: the cross, the dose, the diet.  "
                         "Optional; written under about.factors.")
+        #: What the file says each level means, declared here or not.
+        self._loaded: dict[str, dict[str, str]] = {}
 
     def refresh(self, factors: dict[str, list[str]],
                 meanings: dict[str, dict[str, str]] | None = None) -> None:
-        kept = self.meanings() if meanings is None else meanings
+        """Rebuild the rows for *factors*.  With *meanings* (a load) each row
+        shows what they give its level.  Without, a row that was here keeps
+        its text, a blank included, and a new one shows the loaded meaning."""
+        here: dict[tuple[str, str], str] = {}
+        if meanings is None:
+            for r in range(self.rowCount()):
+                factor, level, text = (self.item(r, c).text() if self.item(r, c) else ""
+                                       for c in range(3))
+                here[(factor, level)] = text
+        else:
+            self._loaded = {factor: dict(levels) for factor, levels in meanings.items()}
         self.setRowCount(0)
         for factor, levels in factors.items():
             for level in levels:
@@ -247,7 +281,9 @@ class MeaningTable(QTableWidget):
                     item = QTableWidgetItem(text)
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.setItem(r, c, item)
-                self.setItem(r, 2, QTableWidgetItem(kept.get(factor, {}).get(level, "")))
+                text = here.get((factor, level),
+                                self._loaded.get(factor, {}).get(level, ""))
+                self.setItem(r, 2, QTableWidgetItem(text))
 
     def meanings(self) -> dict[str, dict[str, str]]:
         out: dict[str, dict[str, str]] = {}
@@ -282,6 +318,10 @@ class ExperimentEditor(QMainWindow):
         self._last_type: str | None = None
         #: Sex values the file holds that have no checkbox; written back.
         self._other_sex: list[str] = []
+        #: The factors and levels the design declared when ``about:`` was
+        #: read.  What ``about.factors`` says of any other was never shown
+        #: here, so it is written back as read.
+        self._declared_at_load: dict[str, set[str]] = {}
         self._build_menu()
         self._build_ui()
         self._fill_type_combo()
@@ -349,6 +389,16 @@ class ExperimentEditor(QMainWindow):
                     subtitle="Every field is optional and is saved under about:. "
                              "pyflic never uses it to analyse; it is for whoever "
                              "reads this config later.")
+        ## about.run: the recording's id in the catalogue that filed it.  The
+        ## catalogue writes it; it is shown here and written back as read.
+        self.run_label = QLabel("")
+        self.run_label.setObjectName("PyflicCardSubtitle")
+        self.run_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.run_label.setToolTip(
+            "about.run: written by the catalogue that filed this recording.  "
+            "Shown here, never edited, and never copied to another recording.")
+        self.run_label.setVisible(False)
+        card.add_body(self.run_label)
         form = self._form()
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("One line, such as: Progressive ratio, sucrose, replicate 1")
@@ -762,6 +812,7 @@ class ExperimentEditor(QMainWindow):
         own = raw.get("global") if isinstance(raw.get("global"), dict) else {}
         shown = dict(self._design) if self._design else dict(own)
         self._load_design(shown, about)
+        self._note_declared()
         self._clear_dfms()
         chamber_size = _layout_chamber_size(self.chamber_layout())
         for node in dfm_nodes(raw):
@@ -784,7 +835,16 @@ class ExperimentEditor(QMainWindow):
         if design:
             self._design, self._design_source = design, source
 
+    def _note_declared(self) -> None:
+        """Remember what the design declares now: the rows ``about.factors``
+        has in this form."""
+        self._declared_at_load = {name: set(levels)
+                                  for name, levels in self.factor_table.factors().items()}
+
     def _load_about(self, about: dict) -> None:
+        run = about_mod._text(about.get(about_mod.RUN_KEY))
+        self.run_label.setText(f"Filed as {run}" if run else "")
+        self.run_label.setVisible(bool(run))
         self.title_edit.setText(about_mod._text(about.get("title")))
         self.purpose_edit.setPlainText(about_mod._text(about.get("purpose")))
         self.experimenter_edit.setText(about_mod._text(about.get("experimenter")))
@@ -861,8 +921,10 @@ class ExperimentEditor(QMainWindow):
     # ---- what is written -----------------------------------------------
 
     def about_section(self) -> dict:
-        """``about:`` as the form describes it; keys the form has no field
-        for are kept as read."""
+        """``about:`` as the form describes it.  What the form has no field
+        for is kept as read: ``run:``, a key pyflic does not know, the keys
+        of a level's mapping beside its ``definition:``, and what the file
+        says of a factor or level this form never showed (ADR-0026)."""
         loaded = about_mod.read_about(self._loaded_raw)
         known = set(about_mod.KEY_ORDER)
         section: dict[str, Any] = {k: v for k, v in loaded.items() if k not in known}
@@ -871,27 +933,70 @@ class ExperimentEditor(QMainWindow):
                             ("series", self.series_edit), ("organism", self.organism_edit),
                             ("age_at_start", self.age_edit), ("notes", self.notes_edit)):
             section[key] = _text(widget)
-        section[about_mod.SEX_KEY] = [v for v, c in self.sex_checks.items() if c.isChecked()] \
-            + self._other_sex
+        ticked = [v for v, c in self.sex_checks.items() if c.isChecked()] + self._other_sex
+        was = about_mod.sex_values(loaded.get(about_mod.SEX_KEY))
+        ## Unchanged, it is written as the file had it: its order and spelling.
+        same = sorted(v.lower() for v in was) == sorted(v.lower() for v in ticked)
+        section[about_mod.SEX_KEY] = was if same else ticked
         loaded_protocol = loaded.get(about_mod.PROTOCOL_KEY)
         protocol = {k: v for k, v in loaded_protocol.items()
                     if k not in about_mod.PROTOCOL_FIELDS} \
             if isinstance(loaded_protocol, dict) else {}
         protocol.update({field: _text(edit) for field, edit in self.protocol_edits.items()})
         section[about_mod.PROTOCOL_KEY] = protocol
+        section[about_mod.FACTORS_KEY] = self._factors_section(
+            loaded.get(about_mod.FACTORS_KEY))
+        cleaned = about_mod.clean_about(section)
+        run = loaded.get(about_mod.RUN_KEY)
+        if run not in (None, ""):
+            ## The catalogue's, never the form's: as read, and first.
+            cleaned = {about_mod.RUN_KEY: run, **cleaned}
+        return cleaned
+
+    def _factors_section(self, loaded: Any) -> dict:
+        """``about.factors`` from the two tables, over what the file held.
+
+        A level's entry keeps its shape: text stays text, and a mapping keeps
+        its other keys with its ``definition:`` set to the row's text
+        (``about.with_meaning``).  A factor's own keys beside ``kind:`` and
+        ``levels:`` are kept.  A factor or level the design did not declare
+        when the file was read has no row here, so its entry is written back
+        as read; one this editor removed or renamed is dropped with its row.
+        Entries stay in the file's order, with new ones after them.
+        """
+        loaded = {str(name).strip(): body for name, body in loaded.items()} \
+            if isinstance(loaded, dict) else {}
+        declared = self.factor_table.factors()
         kinds = self.factor_table.kinds()
         meanings = self.meaning_table.meanings()
-        factors: dict[str, Any] = {}
-        for name in self.factor_table.factors():
-            entry: dict[str, Any] = {}
-            if kinds.get(name):
-                entry["kind"] = kinds[name]
-            if meanings.get(name):
-                entry["levels"] = meanings[name]
-            if entry:
-                factors[name] = entry
-        section[about_mod.FACTORS_KEY] = factors
-        return about_mod.clean_about(section)
+        out: dict[str, Any] = {}
+        for name in [*loaded, *(n for n in declared if n not in loaded)]:
+            body = loaded.get(name)
+            if name not in declared:
+                if name not in self._declared_at_load:
+                    out[name] = copy.deepcopy(body)        # never shown: as read
+                continue
+            body = body if isinstance(body, dict) else {}
+            entries = body.get("levels")
+            entries = {str(level).strip(): entry for level, entry in entries.items()} \
+                if isinstance(entries, dict) else {}
+            shown_before = self._declared_at_load.get(name, set())
+            levels: dict[str, Any] = {}
+            for level in [*entries, *(v for v in declared[name] if v not in entries)]:
+                if level in declared[name]:
+                    value = about_mod.with_meaning(entries.get(level),
+                                                   meanings.get(name, {}).get(level, ""))
+                elif level not in shown_before:
+                    value = copy.deepcopy(entries[level])  # never shown: as read
+                else:
+                    continue                               # removed or renamed here
+                if value is not None:
+                    levels[level] = value
+            ## Blanks are left out when the section is cleaned.
+            out[name] = {"kind": kinds.get(name, ""), "levels": levels,
+                         **{k: copy.deepcopy(v) for k, v in body.items()
+                            if k not in ("kind", "levels")}}
+        return out
 
     def design_section(self) -> dict:
         """The design keys of ``global:`` as the form describes them."""
@@ -954,6 +1059,11 @@ class ExperimentEditor(QMainWindow):
             out[DATA_FOLDER_KEY] = raw[DATA_FOLDER_KEY]
         if about:
             out[about_mod.ABOUT_KEY] = about
+        elif raw.get(about_mod.ABOUT_KEY) is not None and not isinstance(
+                raw[about_mod.ABOUT_KEY], dict):
+            ## Not a section the form could read, and nothing typed to put in
+            ## its place: left as written, for the linter to name.
+            out[about_mod.ABOUT_KEY] = raw[about_mod.ABOUT_KEY]
         for key, value in raw.items():
             if key in (DATA_FOLDER_KEY, about_mod.ABOUT_KEY):
                 continue
@@ -1031,11 +1141,20 @@ class ExperimentEditor(QMainWindow):
         except Exception as err:  # noqa: BLE001
             QMessageBox.critical(self, WINDOW_TITLE, f"Could not save {path}:\n{err}")
             return False
-        self._loaded_raw = cfg
+        self._set_base(cfg)
         self.setWindowTitle(f"{WINDOW_TITLE} — {path}")
         self.statusBar().showMessage(f"Saved {path}")
         self.saved.emit(str(path))
         return True
+
+    def _set_base(self, cfg: dict) -> None:
+        """*cfg*, just written, is now what the file holds: what the form
+        does not show is kept from it at the next save."""
+        self._loaded_raw = cfg
+        notes = about_mod.factor_notes(about_mod.read_about(cfg))
+        self.factor_table._loaded_kinds = {k: v["kind"] for k, v in notes.items()}
+        self.meaning_table._loaded = {k: dict(v["levels"]) for k, v in notes.items()}
+        self._note_declared()
 
     def _write_type_copy(self, path: Path) -> None:
         """A lab type travels with a standalone recording (ADR-0019), as the
