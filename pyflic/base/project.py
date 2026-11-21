@@ -253,6 +253,56 @@ def design_for_member(experiment_dir) -> tuple[dict, str] | tuple[None, None]:
     return design_global, os.path.join(parent, PROJECT_FILENAME)
 
 
+def about_on_disk(config_path) -> tuple[bool, object]:
+    """The ``about:`` section the config at *config_path* holds **now**.
+
+    ``(True, section)`` when the file reads as a config, with ``None`` for
+    one that states no section, and ``(False, None)`` when the file is gone
+    or no longer parses to a mapping.
+
+    A catalogue that files a recording rewrites its ``about:`` afterwards,
+    possibly while an editor has the config open (ADR-0026).  So a writer that
+    does not edit the section asks this when it saves, and writes back what
+    is on disk then, never the copy it read when it opened the file.
+    """
+    from .about import ABOUT_KEY
+
+    try:
+        with open(config_path, encoding="utf-8") as handle:
+            config = yaml.safe_load(handle)
+    except Exception:  # noqa: BLE001 - gone, unreadable or no longer YAML
+        return False, None
+    if not isinstance(config, dict):
+        return False, None
+    return True, config.get(ABOUT_KEY)
+
+
+def with_about(config: dict, about) -> dict:
+    """*config* with its ``about:`` section set to *about*, where it was.  A
+    config that had none gets it after ``data_folder:``, or first, where the
+    Experiment Editor writes it.  ``None`` removes the section."""
+    from .about import ABOUT_KEY
+    from .layout import DATA_FOLDER_KEY
+
+    if about is None:
+        return {key: value for key, value in config.items() if key != ABOUT_KEY}
+    if ABOUT_KEY in config:
+        return {key: (about if key == ABOUT_KEY else value)
+                for key, value in config.items()}
+    head = {DATA_FOLDER_KEY: config[DATA_FOLDER_KEY]} if DATA_FOLDER_KEY in config else {}
+    return {**head, ABOUT_KEY: about,
+            **{key: value for key, value in config.items() if key != DATA_FOLDER_KEY}}
+
+
+def keep_about_on_disk(config: dict, config_path) -> dict:
+    """*config*, about to be written to *config_path* by a writer that does
+    not edit ``about:``, with the section that file holds now
+    (:func:`about_on_disk`).  A file that is gone or no longer parses leaves
+    *config* with the section it carries."""
+    found, about = about_on_disk(config_path)
+    return with_about(config, about) if found else config
+
+
 def without_run(config: dict) -> dict:
     """*config* without ``about.run``, and without the section when nothing
     else is in it: for a config written into another recording's folder.

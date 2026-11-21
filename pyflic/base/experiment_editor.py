@@ -28,7 +28,6 @@ Config Editor or a Project Design says otherwise (ADR-0011).
 from __future__ import annotations
 
 import copy
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,6 +63,7 @@ from .config_editor import (
     DFMWidget,
     _layout_chamber_size,
     _normalise_layout,
+    _same_path,
     _WestTabBar,
 )
 from .gui_env import sanitize_input_method_environment
@@ -86,11 +86,6 @@ def _text(widget) -> str:
     if isinstance(widget, QPlainTextEdit):
         return widget.toPlainText().strip()
     return widget.text().strip()
-
-
-def _same_path(a, b) -> bool:
-    return os.path.normcase(os.path.abspath(str(a))) == \
-        os.path.normcase(os.path.abspath(str(b)))
 
 
 def _parse_config(data: bytes) -> dict | None:

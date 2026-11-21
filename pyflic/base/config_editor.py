@@ -15,6 +15,7 @@ Usage (Python)::
 from __future__ import annotations
 
 import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -955,6 +956,13 @@ _MANAGED_DFM_KEYS = frozenset({"id", "optogenetics", "params", "parameters",
                                "chamber_groups"})
 
 
+def _same_path(a, b) -> bool:
+    """Whether two paths name one file or folder, on a share that ignores
+    case as on one that does not."""
+    return os.path.normcase(os.path.abspath(str(a))) == \
+        os.path.normcase(os.path.abspath(str(b)))
+
+
 def _sanitize_treatment(text: str) -> str:
     """Spaces → underscores; strip everything that isn't alphanumeric or underscore."""
     return re.sub(r"[^A-Za-z0-9_]", "", text.replace(" ", "_"))
@@ -1713,6 +1721,8 @@ class FLICConfigEditor(QMainWindow):
     def __init__(self, initial_path: str | Path | None = None) -> None:
         super().__init__()
         self._current_path: Path | None = None
+        #: The file ``_loaded_raw`` was read from: Save As may write elsewhere.
+        self._loaded_path: Path | None = None
         #: Where Save As starts when nothing was loaded: the file or folder
         #: the editor was opened on.
         self._save_hint: Path | None = None
@@ -3126,7 +3136,30 @@ class FLICConfigEditor(QMainWindow):
         else:
             cfg["global"] = self._global_section()
         cfg["dfms"] = [w.get_dict() for w in self._dfm_widgets]
-        return self._with_data_folder(cfg)
+        return self._with_about_on_disk(self._with_data_folder(cfg))
+
+    def _with_about_on_disk(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        """*cfg* with the ``about:`` its file holds now (ADR-0026).
+
+        This editor does not edit ``about:``, and a catalogue that files the
+        recording may rewrite the section while the file is open here.  So
+        the section written is the one on disk at this moment, in the file
+        being written, not the one read when it was opened: added, changed
+        or removed there, it is the same after this save.  A file that is
+        gone or no longer parses keeps the section that was loaded, without
+        ``run:`` when Save As writes into another recording's folder.
+        """
+        if self._current_path is None:
+            return cfg
+        from . import project as project_mod
+
+        found, about = project_mod.about_on_disk(self._current_path)
+        if found:
+            return project_mod.with_about(cfg, about)
+        if self._loaded_path is not None and not _same_path(
+                self._current_path.parent, self._loaded_path.parent):
+            return project_mod.without_run(cfg)
+        return cfg
 
     def _with_data_folder(self, cfg: dict[str, Any]) -> dict[str, Any]:
         """*cfg* with the Data Folder field's ``data_folder:`` (ADR-0021).
@@ -3161,6 +3194,7 @@ class FLICConfigEditor(QMainWindow):
         cell.
         """
         self._loaded_raw = dict(cfg)
+        self._loaded_path = self._current_path
         from .layout import DATA_FOLDER_KEY
 
         folder = cfg.get(DATA_FOLDER_KEY)
@@ -3444,6 +3478,7 @@ class FLICConfigEditor(QMainWindow):
 
     def _new(self) -> None:
         self._current_path = None
+        self._loaded_path = None
         self._loaded_raw = {}
         self._data_folder_edit.clear()
         self._design = None

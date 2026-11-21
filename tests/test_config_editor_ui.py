@@ -1046,3 +1046,162 @@ def test_new_clears_the_progressive_ratio_constants(app, tmp_path):
         assert w["require_training_complete"].currentData() is None
     finally:
         win.close()
+
+
+# ---------------------------------------------------------------------------
+# about: is not this editor's, and may be rewritten while it is open (ADR-0026)
+# ---------------------------------------------------------------------------
+#
+# A catalogue that files the recording rewrites about: to match its record.
+# The Config Editor does not edit the section, so a save writes back the one
+# on disk at that moment, not the one it read when the file was opened.
+
+AS_TYPED = {"title": "Replicate 1", "experimenter": "scott",
+            "factors": {"Genotype": {"kind": "genotype", "levels": {"Ctrl": "w1118"}}}}
+AS_FILED = {"run": "R-20261121-scott-01", "title": "Replicate 1", "experimenter": "scott",
+            "factors": {"Genotype": {"kind": "genotype", "levels": {
+                "Ctrl": {"definition": "w1118", "term": "GEN-0012",
+                         "label": "w1118", "role": "reference"}}}},
+            "x_lab": {"a": 1}}
+RECORDING = {
+    "about": AS_TYPED,
+    "global": {"chamber_layout": "two_well", "params": {"feeding_threshold": 20},
+               "experimental_design_factors": {"Genotype": ["Ctrl", "Exp"]}},
+    "dfms": [{"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}}],
+    "scripts": [{"name": "mine", "steps": [{"action": "load"}]}],
+}
+
+
+def _on_disk(path: Path, about) -> None:
+    """Another program rewrites the file's about: (``None``: removes it)."""
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config.pop("about", None)
+    if about is not None:
+        config = {"about": about, **config}
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
+def _save(win: FLICConfigEditor, monkeypatch) -> None:
+    """File → Save, with its boxes answered."""
+    from pyflic.base import config_editor
+
+    monkeypatch.setattr(config_editor.QMessageBox, "information",
+                        staticmethod(lambda *a, **k: None))
+    win._confirm_save_with_problems = lambda _problems: True
+    win._save()
+
+
+def _saved(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def test_a_save_writes_the_about_now_on_disk_not_the_one_it_loaded(
+        app, tmp_path, monkeypatch):
+    win = _open(app, tmp_path, RECORDING)
+    path = tmp_path / "flic_config.yaml"
+    try:
+        _on_disk(path, AS_FILED)
+        win._well_a_edit.setText("Sucrose")
+        assert win._collect_yaml()["about"] == AS_FILED
+        _save(win, monkeypatch)
+    finally:
+        win.close()
+    saved = _saved(path)
+    assert saved["about"] == AS_FILED
+    assert list(saved["about"]) == list(AS_FILED)            # as it was, its order too
+    assert saved["global"]["well_names"] == {"A": "Sucrose"}  # and the edit was saved
+    assert saved["scripts"] == RECORDING["scripts"]
+
+
+def test_a_members_save_writes_the_about_now_on_disk_too(app, tmp_path, monkeypatch):
+    from pyflic.base import project as project_mod
+
+    design = {"experiment_type": "Hedonic", "params": {"feeding_threshold": 20},
+              "well_names": {"A": "S5", "B": "S5Y5"},
+              "experimental_design_factors": {"Genotype": ["Ctrl", "Exp"]}}
+    root = tmp_path / "Proj"
+    (root / "rep1").mkdir(parents=True)
+    (root / "project.yaml").write_text(
+        yaml.safe_dump({"name": "Proj", "design": {"global": design}}), encoding="utf-8")
+    path = root / "rep1" / "flic_config.yaml"
+    path.write_text(yaml.safe_dump({"about": AS_TYPED, "dfms": RECORDING["dfms"]},
+                                   sort_keys=False), encoding="utf-8")
+    win = FLICConfigEditor(initial_path=path)
+    try:
+        assert win._design
+        _on_disk(path, AS_FILED)
+        _save(win, monkeypatch)
+    finally:
+        win.close()
+    saved = _saved(path)
+    assert saved["about"] == AS_FILED
+    assert saved["global"] == project_mod.design_copy(design)
+    assert saved["dfms"] == RECORDING["dfms"]
+
+
+def test_an_about_added_on_disk_is_written_and_one_removed_is_not_put_back(
+        app, tmp_path, monkeypatch):
+    plain = {k: v for k, v in RECORDING.items() if k != "about"}
+    win = _open(app, tmp_path, {"data_folder": "../elsewhere/data", **plain})
+    path = tmp_path / "flic_config.yaml"
+    try:
+        _on_disk(path, AS_FILED)                 # filed while the editor was open
+        _save(win, monkeypatch)
+        saved = _saved(path)
+        assert saved["about"] == AS_FILED
+        assert list(saved)[:2] == ["data_folder", "about"]
+
+        _on_disk(path, None)                     # and its section taken away again
+        _save(win, monkeypatch)
+        assert "about" not in _saved(path)
+    finally:
+        win.close()
+
+
+def test_a_file_that_vanished_or_no_longer_parses_keeps_the_about_it_loaded(
+        app, tmp_path, monkeypatch):
+    win = _open(app, tmp_path, RECORDING)
+    path = tmp_path / "flic_config.yaml"
+    try:
+        path.unlink()
+        _save(win, monkeypatch)
+        assert _saved(path)["about"] == AS_TYPED
+        path.write_text("about: [not closed", encoding="utf-8")
+        _save(win, monkeypatch)
+        assert _saved(path)["about"] == AS_TYPED
+        path.write_text("- a list\n- not a config\n", encoding="utf-8")
+        _save(win, monkeypatch)
+        assert _saved(path)["about"] == AS_TYPED
+    finally:
+        win.close()
+
+
+def test_save_as_into_another_folder_does_not_take_run_along(app, tmp_path, monkeypatch):
+    from pyflic.base import config_editor
+
+    win = _open(app, tmp_path, {**RECORDING, "about": AS_FILED})
+    path = tmp_path / "flic_config.yaml"
+    other = tmp_path / "rep2" / "flic_config.yaml"
+    other.parent.mkdir()
+    beside = tmp_path / "flic_config_copy.yaml"
+    try:
+        monkeypatch.setattr(config_editor.QFileDialog, "getSaveFileName",
+                            staticmethod(lambda *a, **k: (str(beside), "")))
+        monkeypatch.setattr(config_editor.QMessageBox, "information",
+                            staticmethod(lambda *a, **k: None))
+        win._confirm_save_with_problems = lambda _problems: True
+        win._save_as()
+        assert _saved(beside)["about"] == AS_FILED           # the same recording's
+    finally:
+        win.close()
+
+    win = FLICConfigEditor(initial_path=path)
+    try:
+        monkeypatch.setattr(config_editor.QFileDialog, "getSaveFileName",
+                            staticmethod(lambda *a, **k: (str(other), "")))
+        win._confirm_save_with_problems = lambda _problems: True
+        win._save_as()
+    finally:
+        win.close()
+    assert _saved(other)["about"] == {k: v for k, v in AS_FILED.items() if k != "run"}
+    assert _saved(path)["about"] == AS_FILED                 # the one it was read from
