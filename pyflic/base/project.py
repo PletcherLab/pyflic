@@ -253,6 +253,23 @@ def design_for_member(experiment_dir) -> tuple[dict, str] | tuple[None, None]:
     return design_global, os.path.join(parent, PROJECT_FILENAME)
 
 
+def without_run(config: dict) -> dict:
+    """*config* without ``about.run``, and without the section when nothing
+    else is in it: for a config written into another recording's folder.
+
+    ``run:`` is the id a catalogue gave the recording the config was read
+    from (ADR-0026).  It is never copied to another recording.
+    """
+    from .about import ABOUT_KEY, RUN_KEY
+
+    about = config.get(ABOUT_KEY)
+    if not isinstance(about, dict) or RUN_KEY not in about:
+        return config
+    rest = {key: value for key, value in about.items() if key != RUN_KEY}
+    return {key: (rest if key == ABOUT_KEY else value)
+            for key, value in config.items() if key != ABOUT_KEY or rest}
+
+
 def members_stating_global(project_dir) -> list[tuple[str, bool]]:
     """Members that carry a ``global:`` block of their own.
 

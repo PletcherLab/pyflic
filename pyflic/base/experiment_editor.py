@@ -28,6 +28,7 @@ Config Editor or a Project Design says otherwise (ADR-0011).
 from __future__ import annotations
 
 import copy
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -75,12 +76,49 @@ WINDOW_TITLE = "FLIC Experiment Editor"
 #: The ``global:`` keys this editor writes; every other one is kept as read.
 _DESIGN_KEYS = ("experiment_type", "chamber_layout", "well_names",
                 "experimental_design_factors", "control_level")
+#: The keys of a ``dfms:`` entry this editor has a field for.
+_DFM_KEYS = ("id", "chambers", "paired_chambers", "chamber_groups")
+#: What a person may answer when the file changed on disk since it was read.
+RELOAD, OVERWRITE, CANCEL = "reload", "overwrite", "cancel"
 
 
 def _text(widget) -> str:
     if isinstance(widget, QPlainTextEdit):
         return widget.toPlainText().strip()
     return widget.text().strip()
+
+
+def _same_path(a, b) -> bool:
+    return os.path.normcase(os.path.abspath(str(a))) == \
+        os.path.normcase(os.path.abspath(str(b)))
+
+
+def _parse_config(data: bytes) -> dict | None:
+    """*data* as a config, or ``None`` when it does not read as one."""
+    try:
+        raw = yaml.safe_load(data.decode("utf-8"))
+    except (UnicodeDecodeError, yaml.YAMLError):
+        return None
+    if raw is None:
+        return {}
+    return raw if isinstance(raw, dict) else None
+
+
+def _dfms_over(dfms: list[dict], on_disk: dict) -> list[dict]:
+    """*dfms*, as the tabs give them, with every key this editor has no field
+    for (a DFM's overrides, its optogenetics, a note) taken from *on_disk*'s
+    entry for that DFM, when it has one."""
+    theirs = {node["id"]: node for node in dfm_nodes(on_disk)}
+    out: list[dict] = []
+    for node in dfms:
+        other = theirs.get(node.get("id"))
+        if other is None:
+            out.append(node)
+            continue
+        kept = {k: v for k, v in other.items() if k not in (*_DFM_KEYS, "Chambers")}
+        out.append({"id": node["id"], **kept,
+                    **{k: v for k, v in node.items() if k in _DFM_KEYS[1:]}})
+    return out
 
 
 def dfm_nodes(config: Any) -> list[dict]:
@@ -311,6 +349,10 @@ class ExperimentEditor(QMainWindow):
         self.setWindowTitle(WINDOW_TITLE)
         self._current_path: Path | None = None
         self._loaded_raw: dict[str, Any] = {}
+        #: The file ``_loaded_raw`` was read from and its bytes as read
+        #: (``None``: it did not exist), to notice a change on disk at save.
+        self._read_path: Path | None = None
+        self._read_bytes: bytes | None = None
         self._design: dict | None = None
         self._design_source: str | None = None
         self._dfm_widgets: list[DFMWidget] = []
@@ -780,7 +822,8 @@ class ExperimentEditor(QMainWindow):
             config = p / "flic_config.yml"
         if config.is_file():
             try:
-                raw = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+                data = config.read_bytes()
+                raw = yaml.safe_load(data.decode("utf-8")) or {}
             except Exception as err:  # noqa: BLE001
                 QMessageBox.critical(self, WINDOW_TITLE, f"Could not read {config}:\n{err}")
                 return
@@ -788,10 +831,12 @@ class ExperimentEditor(QMainWindow):
                 QMessageBox.critical(self, WINDOW_TITLE, f"{config} is not a YAML mapping.")
                 return
             self._current_path = config
+            self._read_path, self._read_bytes = config, data
             self.load_config(raw)
             self.statusBar().showMessage(f"Opened {config}")
         else:
             self._current_path = config
+            self._read_path, self._read_bytes = config, None
             self.load_config({})
             found = self._found_dfms()
             for dfm_id in found:
@@ -841,10 +886,13 @@ class ExperimentEditor(QMainWindow):
         self._declared_at_load = {name: set(levels)
                                   for name, levels in self.factor_table.factors().items()}
 
-    def _load_about(self, about: dict) -> None:
+    def _show_run(self, about: dict) -> None:
         run = about_mod._text(about.get(about_mod.RUN_KEY))
         self.run_label.setText(f"Filed as {run}" if run else "")
         self.run_label.setVisible(bool(run))
+
+    def _load_about(self, about: dict) -> None:
+        self._show_run(about)
         self.title_edit.setText(about_mod._text(about.get("title")))
         self.purpose_edit.setPlainText(about_mod._text(about.get("purpose")))
         self.experimenter_edit.setText(about_mod._text(about.get("experimenter")))
@@ -1121,9 +1169,35 @@ class ExperimentEditor(QMainWindow):
             self._current_path = Path(path)
             self.write(self._current_path)
 
-    def write(self, path: Path, *, confirm: bool = True) -> bool:
-        """Write the config to *path*.  With *confirm*, problems are shown
-        first and the save may be declined."""
+    def write(self, path: Path, *, confirm: bool = True,
+              if_changed: str | None = None) -> bool:
+        """Write the config to *path*.
+
+        A file that changed on disk since this editor read it is never
+        overwritten silently (ADR-0026).  The person is asked first, unless
+        *if_changed* answers for them: :data:`RELOAD` shows the file as it
+        now is and writes nothing; :data:`OVERWRITE` writes what this editor
+        edits (the About fields, the design and the chambers) over the file
+        as it now is, so everything else it holds, ``run:`` and a level's
+        ``term:`` included, stays as the other program left it;
+        :data:`CANCEL` does neither.
+
+        With *confirm*, problems are shown first and the save may be declined.
+        """
+        path = Path(path)
+        on_disk: dict | None = None
+        if self._read_path is not None and _same_path(path, self._read_path):
+            now = self._bytes_on_disk(path)
+            if now is not None and now != self._read_bytes:
+                on_disk = _parse_config(now)
+                answer = if_changed or self._ask_changed_on_disk(path, on_disk is not None)
+                if answer == RELOAD:
+                    self.open_path(path)
+                    self.statusBar().showMessage(
+                        f"Read {path} again as it is on disk.  Nothing was saved.")
+                    return False
+                if answer != OVERWRITE:
+                    return False
         problems = self.problems()
         if problems and confirm:
             answer = QMessageBox.question(
@@ -1133,24 +1207,82 @@ class ExperimentEditor(QMainWindow):
                 + ("\n  • …" if len(problems) > 15 else "") + "\n\nSave anyway?")
             if answer != QMessageBox.StandardButton.Yes:
                 return False
+        ## run: names the recording in the folder this config was read from.
+        elsewhere = self._read_path is not None and not _same_path(
+            path.parent, self._read_path.parent)
+        before = (self._loaded_raw, self._design, self._design_source)
         try:
+            if on_disk is not None:
+                ## What this editor does not edit is the file's, as it is now.
+                self._loaded_raw = on_disk
+                self._read_design()
             cfg = self.collect()
-            Path(path).write_text(
+            if on_disk is not None:
+                cfg["dfms"] = _dfms_over(cfg["dfms"], on_disk)
+            if elsewhere:
+                from . import project as project_mod
+
+                cfg = project_mod.without_run(cfg)
+            path.write_text(
                 yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
-            self._write_type_copy(Path(path))
+            self._write_type_copy(path)
         except Exception as err:  # noqa: BLE001
+            self._loaded_raw, self._design, self._design_source = before
             QMessageBox.critical(self, WINDOW_TITLE, f"Could not save {path}:\n{err}")
             return False
-        self._set_base(cfg)
+        if on_disk is not None:
+            ## Show the file just written: the tabs still held the DFMs'
+            ## hidden keys as they were first read.
+            self.open_path(path)
+        else:
+            self._set_base(cfg)
+            self._read_path, self._read_bytes = path, self._bytes_on_disk(path)
         self.setWindowTitle(f"{WINDOW_TITLE} — {path}")
         self.statusBar().showMessage(f"Saved {path}")
         self.saved.emit(str(path))
         return True
 
+    @staticmethod
+    def _bytes_on_disk(path: Path) -> bytes | None:
+        try:
+            return Path(path).read_bytes()
+        except OSError:
+            return None
+
+    def _ask_changed_on_disk(self, path: Path, readable: bool) -> str:
+        """Say that *path* changed on disk since it was read, and ask what
+        to do: :data:`RELOAD`, :data:`OVERWRITE` or :data:`CANCEL`.
+        *readable* is whether the file still reads as a config."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Changed on disk")
+        box.setText(f"{path.name} has changed on disk since this editor read it.")
+        if readable:
+            box.setInformativeText(
+                "Another program wrote to it: the Config Editor, the Hub, or a "
+                "catalogue that filed this recording.\n\n"
+                "Reload reads it again.  What you changed here is lost.\n\n"
+                "Overwrite saves this editor's About, design and chambers over "
+                "the file as it is now.  Everything else in it is kept as it is now.")
+            reload_button = box.addButton("Reload", QMessageBox.ButtonRole.AcceptRole)
+        else:
+            box.setInformativeText(
+                "It no longer reads as a config, so there is nothing in it to "
+                "keep.\n\nOverwrite replaces it with what this editor holds.")
+            reload_button = None
+        overwrite_button = box.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(box.addButton(QMessageBox.StandardButton.Cancel))
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is overwrite_button:
+            return OVERWRITE
+        return RELOAD if reload_button is not None and clicked is reload_button else CANCEL
+
     def _set_base(self, cfg: dict) -> None:
         """*cfg*, just written, is now what the file holds: what the form
         does not show is kept from it at the next save."""
         self._loaded_raw = cfg
+        self._show_run(about_mod.read_about(cfg))
         notes = about_mod.factor_notes(about_mod.read_about(cfg))
         self.factor_table._loaded_kinds = {k: v["kind"] for k, v in notes.items()}
         self.meaning_table._loaded = {k: dict(v["levels"]) for k, v in notes.items()}

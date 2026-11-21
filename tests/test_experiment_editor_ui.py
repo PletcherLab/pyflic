@@ -496,3 +496,176 @@ def test_an_about_that_is_not_a_mapping_is_kept_until_something_is_typed(app, tm
     finally:
         editor.close()
     assert _read(path)["about"] == {"title": "A title"}
+
+
+# ---------------------------------------------------------------------------
+# A file that changed on disk since the editor read it (ADR-0026)
+# ---------------------------------------------------------------------------
+
+def _rewritten(path: Path) -> dict:
+    """What a catalogue, the Config Editor and the Script Editor did to the
+    file while this editor had it open."""
+    config = _read(path)
+    config["about"] = {**config["about"], "run": "R-20261121-scott-02",
+                       "title": "Rewritten elsewhere", "x_lab": {"a": 2}}
+    config["about"]["factors"]["Genotype"]["levels"]["Ctrl"]["term"] = "GEN-0099"
+    config["global"]["params"]["feeding_threshold"] = 30
+    config["dfms"][0]["params"] = {"pi_direction": "left"}
+    config["dfms"][0]["chambers"] = {1: "Exp", 2: "Exp"}
+    config["scripts"] = [{"name": "theirs", "steps": [{"action": "load"}]}]
+    _write(path, config)
+    return config
+
+
+def _never_asked(*_args):
+    pytest.fail("asked about a file that did not change on disk")
+
+
+def test_a_file_changed_on_disk_is_not_written_until_the_person_chooses(app, tmp_path):
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        editor.notes_edit.setPlainText("Typed here.")
+        theirs = _rewritten(path)
+        asked: list = []
+
+        def cancel(file, readable):
+            asked.append((Path(file), readable))
+            return "cancel"
+
+        editor._ask_changed_on_disk = cancel
+        assert editor.write(path, confirm=False) is False
+        assert asked == [(path, True)]                       # it said so
+        assert _read(path) == theirs                         # and wrote nothing
+        assert editor.notes_edit.toPlainText() == "Typed here."
+
+        ## Reload: the form shows the file as it now is.  Still nothing written.
+        assert editor.write(path, confirm=False, if_changed="reload") is False
+        assert _read(path) == theirs
+        assert editor.title_edit.text() == "Rewritten elsewhere"
+        assert editor.notes_edit.toPlainText() == ABOUT["notes"]
+        assert editor.run_label.text() == "Filed as R-20261121-scott-02"
+
+        ## Read again, the file is this editor's to save without a question.
+        editor._ask_changed_on_disk = _never_asked
+        assert editor.write(path, confirm=False)
+        assert _read(path)["about"] == theirs["about"]
+        assert editor.write(path, confirm=False)             # nor after its own save
+    finally:
+        editor.close()
+
+
+def test_overwriting_writes_what_this_editor_edits_over_the_file_as_it_now_is(
+        app, tmp_path):
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        editor.notes_edit.setPlainText("Typed here.")
+        _meaning(editor, "Genotype", "Ctrl").setText("the control cross")
+        theirs = _rewritten(path)
+        assert editor.write(path, confirm=False, if_changed="overwrite")
+        saved = _read(path)
+        about = saved["about"]
+        ctrl = about["factors"]["Genotype"]["levels"]["Ctrl"]
+        ## What the form has a field for is this editor's ...
+        assert about["notes"] == "Typed here."
+        assert about["title"] == ABOUT["title"]
+        assert ctrl["definition"] == "the control cross"
+        assert saved["dfms"][0]["chambers"] == {1: "Ctrl", 2: "Exp"}
+        ## ... and everything it has none for is as the file now has it.
+        assert about["run"] == "R-20261121-scott-02"
+        assert ctrl["term"] == "GEN-0099"
+        assert about["x_lab"] == {"a": 2}
+        assert saved["global"]["params"] == {"feeding_threshold": 30}
+        assert saved["global"]["constants"] == theirs["global"]["constants"]
+        assert saved["scripts"] == theirs["scripts"]
+        assert saved["dfms"][0]["params"] == {"pi_direction": "left"}
+        assert saved["dfms"][0]["note"] == "lid cracked"
+        assert saved["data_folder"] == theirs["data_folder"]
+        ## The form now shows the file it wrote, and saves it again unasked.
+        assert editor.run_label.text() == "Filed as R-20261121-scott-02"
+        assert editor.notes_edit.toPlainText() == "Typed here."
+        editor._ask_changed_on_disk = _never_asked
+        assert editor.write(path, confirm=False)
+        assert _read(path) == saved
+    finally:
+        editor.close()
+
+
+def test_a_file_that_no_longer_reads_is_replaced_only_when_the_person_says_so(
+        app, tmp_path):
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        path.write_text("about: [not closed", encoding="utf-8")
+        seen: list = []
+
+        def answer(_file, readable):
+            seen.append(readable)
+            return "cancel" if len(seen) == 1 else "overwrite"
+
+        editor._ask_changed_on_disk = answer
+        assert editor.write(path, confirm=False) is False
+        assert path.read_text(encoding="utf-8") == "about: [not closed"
+        assert editor.write(path, confirm=False)
+        assert seen == [False, False]                        # nothing there to keep
+    finally:
+        editor.close()
+    assert _read(path)["about"] == ABOUT
+
+
+def test_a_file_that_vanished_is_written_again_without_a_question(app, tmp_path):
+    path = _filed(tmp_path)
+    editor = ExperimentEditor(path)
+    try:
+        path.unlink()
+        editor._ask_changed_on_disk = _never_asked
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert _read(path)["about"] == ABOUT
+
+
+def test_a_config_written_while_a_new_one_was_being_described_is_noticed(app, tmp_path):
+    folder = tmp_path / "new"
+    _dfm_csv(folder / "data", 1)
+    editor = ExperimentEditor(folder)
+    try:
+        editor.title_edit.setText("Described here")
+        theirs = {"about": {"title": "Described elsewhere"},
+                  "global": {"chamber_layout": "two_well", "params": {}},
+                  "dfms": [{"id": 1, "chambers": {1: "Ctrl"}}]}
+        _write(folder / "flic_config.yaml", theirs)
+        assert editor.write(folder / "flic_config.yaml", confirm=False,
+                            if_changed="cancel") is False
+        assert _read(folder / "flic_config.yaml") == theirs
+    finally:
+        editor.close()
+
+
+def test_saving_as_into_another_folder_does_not_take_run_along(app, tmp_path, monkeypatch):
+    from pyflic.base import experiment_editor as module
+
+    path = _filed(tmp_path)
+    other = tmp_path / "rep2" / "flic_config.yaml"
+    other.parent.mkdir()
+    monkeypatch.setattr(module.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(other), "")))
+    editor = ExperimentEditor(path)
+    try:
+        editor._save_as()
+        assert editor.run_label.isHidden()                   # this file is not filed
+        assert editor.write(other, confirm=False)
+    finally:
+        editor.close()
+    assert _read(other)["about"] == {k: v for k, v in ABOUT.items() if k != "run"}
+    assert _read(path)["about"] == ABOUT                     # the one it was read from
+
+    ## A copy beside the config is the same recording's, and keeps it.
+    beside = path.with_name("flic_config_copy.yaml")
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.write(beside, confirm=False)
+    finally:
+        editor.close()
+    assert _read(beside)["about"] == ABOUT
