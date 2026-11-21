@@ -47,10 +47,31 @@ def _hash_bytes(b: bytes) -> str:
 
 
 def _config_hash(experiment_dir: Path) -> str:
+    """The config's half of the key.  ``about:`` describes the recording and
+    changes no number (ADR-0024), so a config holding one is hashed without
+    it, and editing a title keeps the cached summaries.  A config without one
+    is hashed byte for byte, exactly as it always was."""
     cfg = experiment_dir / "flic_config.yaml"
     if not cfg.is_file():
         return "noconfig"
-    return _hash_bytes(cfg.read_bytes())
+    data = cfg.read_bytes()
+    if b"about" in data:
+        import yaml
+
+        from .about import ABOUT_KEY
+
+        try:
+            parsed = yaml.safe_load(data)
+        except yaml.YAMLError:
+            parsed = None
+        if isinstance(parsed, dict) and ABOUT_KEY in parsed:
+            rest = {k: v for k, v in parsed.items() if k != ABOUT_KEY}
+            try:
+                return _hash_bytes(json.dumps(rest, sort_keys=True, default=str)
+                                   .encode("utf-8"))
+            except TypeError:      # keys of mixed types cannot be sorted
+                pass
+    return _hash_bytes(data)
 
 
 def _data_hash(experiment_dir: Path, data_location=None) -> str:

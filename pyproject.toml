@@ -26,6 +26,7 @@ dependencies = [
 [project.scripts]
 pyflic = "pyflic.__main__:main"
 pyflic-config = "pyflic.base.config_editor:launch"
+pyflic-experiment = "pyflic.base.experiment_editor:launch"
 pyflic-qc = "pyflic.base.qc_viewer:main"
 pyflic-hub = "pyflic.base.hub:main"
 pyflic-plots = "pyflic.base.plot_editor:main"

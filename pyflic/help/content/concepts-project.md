@@ -144,35 +144,53 @@ by what it is doing, with four cards:
 Pointed at an Experiment Directory, *Initialize existing directory* offers to initialize
 its parent instead, so the experiment becomes one of its members.
 
-When you save a design, any member carrying a `global:` block of its own is listed and you
-are offered the one repair there is: **delete those blocks so the members inherit**. Their
-`dfms:` and `scripts:` are left untouched. A member that merely duplicates the design is
-duplicating an authority; one that contradicts it stops the Project loading at all.
+Initializing a folder of experiments seeds the design from the first member, with each
+factor's levels widened to every level any member declares — the members of a Project are
+different experiments, so the first one's levels are rarely all of them.
 
-## Members inherit, they do not repeat
+When you save a design, the members whose config does not carry its **description** are
+listed, and you are offered to **write it into them** (below). Any analysis setting a
+member states is removed, since the design owns it; its `dfms:`, `about:`, `scripts:` and
+`data_folder:` are left untouched. A member whose own description **conflicts** with the
+design — other well names, another chamber layout, a level the design does not declare —
+is never rewritten: it is named with the reason, and the Project will not load until you
+correct the design or the member.
 
-Because the design owns all of `global:`, a member's `flic_config.yaml` normally holds
-only the parts that genuinely differ — its `dfms:` block and its own `scripts:`:
+## Members carry the design's description, and inherit the rest
+
+The design owns all of `global:`, but each member's `flic_config.yaml` carries a copy of
+the part that says what the recording *is* — `experiment_type`, `chamber_layout`,
+`well_names`, `experimental_design_factors` and `control_level` — so the config can be
+read on its own. Every analysis setting is inherited:
 
 ```yaml
 # rep1/flic_config.yaml
+global:                         # the design's description, copied
+  experiment_type: Hedonic
+  well_names: {A: Sucrose, B: Yeast}
+  experimental_design_factors: {Genotype: [Ctrl, MBON10, MBON11]}
 dfms:
   - id: 1
     params: {pi_direction: left}
-    chambers: {1: Ctrl, 2: Ctrl, 3: Exp}
+    chambers: {1: Ctrl, 2: Ctrl, 3: MBON10}
 ```
 
-If a `global:` block *is* present — typically a standalone experiment moved into a Project —
-it is validated key by key, and any deviation is an error. The trade-off is that a
-member's config is no longer readable on its own; you need its parent to know what it
-means.
+A `global:` block that is present is validated key by key, so a copy that differs from the
+design is an error, as any deviation is. A member with no `global:` at all still loads and
+inherits everything; the Project warns that its config does not read on its own.
+
+Writing the copy never changes what a member says its recording was. It may fill in keys
+the member does not state, give a Custom member the design's type when the layout agrees,
+and widen the member's declared levels to the design's — its chambers, which say which
+flies had which level, are never touched.
 
 That is why the **config editor** reads the parent's design when you open a member's
 config. The global settings are filled in from the design and shown **read-only**, with a
 banner naming the `project.yaml` they came from, and the per-DFM override checkboxes are
-limited to the physical keys. Saving writes `dfms:` (and leaves `scripts:` alone) without
-a `global:` block at all — a member's config cannot be turned into a design violation by
-editing it. A standalone experiment, governed by nothing, keeps every field editable.
+limited to the physical keys. Saving writes `dfms:` (and leaves `scripts:` and `about:`
+alone) with only the design's description under `global:` — a member's config cannot be
+turned into a design violation by editing it. A standalone experiment, governed by
+nothing, keeps every field editable.
 
 ## What stays free
 
@@ -238,8 +256,8 @@ managed/
       analysis/  qc/               ← everything pyflic writes for it
 ```
 
-Such a member's config usually holds only `data_folder:` and `dfms:`, and inherits
-`global:` from the design like any other. Everything pyflic writes for it — the analysis,
+Such a member's config usually holds `data_folder:`, `dfms:` and the design's description
+under `global:`, and inherits every analysis setting like any other. Everything pyflic writes for it — the analysis,
 the QC, its report, its Slices, the cache — stays in the member's folder, and the pooled
 outputs in the Project's. Two Projects may read one recording with different designs;
 neither changes the other. Within one Project a recording is read once: a second member

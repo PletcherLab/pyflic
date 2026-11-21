@@ -12,8 +12,13 @@ Two things here differ deliberately from PyTrackingAnalysis:
   ``global:``, not just the type and the design factors.  ``well_names`` and
   ``transform_licks`` divergence produces a pooled figure that is *wrong* rather
   than merely noisy, and no shorter list had a defensible boundary.
-* A Member normally **omits** ``global:`` and inherits it, so that authority
-  costs no duplication.  A ``global:`` that is present is validated key by key.
+* A Member's ``global:`` carries the **Design Copy** — the Design keys that
+  say what the recording *is* (:data:`DESCRIPTION_KEYS`) — so its config reads
+  on its own (ADR-0025), and inherits the rest.  A ``global:`` that is present
+  is validated key by key, so a copy that differs is a load error like any
+  other stated key.  Writing the copy never overwrites what a Member says its
+  recording was: a Member whose description conflicts with the Design is left
+  as written and named (:func:`description_conflicts`).
 
 The Design may declare **Slices** (ADR-0020): separate analyses of part of
 every Member's recording.  :meth:`Project.for_slice` gives the same Project
@@ -74,6 +79,19 @@ DESIGN_KEYS: tuple[str, ...] = (
     "omit",
     ## The Treatment control's level, when the Experiment Type has one
     ## (ADR-0019).
+    "control_level",
+)
+
+#: The Design keys that say what a recording *is* — what the chambers and
+#: wells held and how the flies were grouped — rather than how it is analysed
+#: (ADR-0025).  Every Member's ``global:`` carries a copy of them, the
+#: **Design Copy**, so its config can be read on its own; the Design still
+#: decides, and the rest of ``global:`` is inherited.
+DESCRIPTION_KEYS: tuple[str, ...] = (
+    "experiment_type",
+    "chamber_layout",
+    "well_names",
+    "experimental_design_factors",
     "control_level",
 )
 
@@ -239,9 +257,9 @@ def members_stating_global(project_dir) -> list[tuple[str, bool]]:
     """Members that carry a ``global:`` block of their own.
 
     Each entry is ``(member name, agrees with the design)``.  A Member that
-    agrees is merely duplicating the Design; one that does not will refuse to
-    load, and both are fixed the same way — by deleting the block so the
-    Member inherits (:func:`adopt_design`).
+    agrees loads; one that does not will refuse to.  Whether a Member carries
+    exactly the Design Copy, and what writing it would settle, is
+    :func:`member_design_states`.
     """
     design_global = dict(read_design(project_dir).get("global") or {})
     out: list[tuple[str, bool]] = []
@@ -266,38 +284,336 @@ def members_stating_global(project_dir) -> list[tuple[str, bool]]:
     return out
 
 
-def adopt_design(project_dir, names=None) -> list[str]:
-    """Delete the ``global:`` block from each named Member so it inherits.
+def design_copy(design_global) -> dict:
+    """The Design Copy: the :data:`DESCRIPTION_KEYS` *design_global* states,
+    in that order — what every Member's ``global:`` carries (ADR-0025)."""
+    design_global = design_global if isinstance(design_global, dict) else {}
+    return {key: copy.deepcopy(design_global[key]) for key in DESCRIPTION_KEYS
+            if design_global.get(key) not in (None, "", {}, [])}
 
-    The Design is the authority (ADR-0005); a Member's own ``global:`` can only
-    duplicate it or contradict it.  Removing the block is therefore the repair
-    for both, and it is the only edit made — ``dfms:``, ``scripts:`` and every
-    other key are written back untouched.
+
+def _same_type(value, expected, where=None) -> bool:
+    """Whether two ``experiment_type`` values name one type.  The registry is
+    case-insensitive and the editors write the canonical spelling, so a
+    hand-written 'hedonic' under a design saying 'Hedonic' is the same type."""
+    try:
+        return (experiment_types.get_experiment_type(value, where).name
+                == experiment_types.get_experiment_type(expected, where).name)
+    except ValueError:
+        return False
+
+
+def _layout_of(global_cfg: dict, where=None) -> str | None:
+    """The Chamber Layout *global_cfg* means on its own, or None when its
+    type is unknown here (then nothing is concluded from it)."""
+    try:
+        item = experiment_types.get_experiment_type(
+            global_cfg.get("experiment_type"), where)
+        return item.resolve_chamber_layout(global_cfg)
+    except ValueError:
+        return None
+
+
+def _stated_layout(global_cfg: dict, where=None) -> str | None:
+    """The Chamber Layout *global_cfg* states — through a type that fixes it,
+    ``chamber_layout:``, or a legacy ``params.chamber_size`` — or None when
+    it states none, and inherits whatever its Design says."""
+    params = global_cfg.get("params", global_cfg.get("parameters"))
+    size = params.get("chamber_size") if isinstance(params, dict) else None
+    try:
+        item = experiment_types.get_experiment_type(
+            global_cfg.get("experiment_type"), where)
+    except ValueError:
+        return None
+    if item.chamber_layout is not None or global_cfg.get("chamber_layout"):
+        return _layout_of(global_cfg, where)
+    if size is not None:
+        return "single_well" if str(size).strip() in ("1", "1.0") else "two_well"
+    return None
+
+
+def _misfit_chambers(config: dict, factors: dict) -> list[str]:
+    """Assigned chambers of *config* that are not one declared level of each
+    of *factors*, in order, as ``DFM<id> chamber <n>``."""
+    names = [str(k).strip() for k in factors]
+    out: list[str] = []
+    for node in (config.get("dfms") or config.get("DFMs") or []):
+        if not isinstance(node, dict):
+            continue
+        chambers = node.get("chambers") or node.get("Chambers") or {}
+        if not isinstance(chambers, dict):
+            continue
+        for chamber, text in chambers.items():
+            text = str(text or "").strip()
+            if not text:
+                continue
+            parts = [p.strip() for p in text.split(",")]
+            if len(parts) != len(names) or any(
+                    part not in {str(v).strip() for v in (factors.get(name) or [])}
+                    for name, part in zip(factors, parts)):
+                out.append(f"DFM{node.get('id')} chamber {chamber} ({text!r})")
+    return out
+
+
+def description_conflicts(config, design_global, where=None) -> list[str]:
+    """Why the Design Copy cannot replace what *config* says its recording was.
+
+    Empty means writing the copy changes no fact about the recording, only
+    fills in or widens it.  Facts are the Chamber Layout, the well names, the
+    design factors and the levels the Member declares, the control level, and
+    a type the Member names explicitly.  A Custom Member (no type, or Custom)
+    takes the Design's type when the layout agrees: Custom says "unspecified",
+    not "some other assay".  A Member may declare fewer levels than the Design
+    — its chamber map, untouched, still says which flies had which — but every
+    level it declares must be one of the Design's, under the same factors in
+    the same order, because chamber assignments are positional.
+    """
+    config = config if isinstance(config, dict) else {}
+    own = dict(config.get("global") or {}) if isinstance(config.get("global"), dict) else {}
+    design_global = design_global if isinstance(design_global, dict) else {}
+    problems: list[str] = []
+
+    own_type = own.get("experiment_type")
+    if own_type not in (None, ""):
+        try:
+            own_item = experiment_types.get_experiment_type(own_type, where)
+        except ValueError:
+            own_item = None
+        if (own_item is None or not own_item.is_custom) and not _same_type(
+                own_type, design_global.get("experiment_type"), where):
+            problems.append(
+                f"experiment_type is {own_type!r} but the design says "
+                f"{design_global.get('experiment_type') or 'Custom'!r}")
+    own_layout = _stated_layout(own, where)
+    design_layout = _layout_of(design_global, where)
+    if own_layout and design_layout and own_layout != design_layout:
+        problems.append(f"its chambers are {own_layout} but the design's are "
+                        f"{design_layout}")
+
+    own_wells = own.get("well_names") if isinstance(own.get("well_names"), dict) else {}
+    design_wells = (design_global.get("well_names")
+                    if isinstance(design_global.get("well_names"), dict) else {})
+    for well, name in own_wells.items():
+        expected = design_wells.get(well)
+        if str(name or "").strip() and expected is not None and \
+                str(name).strip() != str(expected).strip():
+            problems.append(f"well {well} holds {name!r} but the design says "
+                            f"{expected!r}")
+
+    level = own.get("control_level")
+    expected_level = design_global.get("control_level")
+    if level not in (None, "") and expected_level not in (None, "") and \
+            str(level).strip() != str(expected_level).strip():
+        problems.append(f"control_level is {level!r} but the design says "
+                        f"{expected_level!r}")
+
+    own_factors = own.get("experimental_design_factors")
+    design_factors = design_global.get("experimental_design_factors")
+    own_factors = own_factors if isinstance(own_factors, dict) else {}
+    design_factors = design_factors if isinstance(design_factors, dict) else {}
+    if own_factors and not design_factors:
+        problems.append(f"it declares factors {', '.join(map(str, own_factors))} "
+                        f"but the design declares none")
+    elif own_factors:
+        own_names = [str(k).strip() for k in own_factors]
+        design_names = [str(k).strip() for k in design_factors]
+        if own_names != design_names:
+            problems.append(f"its factors are {', '.join(own_names)} but the design's "
+                            f"are {', '.join(design_names)}, in that order")
+        else:
+            for name, levels in own_factors.items():
+                allowed = {str(v).strip() for v in (design_factors.get(name) or [])}
+                missing = [str(v).strip() for v in (levels or [])
+                           if str(v).strip() not in allowed]
+                if missing:
+                    problems.append(f"{name} has level(s) {', '.join(missing)} the "
+                                    f"design does not declare")
+    elif design_factors and own:
+        ## A config that stands on its own and names its chambers' treatments
+        ## directly: they must already read as levels of the Design's factors.
+        ## (A Member with no global: of its own was always read that way.)
+        misfits = _misfit_chambers(config, design_factors)
+        if misfits:
+            shown = ", ".join(misfits[:3]) + (", …" if len(misfits) > 3 else "")
+            problems.append(f"it declares no factors, and {shown} "
+                            f"{'is' if len(misfits) == 1 else 'are'} not one level each of "
+                            f"the design's {', '.join(map(str, design_factors))}")
+    return problems
+
+
+def member_global(config, design_global, where=None) -> dict | None:
+    """The ``global:`` a Member's config should carry under *design_global*:
+    the Design Copy — or ``None`` when its own description conflicts with the
+    Design, and its ``global:`` must then be left exactly as written."""
+    if description_conflicts(config, design_global, where):
+        return None
+    return design_copy(design_global)
+
+
+class MemberDesignState:
+    """Where one Member's ``global:`` stands against its Project's Design.
+
+    *state* is ``"in_step"`` (it carries exactly the Design Copy),
+    ``"write"`` (it lacks the copy, carries an out-of-date one, or states
+    analysis settings the Design owns: writing the copy settles it) or
+    ``"conflict"`` (its description differs from the Design's: left as
+    written).  *reasons* says why, in words.
+    """
+
+    __slots__ = ("name", "state", "reasons")
+
+    def __init__(self, name: str, state: str, reasons: list[str]):
+        self.name, self.state, self.reasons = name, state, list(reasons)
+
+    def __repr__(self) -> str:
+        return f"MemberDesignState({self.name!r}, {self.state!r}, {self.reasons!r})"
+
+
+def _member_state(name: str, config: dict, design_global: dict,
+                  where=None) -> MemberDesignState:
+    conflicts = description_conflicts(config, design_global, where)
+    if conflicts:
+        return MemberDesignState(name, "conflict", conflicts)
+    own = config.get("global")
+    own = dict(own) if isinstance(own, dict) else {}
+    wanted = design_copy(design_global)
+    if not own:
+        return MemberDesignState(name, "write", ["no copy of the design yet"])
+    reasons: list[str] = []
+    extra = [k for k in own if k not in DESCRIPTION_KEYS]
+    if extra:
+        reasons.append(f"states {', '.join(map(str, extra))}, which the design owns")
+    missing = [k for k in wanted if k not in own]
+    if missing:
+        reasons.append(f"its copy lacks {', '.join(missing)}")
+    for key in wanted:
+        if key in own and _normalize(own[key]) != _normalize(wanted[key]):
+            reasons.append(f"its {key} is out of date")
+    stale = [k for k in own if k in DESCRIPTION_KEYS and k not in wanted]
+    if stale:
+        reasons.append(f"states {', '.join(stale)}, which the design does not")
+    return MemberDesignState(name, "write" if reasons else "in_step", reasons)
+
+
+def _read_member_configs(project_dir) -> list[tuple[str, dict]]:
+    out: list[tuple[str, dict]] = []
+    for entry in sorted(os.listdir(str(project_dir))):
+        sub = os.path.join(str(project_dir), entry)
+        if not os.path.isdir(sub) or not is_experiment_dir(sub):
+            continue
+        try:
+            with open(os.path.join(sub, CONFIG_FILENAME), encoding="utf-8") as handle:
+                cfg = yaml.safe_load(handle) or {}
+        except Exception:  # noqa: BLE001 - an unreadable member is the loader's to report
+            continue
+        if isinstance(cfg, dict):
+            out.append((entry, cfg))
+    return out
+
+
+def member_design_states(project_dir) -> list[MemberDesignState]:
+    """Every Member's :class:`MemberDesignState` under the Project's Design;
+    empty when the Project declares none."""
+    design_global = dict(read_design(project_dir).get("global") or {})
+    if not design_global:
+        return []
+    return [_member_state(name, cfg, design_global, str(project_dir))
+            for name, cfg in _read_member_configs(project_dir)]
+
+
+def adopt_design(project_dir, names=None) -> list[str]:
+    """Write the Design Copy into each named Member's ``global:`` (ADR-0025).
+
+    The Design is the authority (ADR-0005): a Member's own analysis settings
+    can only duplicate it or contradict it, so they go, and the copy of what
+    the recording is takes their place — the config then reads on its own.
+    ``dfms:``, ``about:``, ``scripts:``, ``data_folder:`` and every other key
+    are written back untouched.
+
+    A Member whose description conflicts with the Design is **not written**:
+    its config says what its recording was, and the Design saying otherwise
+    is for a person to settle (:func:`member_design_states` names why).  With
+    *names* omitted, every Member whose state is ``"write"`` is adopted.
 
     Returns the names actually changed.
     """
-    if not (read_design(project_dir).get("global") or {}):
-        ## Without a Design there is nothing to inherit: stripping the blocks
-        ## would leave the Members with no global: at all.
+    design_global = dict(read_design(project_dir).get("global") or {})
+    if not design_global:
+        ## Without a Design there is nothing to copy or inherit.
         raise ValueError(
             f"{project_dir} declares no design: — write one before asking its "
-            f"members to inherit it")
+            f"members to adopt it")
+    if names is None:
+        targets = [s.name for s in member_design_states(project_dir)
+                   if s.state == "write"]
+    else:
+        targets = list(names)
     changed: list[str] = []
-    targets = list(names) if names is not None else \
-        [name for name, _agrees in members_stating_global(project_dir)]
     for name in targets:
         path = os.path.join(str(project_dir), name, CONFIG_FILENAME)
         if not os.path.isfile(path):
             continue
         with open(path, encoding="utf-8") as handle:
             cfg = yaml.safe_load(handle) or {}
-        if "global" not in cfg:
+        wanted = member_global(cfg, design_global, str(project_dir))
+        if wanted is None or cfg.get("global") == wanted:
             continue
-        cfg.pop("global")
+        cfg = _with_global(cfg, wanted)
         with open(path, "w", encoding="utf-8") as handle:
             yaml.safe_dump(cfg, handle, sort_keys=False, allow_unicode=True)
         changed.append(name)
     return changed
+
+
+def _with_global(cfg: dict, wanted: dict) -> dict:
+    """*cfg* with ``global:`` set to *wanted* — where it was, or else just
+    before ``dfms:`` — and removed when *wanted* is empty."""
+    if not wanted:
+        return {k: v for k, v in cfg.items() if k != "global"}
+    if "global" in cfg:
+        return {k: (wanted if k == "global" else v) for k, v in cfg.items()}
+    out: dict = {}
+    for key, value in cfg.items():
+        if key in ("dfms", "DFMs") and "global" not in out:
+            out["global"] = wanted
+        out[key] = value
+    out.setdefault("global", wanted)
+    return out
+
+
+def design_from_members(directory) -> dict:
+    """A first Design for a folder of experiments about to become a Project.
+
+    The first Member's ``global:``, with ``experimental_design_factors``
+    widened to every level any Member declares when they all declare the same
+    factors in the same order — Members of a Project are different
+    experiments (a genotype panel, a dose series), so the Design must declare
+    every level any of them used.  Nothing is written.
+    """
+    configs = _read_member_configs(directory)
+    if not configs:
+        return {}
+    first = configs[0][1].get("global")
+    design = copy.deepcopy(dict(first)) if isinstance(first, dict) else {}
+    factor_sets = []
+    for _name, cfg in configs:
+        g = cfg.get("global")
+        factors = g.get("experimental_design_factors") if isinstance(g, dict) else None
+        if isinstance(factors, dict) and factors:
+            factor_sets.append(factors)
+    if not factor_sets:
+        return design
+    names = [list(map(str, f)) for f in factor_sets]
+    if any(n != names[0] for n in names):
+        return design
+    union: dict[str, list] = {name: [] for name in names[0]}
+    for factors in factor_sets:
+        for name, levels in factors.items():
+            for value in (levels or []):
+                if str(value) not in map(str, union[str(name)]):
+                    union[str(name)].append(value)
+    design["experimental_design_factors"] = union
+    return design
 
 
 #: The light QC tables a Member writes, stacked into ``<project>_LightQC.csv``
@@ -549,19 +865,11 @@ class Project:
                     f"project design (the design owns global:)")
                 continue
             expected = design_global.get(key)
-            if key == "experiment_type":
-                ## The registry is case-insensitive and the editor writes the
-                ## canonical spelling, so a hand-written 'hedonic' under a
-                ## design saying 'Hedonic' names the same type.  Comparing the
-                ## strings made that a fatal deviation.
-                where = getattr(self, "project_directory", None)
-                try:
-                    same = (experiment_types.get_experiment_type(value, where).name
-                            == experiment_types.get_experiment_type(expected, where).name)
-                except ValueError:
-                    same = False
-                if same:
-                    continue
+            ## Comparing the type's strings made 'hedonic' under a design
+            ## saying 'Hedonic' a fatal deviation; they name one type.
+            if key == "experiment_type" and _same_type(
+                    value, expected, getattr(self, "project_directory", None)):
+                continue
             if _normalize(value) != _normalize(expected):
                 problems.append(
                     f"{label}: global.{key} is {value!r} but the project "
@@ -667,6 +975,24 @@ class Project:
                 self.warnings.append(f"{name}: no DFM CSVs in {where}")
         for problem in self.slice_problems:
             self.warnings.append(f"design: {problem}")
+        ## about: is never an error (ADR-0024), but one level described two
+        ## ways is worth knowing before its chambers are pooled as one group.
+        from .about import meaning_spread, read_about
+
+        self.warnings.extend(meaning_spread(
+            {name: read_about(self.configs[name]) for name in self.member_names}))
+        ## Members that inherit everything still load; they just cannot be
+        ## read on their own until the Design Copy is written (ADR-0025).
+        if self.design_global and design_copy(self.design_global):
+            bare = [name for name in self.member_names
+                    if not self._own_global(name)]
+            if bare:
+                self.warnings.append(
+                    f"{', '.join(bare)} carr{'y' if len(bare) > 1 else 'ies'} no copy "
+                    f"of the design's description, so "
+                    f"{'their configs do' if len(bare) > 1 else 'its config does'} not "
+                    f"read on {'their' if len(bare) > 1 else 'its'} own: saving the "
+                    f"Project design offers to write it")
 
     # ------------------------------------------------------------------
     # Slices (ADR-0020)
@@ -938,15 +1264,18 @@ class Project:
         * an entry with no data is **flagged**, never silently dropped, because
           a missing CSV is usually a copy that has not finished.
 
-        ``global:`` is deliberately absent: the Member inherits the Design.  So
-        is the first Member's ``data_folder:``: it names *that* Member's
-        recording, and a copy would make the new Member its duplicate
-        (ADR-0021).  Only ``dfms:`` is copied.
+        ``global:`` holds the Design Copy (ADR-0025) — what the recording is,
+        so the config reads on its own — and inherits the rest.  The first
+        Member's ``data_folder:`` and ``about:`` are not copied: they describe
+        *that* Member's recording, and a copied ``data_folder:`` would make the
+        new Member its duplicate (ADR-0021).  Only ``dfms:`` is copied.
         """
-        import copy
-
         notes: list[str] = []
         template: list = []
+        head: dict = {}
+        copied = design_copy(self.design_global)
+        if copied:
+            head["global"] = copied
         if self.member_names:
             source = self.member_names[0]
             template = copy.deepcopy(self.configs[source].get("dfms") or [])
@@ -954,7 +1283,7 @@ class Project:
         found = dfm_ids_in_data(self.member_dir(name))
         if not found:
             notes.append("data/: no DFM CSVs found — nothing to reconcile")
-            return ({"dfms": template} if template else {"dfms": []}), notes
+            return {**head, "dfms": template}, notes
 
         by_id: dict[int, dict] = {}
         for node in template:
@@ -971,7 +1300,7 @@ class Project:
                 f"DFM {extra}: present in data/ but not in the copied layout — "
                 f"added with chambers unassigned")
         dfms = [by_id[i] for i in sorted(by_id)]
-        return {"dfms": dfms}, notes
+        return {**head, "dfms": dfms}, notes
 
     def _blank_chamber_block(self, template: list) -> dict:
         """An unassigned chamber mapping shaped like the template's.

@@ -122,8 +122,8 @@ def test_initialize_keeps_the_folders_own_name_and_infers_the_design(
     assert written["design"]["global"]["well_names"] == {"A": "S5", "B": "S5Y5"}
     ## And the Project it just made loads, with the folder as its member.
     assert dialog.adopted == ["rep1"]
-    assert "global" not in yaml.safe_load(
-        (root / "rep1" / "flic_config.yaml").read_text())
+    assert yaml.safe_load((root / "rep1" / "flic_config.yaml").read_text())[
+        "global"] == project_mod.design_copy(written["design"]["global"])
     loaded = project_mod.Project(root)
     assert loaded.member_names == ["rep1"]
     ## Inheriting leaves the member with exactly what it had before.
@@ -194,8 +194,9 @@ def test_create_member_scaffolds_from_the_design(hub, project, monkeypatch):
     config = project / "rep2" / "flic_config.yaml"
     assert config.exists()
     assert (project / "rep2" / "data").is_dir()
-    ## Inheriting, not repeating: the scaffold states no global: of its own.
-    assert "global" not in yaml.safe_load(config.read_text())
+    ## The Design Copy, not the analysis settings (ADR-0025).
+    assert yaml.safe_load(config.read_text())["global"] == \
+        project_mod.design_copy(DESIGN_GLOBAL)
     assert finished and finished[0][0] == "rep2"
 
 

@@ -1172,7 +1172,13 @@ class DFMWidget(QWidget):
         dfm_id: int,
         chamber_size: int = 2,
         parent: QWidget | None = None,
+        *,
+        simple: bool = False,
     ) -> None:
+        """*simple* shows only what the design is — the DFM's id and its
+        chamber assignments (and, for Progressive Ratio, its paired chambers)
+        — for the Experiment Editor.  The optogenetics and parameter
+        overrides it hides are still loaded and saved as the file has them."""
         super().__init__(parent)
         self._chamber_size = chamber_size
         self._factor_levels: dict[str, list[str]] = {}
@@ -1200,7 +1206,8 @@ class DFMWidget(QWidget):
         id_inner.addSpacing(18)
         ## Per-DFM optogenetics: a physical fact about this DFM (was its lid
         ## lit?), so it stays free inside a Project, like the rest of dfms:.
-        id_inner.addWidget(QLabel("Optogenetics:"))
+        self._opto_label = QLabel("Optogenetics:")
+        id_inner.addWidget(self._opto_label)
         self._opto_combo = NoWheelComboBox()
         self._opto_combo.addItem("inherit", None)
         for label, value in _OPTO_CHOICES:
@@ -1300,6 +1307,9 @@ class DFMWidget(QWidget):
                                        num_columns=2)
         over_card.add_body(self._params_form)
         outer.addWidget(over_card)
+        if simple:
+            for widget in (self._opto_label, self._opto_combo, over_card):
+                widget.setVisible(False)
 
     # ------------------------------------------------------------------
 
@@ -3097,10 +3107,22 @@ class FLICConfigEditor(QMainWindow):
         cfg = {k: v for k, v in self._loaded_raw.items()
                if k not in ("global", "dfms", "DFMs")}
         if self._design:
-            ## A Member inherits global: from the Design.  Writing one here
+            ## A Member carries the Design Copy — what its recording is — and
+            ## inherits the rest (ADR-0025): writing the analysis settings here
             ## would at best duplicate the authority and at worst contradict
-            ## it, and a contradiction stops the whole Project loading.
-            cfg.pop("global", None)
+            ## it, and a contradiction stops the whole Project loading.  A
+            ## Member whose own description conflicts with the Design keeps
+            ## its global: exactly as written: which is right is a person's
+            ## call, never the editor's.
+            from . import project as project_mod
+
+            wanted = project_mod.member_global(
+                self._loaded_raw, self._design, self._type_where())
+            if wanted is None:
+                if self._loaded_raw.get("global") is not None:
+                    cfg["global"] = self._loaded_raw["global"]
+            elif wanted:
+                cfg["global"] = wanted
         else:
             cfg["global"] = self._global_section()
         cfg["dfms"] = [w.get_dict() for w in self._dfm_widgets]
@@ -3259,9 +3281,10 @@ class FLICConfigEditor(QMainWindow):
                 "experiment is a member of the Project at "
                 f"<code>{self._design_source}</code> and inherits every "
                 "global setting from it — shown here, edited there (Hub → "
-                "Project → Project design…).  Saving leaves this file's "
-                "<code>global:</code> out entirely, which is what makes the "
-                "inheritance work.")
+                "Project → Project design…).  Saving writes only the design's "
+                "description of the recording (type, layout, well names, "
+                "factors) into this file's <code>global:</code>, so the file "
+                "reads on its own; every other setting stays the design's.")
 
     def _resolve_type_and_layout(self, global_cfg: dict[str, Any]):
         """The Experiment Type and Chamber Layout *this* config means.

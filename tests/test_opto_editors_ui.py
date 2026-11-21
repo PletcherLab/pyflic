@@ -162,7 +162,9 @@ def test_a_member_shows_the_designs_setting_locked_but_its_dfms_free(app, tmp_pa
         assert widget.text() == "60" and not widget.isEnabled()
         assert win._dfm_widgets[0]._opto_combo.isEnabled()
         saved = win._collect_yaml()
-        assert "global" not in saved and saved["dfms"][0]["optogenetics"] is False
+        ## The Design Copy only (ADR-0025); optogenetics stays the design's.
+        assert saved["global"] == {"chamber_layout": "single_well"}
+        assert saved["dfms"][0]["optogenetics"] is False
     finally:
         win.close()
 

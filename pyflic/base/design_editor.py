@@ -902,20 +902,13 @@ class ProjectDesignDialog(QDialog):
 
     @staticmethod
     def _design_from_members(directory) -> dict:
-        """The ``global:`` of the first member found — the migration path for
-        a folder of standalone experiments becoming a Project."""
+        """The first member's ``global:``, its factors widened to every level
+        any member declares — the migration path for a folder of standalone
+        experiments becoming a Project (:func:`project.design_from_members`)."""
         try:
-            for entry in sorted(os.listdir(str(directory))):
-                config = os.path.join(str(directory), entry,
-                                      project_mod.CONFIG_FILENAME)
-                if not os.path.isfile(config):
-                    continue
-                with open(config, encoding="utf-8") as handle:
-                    cfg = yaml.safe_load(handle) or {}
-                return dict(cfg.get("global") or {})
+            return project_mod.design_from_members(directory)
         except Exception:  # noqa: BLE001 - inference is a convenience, never a gate
-            pass
-        return {}
+            return {}
 
     def _load_design(self, design_global: dict | None) -> None:
         g = dict(design_global or {})
@@ -1211,41 +1204,56 @@ class ProjectDesignDialog(QDialog):
             pubfigures.save_project_specs(directory, seeded)
 
     def _offer_reinforcement(self, directory: str) -> None:
-        """Offer to make existing Members inherit the Design just written.
+        """Offer to write the Design Copy into the Members (ADR-0025).
 
-        A Member that carries its own ``global:`` either duplicates the Design
-        (harmless but a second place to edit) or contradicts it (the Project
-        then refuses to load).  Deleting the block fixes both, and it is the
-        only edit: ``dfms:`` and ``scripts:`` are written back untouched.
+        Each Member's ``global:`` should hold the Design's description of the
+        recording — type, layout, well names, factors, control level — so its
+        config reads on its own, and nothing else, so it inherits every
+        analysis setting.  Writing it is the only edit: ``dfms:``, ``about:``,
+        ``scripts:`` and ``data_folder:`` are written back untouched.
+
+        A Member whose description conflicts with the Design (other well
+        names, another layout, a level the Design does not declare) is never
+        rewritten: its config says what its recording was.  It is named, with
+        the reason, and will not load until a person corrects the Design or
+        the Member.
         """
         try:
-            stating = project_mod.members_stating_global(directory)
+            states = project_mod.member_design_states(directory)
         except Exception:  # noqa: BLE001 - never block the save on this
             return
-        if not stating:
+        to_write = [s for s in states if s.state == "write"]
+        conflicts = [s for s in states if s.state == "conflict"]
+        if not to_write and not conflicts:
             return
-        deviating = [name for name, agrees in stating if not agrees]
-        detail = "\n".join(
-            f"  • {name}" + ("" if agrees else "  — contradicts the design")
-            for name, agrees in stating)
+        conflict_text = ""
+        if conflicts:
+            conflict_text = (
+                f"{len(conflicts)} member(s) describe their recording differently "
+                "from this design, so they are left as they are and will not load "
+                "until the design or the member is corrected:\n\n"
+                + "\n".join(f"  • {s.name} — {'; '.join(s.reasons)}" for s in conflicts))
+        if not to_write:
+            QMessageBox.warning(self, "Members conflict with the design", conflict_text)
+            return
+        detail = "\n".join(f"  • {s.name} — {'; '.join(s.reasons)}" for s in to_write)
         message = (
-            f"{len(stating)} member(s) carry a global: block of their own:\n\n"
-            f"{detail}\n\n"
-            "Remove those blocks so they inherit this design?  Their dfms: "
-            "and scripts: are left untouched.")
-        if deviating:
-            message += (f"\n\n{len(deviating)} of them contradict the design "
-                        "and will refuse to load until this is settled — "
-                        "their own values are discarded.")
+            f"{len(to_write)} member(s) do not carry this design's description "
+            f"of the recording:\n\n{detail}\n\n"
+            "Write it into their flic_config.yaml, so each reads on its own?  "
+            "Any analysis setting a member states is removed (the design owns "
+            "those); its dfms:, about:, scripts: and data_folder: are untouched.")
+        if conflict_text:
+            message += "\n\n" + conflict_text
         answer = QMessageBox.question(
-            self, "Members state their own global:", message,
+            self, "Write the design into the members", message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes if deviating
-            else QMessageBox.StandardButton.No)
+            QMessageBox.StandardButton.Yes)
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            self.adopted = project_mod.adopt_design(directory)
+            self.adopted = project_mod.adopt_design(
+                directory, [s.name for s in to_write])
         except Exception as err:  # noqa: BLE001
             QMessageBox.warning(self, self.windowTitle(),
                                 f"Could not update the members:\n{err}")

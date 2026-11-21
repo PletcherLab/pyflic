@@ -169,8 +169,8 @@ def test_member_config_shows_the_design_and_refuses_to_edit_it(app, project):
         "feeding_threshold"].isEnabled()
 
 
-def test_member_save_omits_global_and_keeps_its_scripts(app, project,
-                                                       monkeypatch):
+def test_member_save_writes_the_design_copy_and_keeps_its_scripts(
+        app, project, monkeypatch):
     from PyQt6.QtWidgets import QMessageBox
 
     ## The editor confirms a save with a modal box; headless it would block.
@@ -181,8 +181,10 @@ def test_member_save_omits_global_and_keeps_its_scripts(app, project,
     editor._write_yaml(path)
 
     written = yaml.safe_load(path.read_text())
-    ## Inheriting is what keeps the design an authority rather than a copy.
-    assert "global" not in written
+    ## The Design Copy only (ADR-0025): the file reads on its own, and every
+    ## analysis setting is still inherited from the authority.
+    assert written["global"] == project_mod.design_copy(DESIGN_GLOBAL)
+    assert "params" not in written["global"]
     ## The member's own scripts are not this editor's to delete.
     assert [s["name"] for s in written["scripts"]] == ["mine"]
     assert written["dfms"][0]["chambers"] == {1: "w1118, M", 2: "CS, F"}
@@ -223,10 +225,11 @@ def test_a_standalone_experiment_stays_free(app, tmp_path):
 # Reinforcing the design in members already on disk
 # ---------------------------------------------------------------------------
 
-def test_adopt_design_strips_only_the_global_block(tmp_path, project):
+def test_adopt_design_writes_the_design_copy_and_nothing_else(tmp_path, project):
     member = project / "rep1" / "flic_config.yaml"
     payload = yaml.safe_load(member.read_text())
     payload["global"] = {"params": {"feeding_threshold": 999}}
+    payload["about"] = {"title": "Rep 1"}
     _write(member, payload)
 
     stating = project_mod.members_stating_global(project)
@@ -236,9 +239,14 @@ def test_adopt_design_strips_only_the_global_block(tmp_path, project):
 
     assert project_mod.adopt_design(project) == ["rep1"]
     after = yaml.safe_load(member.read_text())
-    assert "global" not in after
+    ## The analysis setting is gone (the design owns it); the description of
+    ## the recording is copied in, so the config reads on its own (ADR-0025).
+    assert after["global"] == project_mod.design_copy(DESIGN_GLOBAL)
+    assert "params" not in after["global"]
     assert [s["name"] for s in after["scripts"]] == ["mine"]
+    assert after["about"] == {"title": "Rep 1"}
     assert project_mod.Project(project).member_names == ["rep1"]
+    assert project_mod.adopt_design(project) == []      # nothing left to do
 
 
 def test_adopt_design_refuses_without_a_design(tmp_path):

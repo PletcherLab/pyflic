@@ -216,9 +216,14 @@ inherits. Per-DFM overrides are how counterbalancing is set up; see
 
 Opened on a Project's member, the editor fills the global settings from `project.yaml`,
 the exclusion groups and Slices among them, marks them read-only with a banner, and writes
-only `dfms:`, and `data_folder:` when the member names one — see
-[Projects and members](concepts-project.md). Any save keeps the keys the editor does not
-show, `scripts:` above all, as they were.
+`dfms:`, `data_folder:` when the member names one, and under `global:` only the design's
+description of the recording (type, layout, well names, factors, control level), so the
+file reads on its own — see [Projects and members](concepts-project.md). A member whose
+own description conflicts with the design keeps its `global:` as written. Any save keeps
+the keys the editor does not show, `scripts:` and `about:` above all, as they were.
+
+For a recording's title, purpose, flies and what each level means, use the
+[Experiment Editor](app-experiment-editor.md).
 
 ## Things worth knowing
 

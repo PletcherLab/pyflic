@@ -152,6 +152,7 @@ pyflic batch my_study/
 |---|---|
 | `pyflic` | Launch the analysis hub GUI (same as `pyflic hub`) |
 | `pyflic config [dir]` | Launch the config editor GUI (default: the current folder's config) |
+| `pyflic experiment [dir]` | Launch the Experiment Editor: one recording's `about:`, design and chambers |
 | `pyflic hub [dir]` | Launch the analysis hub GUI |
 | `pyflic plots <project>` | Launch the Plot Editor (project level) |
 | `pyflic qc <dir>` | Launch the QC viewer |

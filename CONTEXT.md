@@ -52,10 +52,11 @@ _Avoid_: data dir, data path, data root, source folder.
 **Member**:
 An Experiment Directory inside a Project — one of the several *different*
 experiments that Project brings to bear on its question, not a repeat of its
-neighbours. Its `flic_config.yaml` normally holds only the free parts — `dfms:` and its own `scripts:` — and inherits
-`global:` from the Design; a `global:` block that *is* present (a standalone
-experiment moved in) is validated key-by-key and any deviation is a load
-error. A new Member is **scaffolded** by copying the first Member's
+neighbours. Its `flic_config.yaml` holds the free parts — `dfms:`, its own
+`scripts:`, its **About** — and a `global:` holding only the **Design Copy**,
+inheriting every other key from the Design (ADR-0025); a `global:` block that
+is present is validated key-by-key and any deviation is a load error.  A
+Member with no `global:` at all still loads and inherits everything. A new Member is **scaffolded** by copying the first Member's
 `dfms:` block and reconciling it against the DFM ids actually present in
 `data/` (parsed from `DFM<id>_<n>.csv`): ids with no entry are added with
 chambers unassigned, entries with no data are flagged rather than dropped.
@@ -107,17 +108,46 @@ standalone Experiment Directory keeps unrestricted overrides.
 Authored in the **Project design** editor (Hub → Project panel), which is also
 what "Create Project…" and "Initialize this folder…" open, so a Project states
 its Design at creation
-rather than acquiring one by accident; a Project with no `design:` falls back
+rather than acquiring one by accident; initializing seeds it from the first
+Member, with each factor's levels widened to every level any Member declares.
+A Project with no `design:` falls back
 to validating Members against each other, where the first Member silently
 becomes the standard. The Design is **reinforced downwards**: a Member's config
-opens in the config editor with the Design's values shown read-only and its
-`global:` omitted on save, per-DFM overrides limited to the physical keys, and
-saving a Design offers to delete any `global:` block a Member still carries.
+opens in the config editor with the Design's values shown read-only and only
+the Design Copy written into its `global:` on save, per-DFM overrides limited
+to the physical keys, and saving a Design offers to write the Design Copy into
+every Member out of step with it.
 Changing a setting after Members were analysed makes each read **"re-run
 needed"** until it runs again; a save that changes no setting (a Selection
 tick, a Project Script, the notes) does not (ADR-0022).
 _Avoid_: defaults, template (a Design is enforced, not inherited-and-
 overridable).
+
+**Design Copy**:
+The Design's values of the keys that say what a recording *is* —
+`experiment_type`, `chamber_layout`, `well_names`,
+`experimental_design_factors`, `control_level` — which every Member's
+`global:` carries so its config can be read on its own (ADR-0025). The Design
+still decides: a copy that differs is a load error. Writing the copy never
+overwrites what a Member says its recording was: a Member whose description
+**conflicts** (another layout or well name, a type it names, other factors, a
+level the Design does not declare) is left as written and named until a
+person settles it. It may widen a Member's declared levels to the Design's;
+the chamber map is never touched.
+_Avoid_: inherited global, duplicate design, member design.
+
+**About**:
+The optional top-level `about:` section of a `flic_config.yaml`: what the
+recording is, for whoever reads the config later — title, purpose,
+experimenter, series, organism, sex, age at start, protocol, notes, and each
+design factor's kind and each level's meaning (ADR-0024). pyflic never reads
+it for an analysis, and it changes no number, cache key or re-run verdict.
+It belongs to the recording, like the Data Folder: never in a Design, never
+inherited, never an error across Members — a Project only warns when two
+Members describe one level differently. Edited in the **Experiment Editor**
+(`pyflic-experiment`), which edits the About, the design and the chamber map
+and nothing else.
+_Avoid_: metadata, info, notes (one of its fields), description.
 
 **Experiment Type**:
 A named, reusable definition of an assay's shape — its Chamber Layout, the

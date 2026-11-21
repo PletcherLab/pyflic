@@ -161,7 +161,9 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
     # Top-level keys
     from .layout import DATA_FOLDER_KEY, configured_data_folder
 
-    expected_top = {"global", "dfms", "DFMs", "scripts", DATA_FOLDER_KEY}
+    from .about import ABOUT_KEY
+
+    expected_top = {"global", "dfms", "DFMs", "scripts", DATA_FOLDER_KEY, ABOUT_KEY}
     for k in cfg.keys():
         if k == "data_dir":
             ## Word for word as it has read since data_dir was retired, unless
@@ -198,6 +200,7 @@ def lint_flic_config(path: str | Path) -> list[LintIssue]:
             _emit(issues, "warning", f"unknown global key {k!r}", path=f"global.{k}")
     _lint_omit(issues, path, g)
     _lint_slices(issues, path, g)
+    _lint_about(issues, path, cfg, g)
 
     g_params = g.get("params") or g.get("parameters") or {}
     chamber_size_global = None
@@ -509,6 +512,24 @@ def _resolved_layout(issues: list[LintIssue], path: Path, g: dict) -> str | None
     except ValueError as err:
         _emit(issues, "error", str(err), path="global.chamber_layout")
         return None
+
+
+def _lint_about(issues: list[LintIssue], path: Path, cfg: dict, g: dict) -> None:
+    """``about:`` (ADR-0024): what the recording is, for a reader.  Warnings
+    only — pyflic never reads it for an analysis — checked against the factors
+    the loader will use: this config's, over a Member's Project design's."""
+    from .about import ABOUT_KEY, about_problems
+    from .project import design_for_member
+
+    if ABOUT_KEY not in cfg:
+        return
+    design_global, _source = design_for_member(path.parent)
+    factors = g.get("experimental_design_factors")
+    if not isinstance(factors, dict):
+        factors = (design_global or {}).get("experimental_design_factors")
+    for where, message in about_problems(cfg.get(ABOUT_KEY),
+                                         factors if isinstance(factors, dict) else {}):
+        _emit(issues, "warning", message, path=where)
 
 
 def _lint_omit(issues: list[LintIssue], path: Path, g: dict) -> None:

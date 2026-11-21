@@ -823,7 +823,9 @@ def test_a_member_shows_the_design_and_refuses_to_edit_it(app, tmp_path):
         assert not win._chamber_layout_combo.isEnabled()
 
         out = win._collect_yaml()
-        assert "global" not in out
+        ## The Design Copy only (ADR-0025): the detection params stay the design's.
+        assert out["global"] == {"experiment_type": "Hedonic",
+                                 "well_names": {"A": "Sucrose", "B": "Yeast"}}
         assert out["scripts"] == {"analyze": ["load"]}
     finally:
         win.close()
@@ -1027,7 +1029,9 @@ def test_a_member_shows_the_designs_progressive_ratio_constants_locked(app, tmp_
         assert w["exclude_failed_pr_groups"].currentData() is False
         assert not w["pr_break_gap_min"].isEnabled()
         assert "Project design" in w["pr_break_gap_min"].toolTip()
-        assert "global" not in win._collect_yaml()
+        assert win._collect_yaml()["global"] == {
+            "experiment_type": "ProgressiveRatio",
+            "well_names": {"A": "Sucrose", "B": "Yeast"}}
     finally:
         win.close()
 

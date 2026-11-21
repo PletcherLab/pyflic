@@ -1,11 +1,13 @@
 # Configuration file structure
 
-`flic_config.yaml` has four top-level keys. `dfms` is always required. A standalone
-experiment states `global` too; a member of a Project takes it from the design (below).
-`data_folder` is needed only when the recording is not in this folder's `data/`.
+`flic_config.yaml` has five top-level keys. `dfms` is always required. A standalone
+experiment states `global` too; a member of a Project carries the design's description of
+the recording there and takes the rest from the design (below). `data_folder` is needed
+only when the recording is not in this folder's `data/`, and `about` is always optional.
 
 ```yaml
 data_folder: ...                         # optional: where the recording is, when not data/
+about: { ... }                           # optional: what the recording is, for a reader
 global:
   experiment_type: ...                   # or chamber_layout: for a Custom experiment
   transform_licks: ...                   # optional
@@ -39,9 +41,10 @@ Validate at any time with `pyflic lint <experiment directory>`, which reports er
 warnings with line numbers where it can.
 
 **Inside a Project, `global:` belongs to the design.** A member's `flic_config.yaml`
-normally holds only `dfms:` and its own `scripts:`; every `global:` key comes from the
-`design:` in `project.yaml`, written in the same shape. See
-[Projects and members](concepts-project.md).
+holds its `dfms:`, its own `scripts:` and `about:`, and under `global:` only a copy of the
+design's description of the recording (type, layout, well names, factors, control level);
+every other `global:` key comes from the `design:` in `project.yaml`, written in the same
+shape. See [Projects and members](concepts-project.md).
 
 > **`data_dir` no longer exists.** It is never read, whatever it says: the recording is
 > read from `<experiment directory>/data/`, or from the folder `data_folder` names. The
@@ -81,6 +84,40 @@ dfms:
 
 The load message, `summary.txt`, the member's report and the Project Report's member
 table say where the recording was read, as the resolved path with the key as written.
+
+## `about`
+
+What the recording is, for whoever reads this config later: a person, a catalogue, or an
+agent. **Every field is optional, and pyflic never reads the section for an analysis** —
+no number, cached result or *re-run needed* depends on it. The
+[Experiment Editor](app-experiment-editor.md) fills it in.
+
+```yaml
+about:
+  title: Progressive ratio, sucrose, replicate 1   # one line; 60 characters fit a list
+  purpose: Whether silencing MBON10 changes how hard flies work for sucrose.
+  experimenter: scott
+  series: pr-sucrose-2026            # shared by replicate recordings
+  organism: Drosophila melanogaster
+  sex: [female]
+  age_at_start: 5-7 days
+  protocol: {name: FLIC progressive ratio, version: "2", link: https://...}
+  notes: Free text.
+  factors:                           # one entry per design factor, all optional
+    Genotype:
+      kind: genotype                 # genotype, treatment, diet, condition, sex or other
+      levels:
+        MBON10: R12C11-GAL4 > UAS-GtACR1
+        Ctrl: w1118 > UAS-GtACR1
+```
+
+- **This recording's alone,** like `data_folder`: never under `global:`, never in a
+  Project's design, never copied to another member.
+- **Never an error.** `pyflic lint` warns about a field it cannot read, an unknown factor
+  kind, a long title, or a factor or level `experimental_design_factors` does not declare.
+  A Project warns when two members describe one level differently, since the pooled
+  results treat same-named levels as one group.
+- **The start date is not here.** It is read from `Program.txt`.
 
 ## `global.experiment_type`
 

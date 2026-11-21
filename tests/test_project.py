@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from pyflic.base import batch as batch_mod
+from pyflic.base import project as project_mod
 from pyflic.base import windowing
 from pyflic.base.project import Project, create_project_file, dfm_ids_in_data
 
@@ -193,7 +194,10 @@ def test_scaffold_copies_the_layout_and_reconciles_against_data(tmp_path: Path):
     assert [node["id"] for node in written["dfms"]] == [1, 3]
     # DFM 3 came from the data, so its chambers are unassigned.
     assert set(written["dfms"][1]["chambers"].values()) == {""}
-    assert "global" not in written          # inherits the design
+    # The Design Copy (ADR-0025): what the recording is, so the config
+    # reads on its own; every analysis setting is still inherited.
+    assert written["global"] == project_mod.design_copy(DESIGN["global"])
+    assert "params" not in written["global"]
     assert any("DFM 3" in note for note in notes)
 
 

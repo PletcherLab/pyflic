@@ -368,7 +368,9 @@ def test_a_members_slices_are_the_projects_and_read_only(app, tmp_path, monkeypa
         assert not editor._also_exclude_edit.isEnabled()
 
         editor._write_yaml(member)
-        assert "global" not in yaml.safe_load(member.read_text(encoding="utf-8"))
+        ## Only the Design Copy is written: the Slices stay the design's (ADR-0025).
+        assert yaml.safe_load(member.read_text(encoding="utf-8"))["global"] == \
+            {"experiment_type": "Hedonic", "well_names": {"A": "S5", "B": "S5Y5"}}
     finally:
         editor.close()
 

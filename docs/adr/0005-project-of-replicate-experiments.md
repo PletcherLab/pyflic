@@ -2,6 +2,10 @@
 status: accepted
 ---
 
+> Amended by ADR-0025: a Member's `global:` now carries the Design Copy, so
+> its config reads on its own; the consequence below that a Replicate's config
+> is "no longer readable in isolation" no longer holds.
+
 # A Project pools replicate Experiment Directories
 
 pyflic previously had no level above a single recording: its "project directory"

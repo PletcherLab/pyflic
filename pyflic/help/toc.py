@@ -90,6 +90,7 @@ TOC: tuple[Section, ...] = (
             "app-plot-editor",
             "app-qc-viewer",
             "app-config-editor",
+            "app-experiment-editor",
             "app-type-editor",
         ),
     ),

@@ -10,6 +10,9 @@ Or dispatch to a subcommand::
     pyflic hub [dir]              -- launch the analysis hub GUI
     pyflic config [dir | file]    -- launch the config editor GUI (default:
                                      the current folder's flic_config.yaml)
+    pyflic experiment [dir | file] -- launch the Experiment Editor: one
+                                     recording's about:, design and chambers
+                                     (default: the current folder)
     pyflic qc [dir]               -- launch the QC viewer (default: the
                                      current folder)
     pyflic plots [project]        -- launch the Plot Editor (project level)
@@ -32,6 +35,7 @@ Every tool also has an entry point of its own::
 
     pyflic-hub [dir]              -- the analysis hub (as pyflic hub)
     pyflic-config [dir | file]    -- the config editor (as pyflic config)
+    pyflic-experiment [dir | file] -- the Experiment Editor (as pyflic experiment)
     pyflic-qc [dir]               -- the QC viewer (as pyflic qc)
     pyflic-plots [project]        -- the Plot Editor (as pyflic plots)
     pyflic-lint <dir | file>      -- the linter (as pyflic lint)
@@ -45,7 +49,7 @@ import sys
 from pathlib import Path
 
 
-_COMMANDS = ("config", "qc", "hub", "plots", "lint", "clear-cache", "report",
+_COMMANDS = ("config", "experiment", "qc", "hub", "plots", "lint", "clear-cache", "report",
              "batch", "version", "help")
 
 
@@ -150,6 +154,12 @@ def main() -> None:
         from pyflic.base.config_editor import launch
         sys.argv = ["pyflic-config", *rest]
         launch()
+        return
+
+    if cmd == "experiment":
+        from pyflic.base.experiment_editor import launch as experiment_launch
+        sys.argv = ["pyflic-experiment", *rest]
+        experiment_launch()
         return
 
     if cmd == "qc":
