@@ -46,12 +46,13 @@ def _hash_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()[:16]
 
 
-def _config_hash(experiment_dir: Path) -> str:
-    """The config's half of the key.  ``about:`` describes the recording and
-    changes no number (ADR-0024), so a config holding one is hashed without
-    it, and editing a title keeps the cached summaries.  A config without one
-    is hashed byte for byte, exactly as it always was."""
-    cfg = experiment_dir / "flic_config.yaml"
+def _config_hash(experiment_dir: Path, config_name: str = "flic_config.yaml") -> str:
+    """The config's half of the key: the config the load read, *config_name*.
+    ``about:`` describes the recording and changes no number (ADR-0024), so a
+    config holding one is hashed without it, and editing a title keeps the
+    cached summaries.  A config without one is hashed byte for byte, exactly
+    as it always was."""
+    cfg = experiment_dir / config_name
     if not cfg.is_file():
         return "noconfig"
     data = cfg.read_bytes()
@@ -107,11 +108,12 @@ def feeding_summary_key(
     transform_licks: bool,
     extra: str = "",
     data_location=None,
+    config_name: str = "flic_config.yaml",
 ) -> str:
     a, b = float(range_minutes[0]), float(range_minutes[1])
     parts = [
         f"v{_CACHE_VERSION}",
-        _config_hash(experiment_dir),
+        _config_hash(experiment_dir, config_name),
         _data_hash(experiment_dir, data_location),
         f"r{a:g}_{b:g}",
         f"tx{int(bool(transform_licks))}",
@@ -126,6 +128,12 @@ def cache_dir(experiment_dir: Path) -> Path:
     return d
 
 
+def _cache_path(experiment_dir: Path) -> Path:
+    """Where the cache is, made only by a save: a member folder that cannot
+    be written to loads, uncached, rather than failing to load."""
+    return experiment_dir / _CACHE_DIR_NAME
+
+
 def feeding_summary_path(
     experiment_dir: Path,
     *,
@@ -133,12 +141,13 @@ def feeding_summary_path(
     transform_licks: bool,
     extra: str = "",
     data_location=None,
+    config_name: str = "flic_config.yaml",
 ) -> Path:
     key = feeding_summary_key(
         experiment_dir, range_minutes=range_minutes, transform_licks=transform_licks,
-        extra=extra, data_location=data_location,
+        extra=extra, data_location=data_location, config_name=config_name,
     )
-    return cache_dir(experiment_dir) / f"feeding_summary_{key}.csv"
+    return _cache_path(experiment_dir) / f"feeding_summary_{key}.csv"
 
 
 def load_feeding_summary(
@@ -162,6 +171,7 @@ def load_feeding_summary(
         transform_licks=transform_licks,
         extra=extra,
         data_location=data_location,
+        config_name=config_name,
     )
     if not p.is_file():
         return None
@@ -185,6 +195,7 @@ def save_feeding_summary(
     transform_licks: bool,
     extra: str = "",
     data_location=None,
+    config_name: str = "flic_config.yaml",
 ) -> Path:
     p = feeding_summary_path(
         experiment_dir,
@@ -192,7 +203,9 @@ def save_feeding_summary(
         transform_licks=transform_licks,
         extra=extra,
         data_location=data_location,
+        config_name=config_name,
     )
+    p.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(p, index=False)
     return p
 

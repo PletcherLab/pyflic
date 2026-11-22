@@ -863,6 +863,7 @@ def load_experiment_yaml(
                 transform_licks=transform_licks_default,
                 extra=cache_extra,
                 data_location=data_location,
+                config_name=config_name,
             )
         except Exception as e:  # pragma: no cover
             print(f"  (disk cache write skipped: {e})", flush=True)

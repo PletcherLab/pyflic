@@ -201,6 +201,42 @@ def test_a_cache_hit_keeps_a_treatment_named_like_a_missing_value(tmp_path: Path
     assert second["Treatment"].tolist() == first["Treatment"].tolist()
 
 
+def test_another_config_in_the_folder_is_not_served_the_first_ones_summary(tmp_path: Path):
+    """The key hashed flic_config.yaml whatever config the load read, so a
+    load of another config with the same global: got the first one's
+    chambers from the cache."""
+    proj = tmp_path / "proj"
+    _write_yaml(proj)
+    _write_synthetic_csv(proj, dfm_id=1)
+    text = (proj / "flic_config.yaml").read_text(encoding="utf-8")
+    (proj / "alt.yaml").write_text(text.replace("      6: Exp\n", ""), encoding="utf-8")
+    whole = load_experiment_yaml(proj, parallel=False, use_disk_cache=True).feeding_summary()
+    alt = load_experiment_yaml(proj, config_name="alt.yaml", parallel=False,
+                               use_disk_cache=True).feeding_summary()
+    assert 6 in set(whole["Chamber"]) and 6 not in set(alt["Chamber"])
+
+
+def test_a_folder_that_cannot_be_written_to_still_loads(tmp_path: Path):
+    """The cache folder was made on the way to looking for a cached summary,
+    so a member folder without write access failed to load at all."""
+    import os
+    import stat
+
+    proj = tmp_path / "proj"
+    _write_yaml(proj)
+    _write_synthetic_csv(proj, dfm_id=1)
+    mode = proj.stat().st_mode
+    os.chmod(proj, stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        if os.access(proj, os.W_OK):
+            pytest.skip("this user writes anywhere")
+        exp = load_experiment_yaml(proj, parallel=False, use_disk_cache=True)
+        assert len(exp.feeding_summary()) == 6
+        assert not (proj / ".pyflic_cache").exists()
+    finally:
+        os.chmod(proj, mode)
+
+
 def test_pdf_report_writes_file(experiment, tmp_path: Path):
     from pyflic.base.pdf_report import write_experiment_report
     out = tmp_path / "report.pdf"
