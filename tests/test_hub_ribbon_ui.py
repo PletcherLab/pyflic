@@ -96,14 +96,21 @@ def test_the_project_panel_stacks_three_cards(hub):
     assert titles == ["Create/Load", "Experiments", "Analysis"]
 
 
-def test_the_analysis_card_appears_only_with_a_project(hub):
-    from pathlib import Path
+def test_the_analysis_card_appears_only_with_a_project(hub, tmp_path):
+    ## A Project of its own: the repo's test_experiment/ is local sample data,
+    ## ignored by git, so a fresh checkout or worktree has none, and a test
+    ## must not open the developer's own copy in a window either.
+    project = tmp_path / "SampleProject"
+    _write_yaml(project / "project.yaml", {"name": "SampleProject"})
+    _write_yaml(project / "Rep1" / "flic_config.yaml",
+                {"global": {"chamber_layout": "two_well"},
+                 "dfms": [{"id": 1, "chambers": {1: "Ctrl"}}]})
 
     assert hub.project_analysis_card.isHidden()
-    hub.open_target(str(Path(__file__).parent.parent / "test_experiment"))
+    hub.open_target(str(project))
     assert hub.project is not None
     assert not hub.project_analysis_card.isHidden()
-    assert "test_experiment" in hub.project_summary.text()
+    assert "SampleProject" in hub.project_summary.text()
 
 
 def test_loading_a_member_arms_and_expands_the_group(hub):

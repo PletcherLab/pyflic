@@ -33,6 +33,7 @@ from pyflic.base import pr_light_qc as lqc
 from pyflic.base import report_layout as rl
 from pyflic.base.experiment_types.progressive_ratio import break_requirement_view
 from pyflic.base.paradigm_state import ParadigmState
+from pyflic.base.project import Project
 from pyflic.base.progressive_ratio_experiment import (
     EMPTY_TRAINING_NOTE,
     NO_TRAINING_INFORMATION,
@@ -516,6 +517,7 @@ def test_the_project_report_titles_a_fixed_ratio_pool_as_activations_earned(gen3
     def heading(bp) -> str:
         project = SimpleNamespace(combined_diff_frame=lambda: None,
                                   combined_breaking_point_frame=lambda: bp,
+                                  simulated_yoked_frame=Project.simulated_yoked_frame,
                                   design_global={}, _mixed_p=None)
         blocks = etype.project_results_blocks(project)
         return next(b.text for b in blocks if isinstance(b, rl.Heading))
@@ -914,6 +916,7 @@ def test_the_project_report_says_there_are_no_yoked_controls(solo):
         return SimpleNamespace(combined_diff_frame=lambda: diff,
                                combined_breaking_point_frame=e.breaking_point_summary,
                                combined_light_qc_frame=lambda: qc,
+                               simulated_yoked_frame=Project.simulated_yoked_frame,
                                design_global={}, _mixed_p=None)
 
     solo_project = project(light_qc, e.paired_yoked_diff())

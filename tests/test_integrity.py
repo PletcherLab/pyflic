@@ -340,11 +340,15 @@ _GENERATION_1_BEFORE = (
 
 
 def test_a_generation_1_text_gains_only_the_zero_counts(tmp_path):
+    """And, since the signal ceiling (``pyflic.base.ceiling``), every DFM's
+    ``## Signal ceiling`` section, which a clean recording ends with."""
     write_opto_csv(tmp_path)
     dfm = DFM.load(1, Parameters.single_well(), data_dir=tmp_path)
     report, text = _report(dfm)
     expected = _GENERATION_1_BEFORE.replace(
         "consecutive rows.\n\n", "consecutive rows.\nLost records: 0\nRepeated records: 0\n\n")
+    expected += ("## Signal ceiling\nNo well rested at the ceiling (a per-minute "
+                 "median of 1000 or more).\n\n")
     assert text == expected
     assert report["lost_records"] == 0 and report["repeated_records"] == 0
     assert report["unknown_instruction_rows"] is None
