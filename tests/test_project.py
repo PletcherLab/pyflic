@@ -446,3 +446,31 @@ def test_an_existing_scripts_block_is_never_reseeded(tmp_path: Path):
     _write(root / "project.yaml", {"name": "fresh", "scripts": []})
     create_project_file(root, name="fresh")
     assert yaml.safe_load((root / "project.yaml").read_text())["scripts"] == []
+
+
+# ---------------------------------------------------------------------------
+# A level named like a missing value is still a level
+# ---------------------------------------------------------------------------
+
+def test_a_treatment_named_none_or_na_is_pooled(tmp_path: Path):
+    """``pd.read_csv`` reads ``None``, ``NA``, ``null`` and ``nan`` as missing,
+    so a level named "None" left every pooled statistic; and a level "01" read
+    back as the number 1.  The Combined Analysis reads the Treatment and the
+    design's factors as the text they were written as."""
+    design = {"global": {**DESIGN["global"],
+                         "experimental_design_factors": {"Drug": ["None", "NA", "01"]}}}
+    root = _make_project(tmp_path, members=("rep1", "rep2"), design=design)
+    project = Project(root)
+    for name in project.member_names:
+        analysis = Path(project.member_output_dir(name)) / "analysis"
+        analysis.mkdir(parents=True, exist_ok=True)
+        (analysis / "feeding_summary.csv").write_text(
+            "Treatment,Drug,DFM,Chamber,Licks\n"
+            "None,None,1,1,10\nNA,NA,1,2,20\n01,01,1,3,30\n,,1,4,\n",
+            encoding="utf-8")
+    summary, _facet, missing = project.combined_frames()
+    assert not missing
+    assert summary["Treatment"].tolist()[:3] == ["None", "NA", "01"]
+    assert summary["Drug"].tolist()[:3] == ["None", "NA", "01"]
+    assert pd.isna(summary["Treatment"].iloc[3]) and pd.isna(summary["Licks"].iloc[3])
+    assert summary["Licks"].dtype.kind in "if"

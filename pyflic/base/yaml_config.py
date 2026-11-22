@@ -844,6 +844,8 @@ def load_experiment_yaml(
             transform_licks=transform_licks_default,
             extra=cache_extra,
             data_location=data_location,
+            label_columns=("Treatment", *design_factors),
+            config_name=config_name,
         )
         if cached is not None:
             print("Loaded feeding summary from disk cache.", flush=True)

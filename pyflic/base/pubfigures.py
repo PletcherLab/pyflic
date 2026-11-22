@@ -1103,6 +1103,16 @@ def _pooled(project) -> list[str]:
     return project._pooled_members()
 
 
+def _read(project, path) -> pd.DataFrame:
+    """A saved table with its Treatment and the design's factors read as
+    text (:func:`pyflic.base.utils.read_result_csv`): a level named "None"
+    or "NA" stays a level in the figures."""
+    from .utils import read_result_csv
+
+    factors = tuple(getattr(project, "design_factors", None) or ())
+    return read_result_csv(path, ("Treatment", *factors))
+
+
 def project_frames(project):
     """``(facet_frame, binned_frame)`` for a Project's pooled figures.
 
@@ -1112,11 +1122,11 @@ def project_frames(project):
     """
     facet_path = os.path.join(project.analysis_path,
                               f"{project.name}_Summary_Facet.csv")
-    facet = pd.read_csv(facet_path) if os.path.isfile(facet_path) else None
+    facet = _read(project, facet_path) if os.path.isfile(facet_path) else None
     if facet is None:
         summary_path = os.path.join(project.analysis_path,
                                     f"{project.name}_Summary.csv")
-        facet = (pd.read_csv(summary_path)
+        facet = (_read(project, summary_path)
                  if os.path.isfile(summary_path) else None)
 
     binned_frames = []
@@ -1124,7 +1134,7 @@ def project_frames(project):
         path = os.path.join(_member_out(project, name), "analysis",
                             "binned_feeding_summary.csv")
         if os.path.isfile(path):
-            df = pd.read_csv(path)
+            df = _read(project, path)
             df.insert(0, "Experiment", name)
             binned_frames.append(df)
     binned = pd.concat(binned_frames, ignore_index=True) if binned_frames else None
@@ -1141,7 +1151,7 @@ def project_source_frame(project, source: str):
     for name in _pooled(project):
         path = os.path.join(_member_out(project, name), "analysis", filename)
         if os.path.isfile(path):
-            df = pd.read_csv(path)
+            df = _read(project, path)
             df.insert(0, "Experiment", name)
             frames.append(df)
     return pd.concat(frames, ignore_index=True) if frames else None
@@ -1172,7 +1182,7 @@ def project_light_frame(project):
     ``<project>_LightSummary.csv``), or ``None``."""
     for path in _light_table_paths(project):
         if os.path.isfile(path):
-            return pd.read_csv(path)
+            return _read(project, path)
     return None
 
 

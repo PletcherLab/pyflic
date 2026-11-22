@@ -148,8 +148,14 @@ def load_feeding_summary(
     transform_licks: bool,
     extra: str = "",
     data_location=None,
+    label_columns: Sequence[str] = ("Treatment",),
+    config_name: str = "flic_config.yaml",
 ) -> pd.DataFrame | None:
-    """Return cached feeding summary, or ``None`` if no entry."""
+    """Return cached feeding summary, or ``None`` if no entry.
+
+    *label_columns* (the Treatment and the design's factors) are read back as
+    the text they were written as (:func:`pyflic.base.utils.read_result_csv`),
+    so a hit gives the summary the computation gave."""
     p = feeding_summary_path(
         experiment_dir,
         range_minutes=range_minutes,
@@ -160,7 +166,9 @@ def load_feeding_summary(
     if not p.is_file():
         return None
     try:
-        return pd.read_csv(p)
+        from .utils import read_result_csv
+
+        return read_result_csv(p, label_columns)
     except Exception:
         try:
             p.unlink()

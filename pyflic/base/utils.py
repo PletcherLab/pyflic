@@ -69,6 +69,38 @@ def dfm_files_for(folder, dfm_id: int) -> tuple[list[Path], int]:
     return [], 0
 
 
+#: What ``pd.read_csv`` reads as missing by default, for the columns that
+#: hold numbers (pandas' own list).
+_DEFAULT_NA = ("", "#N/A", "#N/A N/A", "#NA", "-1.#IND", "-1.#QNAN", "-NaN", "-nan",
+               "1.#IND", "1.#QNAN", "<NA>", "N/A", "NA", "NULL", "NaN", "None",
+               "n/a", "nan", "null")
+
+
+def read_result_csv(path, label_columns=()):
+    """A results table pyflic wrote, read back with its *label_columns* as
+    the text they were written as.
+
+    By default ``pd.read_csv`` takes ``None``, ``NA``, ``null`` or ``nan`` for
+    a missing value and ``01`` for the number 1, so a treatment or factor
+    level so named left every pooled statistic (``groupby`` drops NaN), or
+    came back as another level.  A label column of *path* is read as text,
+    and only an empty cell is missing there; every other column is read as
+    before.  The names in *label_columns* the file does not have are
+    ignored."""
+    import pandas as pd
+
+    wanted = set(label_columns)
+    if not wanted:
+        return pd.read_csv(path)
+    header = list(pd.read_csv(path, nrows=0).columns)
+    labels = [c for c in header if c in wanted]
+    if not labels:
+        return pd.read_csv(path)
+    na_values = {c: ([""] if c in wanted else list(_DEFAULT_NA)) for c in header}
+    return pd.read_csv(path, keep_default_na=False, na_values=na_values,
+                       dtype={c: str for c in labels})
+
+
 def is_environmental_monitor(dfm_id) -> bool:
     """Whether *dfm_id* names the Environmental Monitor, not a DFM."""
     try:

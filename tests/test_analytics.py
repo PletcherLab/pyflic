@@ -180,6 +180,27 @@ def test_disk_cache_round_trip(experiment, tmp_path: Path):
     assert len(df2) == len(df)
 
 
+def test_a_cache_hit_keeps_a_treatment_named_like_a_missing_value(tmp_path: Path):
+    """A cached summary is read back from CSV: "None" and "NA" came back as
+    missing and "01" as the number 1, so the second load of an unchanged
+    experiment gave another summary than the first."""
+    proj = tmp_path / "proj"
+    _write_yaml(proj)
+    cfg = (proj / "flic_config.yaml").read_text()
+    cfg = cfg.replace("Treatment: [Ctrl, Exp]", "Drug: [None, NA, '01']")
+    for chamber, level in ((1, "None"), (2, "NA"), (3, "'01'"), (4, "None"),
+                           (5, "NA"), (6, "'01'")):
+        cfg = cfg.replace(f"      {chamber}: Ctrl\n", f"      {chamber}: {level}\n")
+        cfg = cfg.replace(f"      {chamber}: Exp\n", f"      {chamber}: {level}\n")
+    (proj / "flic_config.yaml").write_text(cfg)
+    _write_synthetic_csv(proj, dfm_id=1)
+    first = load_experiment_yaml(proj, parallel=False, use_disk_cache=True).feeding_summary()
+    second = load_experiment_yaml(proj, parallel=False, use_disk_cache=True).feeding_summary()
+    assert sorted(set(first["Treatment"])) == ["01", "NA", "None"]
+    pd.testing.assert_frame_equal(first, second, check_dtype=False)
+    assert second["Treatment"].tolist() == first["Treatment"].tolist()
+
+
 def test_pdf_report_writes_file(experiment, tmp_path: Path):
     from pyflic.base.pdf_report import write_experiment_report
     out = tmp_path / "report.pdf"

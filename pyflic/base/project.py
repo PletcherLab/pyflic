@@ -1624,18 +1624,26 @@ class Project:
             if not os.path.isfile(path):
                 missing.append(name)
                 continue
-            df = pd.read_csv(path)
+            df = self._read_member_table(path)
             df.insert(0, "Experiment", name)
             summaries.append(df)
             fpath = os.path.join(self.member_output_dir(name), "analysis",
                                  "feeding_summary_facet.csv")
             if os.path.isfile(fpath):
-                fdf = pd.read_csv(fpath)
+                fdf = self._read_member_table(fpath)
                 fdf.insert(0, "Experiment", name)
                 facets.append(fdf)
         summary = pd.concat(summaries, ignore_index=True) if summaries else None
         facet = pd.concat(facets, ignore_index=True) if facets else None
         return summary, facet, missing
+
+    def _read_member_table(self, path) -> pd.DataFrame:
+        """A Member's saved table with its Treatment and the design's factors
+        read as text (:func:`pyflic.base.utils.read_result_csv`): a level
+        named "None" or "NA" is a level, not a missing value."""
+        from .utils import read_result_csv
+
+        return read_result_csv(path, ("Treatment", *self.design_factors))
 
     @staticmethod
     def unfaceted_members(summary: pd.DataFrame | None,
@@ -1658,7 +1666,7 @@ class Project:
             path = os.path.join(self.member_output_dir(name), "analysis",
                                 "paired_yoked_diff.csv")
             if os.path.isfile(path):
-                df = pd.read_csv(path)
+                df = self._read_member_table(path)
                 df.insert(0, "Experiment", name)
                 frames.append(df)
         return pd.concat(frames, ignore_index=True) if frames else None
@@ -1674,7 +1682,7 @@ class Project:
             for source, parts in LIGHT_QC_SOURCES:
                 path = os.path.join(self.member_output_dir(name), *parts)
                 if os.path.isfile(path):
-                    df = pd.read_csv(path)
+                    df = self._read_member_table(path)
                     df.insert(0, "Source", source)
                     df.insert(0, "Experiment", name)
                     frames.append(df)
@@ -1690,7 +1698,7 @@ class Project:
             path = os.path.join(self.member_output_dir(name), "analysis",
                                 "pr_breaking_point.csv")
             if os.path.isfile(path):
-                df = pd.read_csv(path)
+                df = self._read_member_table(path)
                 df.insert(0, "Experiment", name)
                 frames.append(df)
         return pd.concat(frames, ignore_index=True) if frames else None
@@ -1706,7 +1714,7 @@ class Project:
             for name in self._pooled_members():
                 path = os.path.join(self.member_output_dir(name), "analysis", filename)
                 if os.path.isfile(path):
-                    df = pd.read_csv(path)
+                    df = self._read_member_table(path)
                     df.insert(0, "Experiment", name)
                     frames.append(df)
             if frames:
