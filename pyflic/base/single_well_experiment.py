@@ -62,8 +62,9 @@ class SingleWellExperiment(Experiment):
             ("MedDuration", "Median Duration (s)"),
             ("MeanTimeBtw", "Mean Time Btw (s)"),
             ("MedTimeBtw", "Median Time Btw (s)"),
-            ("MeanInt", "Mean Interval (s)"),
-            ("MedianInt", "Median Interval (s)"),
+            ## Intensity of the baselined signal within events, not a time.
+            ("MeanInt", "Mean Intensity"),
+            ("MedianInt", "Median Intensity"),
         ]
 
     def _feeding_summary_default_ncols(self) -> int:

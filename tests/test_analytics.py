@@ -191,6 +191,19 @@ def test_an_experiment_no_longer_faceted_leaves_no_facet_table(tmp_path: Path):
     assert not path.exists()
 
 
+def test_the_feeding_plot_labels_intensity_as_intensity(experiment):
+    """MeanInt and MedianInt are the signal's intensity within events
+    (help topic concepts-metrics); the feeding summary plot called them
+    "Mean Interval (s)"."""
+    from pyflic.base.single_well_experiment import SingleWellExperiment
+
+    for labels in (dict(experiment._feeding_plot_metrics()),
+                   dict(SingleWellExperiment._feeding_plot_metrics(experiment))):
+        intensity = {k: v for k, v in labels.items() if "Int" in k}
+        assert intensity and all("Intensity" in v and "(s)" not in v
+                                 for v in intensity.values())
+
+
 def test_yaml_lint_clean_config(tmp_path: Path):
     from pyflic.base.yaml_lint import lint_flic_config
     proj = tmp_path / "p"

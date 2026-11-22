@@ -304,10 +304,11 @@ class TwoWellExperiment(Experiment):
             ("MeanTimeBtwB", f"Mean Time Btw {nb} (s)"),
             ("MedTimeBtwA", f"Median Time Btw {na} (s)"),
             ("MedTimeBtwB", f"Median Time Btw {nb} (s)"),
-            ("MeanIntA", f"Mean Interval {na} (s)"),
-            ("MeanIntB", f"Mean Interval {nb} (s)"),
-            ("MedianIntA", f"Median Interval {na} (s)"),
-            ("MedianIntB", f"Median Interval {nb} (s)"),
+            ## Intensity of the baselined signal within events, not a time.
+            ("MeanIntA", f"Mean Intensity {na}"),
+            ("MeanIntB", f"Mean Intensity {nb}"),
+            ("MedianIntA", f"Median Intensity {na}"),
+            ("MedianIntB", f"Median Intensity {nb}"),
         ]
 
     def _feeding_summary_default_ncols(self) -> int:

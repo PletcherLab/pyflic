@@ -119,6 +119,7 @@
   - **The Hub's Breaking point item and a script's `breaking_point` step** write `pr_simulated_yoked_lights.csv` when `pr_simulated_yoked_bp` is on, as basic analysis does (ADR-0023).
   - **The Project Stats** name only the Members pooled, and each left out for want of an analysis.
   - **`DFM.plot_binned_licks`** totals two wells as (A + B)^¼, not A^¼ + B^¼.
+  - **The feeding summary plot** labelled `MeanInt` and `MedianInt`, the signal's intensity within events, "Mean/Median Interval (s)"; they read *Intensity* now.
   - **The Config Editor keeps what others wrote since it opened the file**: a save wrote back the `scripts:` and Selection (`global.omit`) it read at opening, undoing the Script Editor's and the Hub's writes since, as `about:` already was not.
   - **The Config Editor and the Project Design dialog** no longer add `min_untransformed_licks_cutoff: null` to a type with no lick cutoff on a look-and-save (ADR-0011).
   - **Two treatments given one Plot Spec label** made the figure fail; each now keeps its points, the label told apart by the treatment's name.
