@@ -50,6 +50,22 @@ class ExperimentDesign:
                 rows.append({"DFM": tc.dfm_id, "Chamber": tc.chamber_index, "Treatment": name})
         return pd.DataFrame(rows)
 
+    def with_dfms(self, dfms: dict[int, DFM]) -> "ExperimentDesign":
+        """This design over *dfms*, the DFMs recomputed with other
+        Parameters: the same treatments, each chamber now the chamber of the
+        same index in the DFM of the same id.  ``feeding_summary`` reads the
+        treatments' chambers, so replacing ``dfms`` alone left a serial
+        experiment summarising the old DFMs.  A DFM not in *dfms* is kept."""
+        from dataclasses import replace
+
+        treatments: dict[str, Treatment] = {}
+        for name, treatment in self.treatments.items():
+            rebound = Treatment(name=name)
+            for tc in treatment.chambers:
+                rebound.add_chamber(dfms.get(tc.dfm_id, tc.dfm), tc.chamber_index)
+            treatments[name] = rebound
+        return replace(self, dfms={**self.dfms, **dfms}, treatments=treatments)
+
     def treatment_for(self, dfm_id: int, chamber_index: int) -> str | None:
         """Return the treatment name for a given DFM/chamber, or None if unassigned."""
         for name, trt in self.treatments.items():

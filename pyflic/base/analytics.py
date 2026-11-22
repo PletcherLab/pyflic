@@ -1114,7 +1114,9 @@ def parameter_sensitivity(
         from copy import copy
         tmp_exp = copy(experiment)
         tmp_exp.dfms = new_dfms
-        tmp_exp.design.dfms = dict(new_dfms)
+        ## A design of its own over the new DFMs: the copy is shallow, and a
+        ## serial summary reads the treatments' chambers, not dfms.
+        tmp_exp.design = experiment.design.with_dfms(new_dfms)
         tmp_exp._feeding_summary_cache = {}
         df = tmp_exp.feeding_summary(
             range_minutes=range_minutes, transform_licks=transform_licks,

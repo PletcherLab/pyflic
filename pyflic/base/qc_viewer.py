@@ -2368,7 +2368,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self._exp.dfms = new_dfms
-        self._exp.design.dfms = dict(new_dfms)
+        ## The treatments' chambers too: a serial summary reads them.
+        self._exp.design = self._exp.design.with_dfms(new_dfms)
         self._exp._feeding_summary_cache.clear()
 
         try:

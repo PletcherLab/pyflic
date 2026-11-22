@@ -139,6 +139,22 @@ def test_parameter_sensitivity_grid(experiment):
     assert len(res.grid) >= 3
 
 
+def test_parameter_sensitivity_recomputes_a_serial_experiment(experiment):
+    """A serial experiment's summary is read through its design's
+    treatments, whose chambers still held the original DFMs, so every value
+    gave the original numbers.  And the shallow copy shared the design, so
+    the sweep left the experiment's design holding its last value's DFMs."""
+    assert not experiment.parallel
+    design_dfms = dict(experiment.design.dfms)
+    res = parameter_sensitivity(experiment, parameter="feeding_threshold", values=[5, 200])
+    licks = res.grid.groupby("feeding_threshold")["mean_Licks"].sum()
+    assert licks[5.0] > 0 and licks[200.0] == 0
+    assert experiment.design.dfms == design_dfms
+    for treatment in experiment.design:
+        for tc in treatment.chambers:
+            assert tc.dfm is experiment.dfms[tc.dfm_id]
+
+
 def test_yaml_lint_clean_config(tmp_path: Path):
     from pyflic.base.yaml_lint import lint_flic_config
     proj = tmp_path / "p"
