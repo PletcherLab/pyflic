@@ -345,6 +345,17 @@ class ParamsForm(QWidget):
                     cb.setChecked(False)
                     w.setEnabled(False)
 
+    def set_override(self, key: str, value: Any) -> None:
+        """Override *key* with *value*, or with ``None`` stop overriding it
+        (override mode).  The other overrides are left as they are."""
+        widget = self._input_widgets[key]
+        if value is not None:
+            _set_param_value(widget, value)
+        check = self._enable_checks.get(key)
+        if check is not None:
+            check.setChecked(value is not None)
+            widget.setEnabled(value is not None)
+
     def reset_defaults(self, chamber_size: int) -> None:
         defaults = _PARAM_DEFAULTS.get(chamber_size, _PARAM_DEFAULTS[2])
         for key in _PARAM_ORDER:
@@ -1319,7 +1330,61 @@ class DFMWidget(QWidget):
             for widget in (self._opto_label, self._opto_combo, over_card):
                 widget.setVisible(False)
 
+        # -- PI Direction (the Experiment Editor) ----------------------------
+        ## The one per-DFM parameter the Experiment Editor shows.  Which side
+        ## well A is on is a fact of how this DFM was set up, so it may differ
+        ## from DFM to DFM even inside a Project (PHYSICAL_DFM_KEYS).  It is
+        ## the override form's pi_direction, so loading and saving are the
+        ## form's.  The Config Editor shows the whole form instead.
+        self._simple = simple
+        self.side_card = Card(
+            "PI Direction", Category.LOAD,
+            subtitle="The side well A is on in this DFM's chambers, whose "
+                     "preference index is 1. inherit takes the experiment's "
+                     "setting: left, unless it states another.")
+        side_row = QHBoxLayout()
+        side_row.setContentsMargins(0, 0, 0, 0)
+        side_row.addWidget(QLabel(_PARAM_LABELS["pi_direction"] + ":"))
+        self.side_combo = NoWheelComboBox()
+        self.side_combo.addItem("inherit", None)
+        self.side_combo.addItem("left", "left")
+        self.side_combo.addItem("right", "right")
+        self.side_combo.setFixedWidth(90)
+        self.side_combo.currentIndexChanged.connect(self._side_chosen)
+        side_row.addWidget(self.side_combo)
+        side_help = _param_help_button("pi_direction", self)
+        if side_help is not None:
+            side_row.addWidget(side_help)
+        side_row.addStretch()
+        self.side_card.add_body(side_row)
+        outer.addWidget(self.side_card)
+        self._show_side_card()
+
     # ------------------------------------------------------------------
+
+    def pi_direction(self) -> str | None:
+        """This DFM's own ``pi_direction``, or ``None`` when it inherits."""
+        return self._params_form.get_values().get("pi_direction")
+
+    def set_pi_direction(self, side: str | None) -> None:
+        """Give this DFM its own ``pi_direction`` (``left`` or ``right``), or
+        ``None`` to inherit the experiment's."""
+        self._params_form.set_override("pi_direction", side)
+        self._sync_side_combo()
+
+    def _side_chosen(self, *_args) -> None:
+        self._params_form.set_override("pi_direction", self.side_combo.currentData())
+
+    def _sync_side_combo(self) -> None:
+        side = self.pi_direction()
+        index = 0 if side is None else self.side_combo.findData(str(side))
+        self.side_combo.blockSignals(True)
+        self.side_combo.setCurrentIndex(max(index, 0))
+        self.side_combo.blockSignals(False)
+
+    def _show_side_card(self) -> None:
+        """Shown in the Experiment Editor, for two wells: one well has no side."""
+        self.side_card.setVisible(self._simple and self._chamber_size == 2)
 
     def set_progressive_ratio(self, enabled: bool) -> None:
         """Show the paired-chamber pickers (Progressive Ratio) or hide them."""
@@ -1553,6 +1618,7 @@ class DFMWidget(QWidget):
         _fit_chamber_table(self._chamber_table)
 
         self._params_form.set_chamber_size(chamber_size)
+        self._show_side_card()
 
     def update_factors(self, factor_levels: dict[str, list[str]]) -> None:
         """Restructure the chamber table to show one column per factor."""
@@ -1673,6 +1739,7 @@ class DFMWidget(QWidget):
 
         params_raw = data.get("params", data.get("parameters", {})) or {}
         self._params_form.load_values(dict(params_raw), chamber_size)
+        self._sync_side_combo()
 
         chambers_raw = data.get("chambers", data.get("Chambers", {})) or {}
         if isinstance(chambers_raw, dict):

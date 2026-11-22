@@ -97,11 +97,18 @@ adds the paired chamber of each group. Above the tabs, the editor says which DFM
 holds and which tabs have no data; **Add the DFMs found in the data** adds the missing
 ones.
 
+On a two-well layout each DFM also has **PI Direction**: the side well A is on in that DFM's
+chambers, whose preference index is 1. **inherit** takes the experiment's setting (left,
+unless it states another); **left** or **right** is written as that DFM's
+`params: {pi_direction: ...}`. It is the one parameter that may differ between DFMs inside a
+Project, since it says how the DFM was set up, not how it is analysed. A DFM's other
+parameter overrides are kept as read; the Config Editor shows them.
+
 ## What a save writes
 
 `about:`, the design keys under `global:`, and `dfms:`. Every other key the file holds —
 detection `params:`, `constants:`, Slices, exclusions, the Selection, optogenetics, a
-DFM's parameter overrides, `scripts:`, `data_folder:` — is written back exactly as it was
+DFM's other parameter overrides, `scripts:`, `data_folder:` — is written back exactly as it was
 read. A new standalone config gets an empty `params:`, which means every default.
 
 Inside `about:`, the editor writes the fields it shows and keeps the rest as read: the
