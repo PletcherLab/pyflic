@@ -268,7 +268,8 @@ An Experiment Type supplies its own defaults for the first three (Hedonic and Pr
 Ratio set all three); `max_ceiling_minutes` defaults to 30 under every type, Custom and a
 lab's own included. A yaml number always wins over the default. A yaml `null` also wins and
 means **that filter is off** (the Config Editor and Project Design dialog write `null` when
-the cutoff's **Use** checkbox is unchecked). An omitted key still inherits the default.
+the cutoff's **Use** checkbox is unchecked and the type has a default for it, or the file
+already said `null`). An omitted key still inherits the default.
 A Custom Experiment has no defaults for the first three, and there an unset or null key
 means the check is not performed — pyflic reports it as "not configured" rather than
 substituting a number.

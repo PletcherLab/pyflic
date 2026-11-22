@@ -149,6 +149,28 @@ def test_design_dialog_optional_auto_filter_checkboxes(app, tmp_path):
     assert constants["min_untransformed_licks_cutoff"] == 35
 
 
+def test_an_unchecked_cutoff_the_type_has_no_default_for_writes_nothing(app, tmp_path):
+    """Null turns a *typed* cutoff off (ADR-0011).  Custom has no lick cutoff,
+    so an unchecked box is already off, and a look-and-save of a design that
+    says nothing of it must not add ``min_untransformed_licks_cutoff: null``.
+    A null the file states is kept."""
+    root = tmp_path / "custom"
+    _write(root / "project.yaml", {"name": "C", "design": {"global": {
+        "experiment_type": "Custom", "chamber_layout": "single_well"}}})
+    dialog = ProjectDesignDialog(start_dir=str(root))
+    assert not dialog.constant_checks["min_untransformed_licks_cutoff"].isChecked()
+    assert "min_untransformed_licks_cutoff" not in (
+        dialog._build_design()["global"].get("constants") or {})
+
+    stated = tmp_path / "stated"
+    _write(stated / "project.yaml", {"name": "S", "design": {"global": {
+        "experiment_type": "Custom", "chamber_layout": "single_well",
+        "constants": {"min_untransformed_licks_cutoff": None}}}})
+    dialog = ProjectDesignDialog(start_dir=str(stated))
+    constants = dialog._build_design()["global"]["constants"]
+    assert constants["min_untransformed_licks_cutoff"] is None
+
+
 # ---------------------------------------------------------------------------
 # Members inherit it
 # ---------------------------------------------------------------------------

@@ -1015,11 +1015,17 @@ class ProjectDesignDialog(QDialog):
                 return None
 
         constants: dict = {}
+        ## Unchecked is null only for a cutoff the type has a default for
+        ## (ADR-0011), or one the file already stated: without a default the
+        ## filter is off anyway, and a look-and-save must add nothing.
+        type_defaults = item.default_constants or {}
         for key, label, _placeholder in _CONSTANT_ROWS:
             if chamber_size == 1 and key not in _EVERY_LAYOUT_KEYS:
                 continue
             if not self.constant_checks[key].isChecked():
-                constants[key] = None
+                if (type_defaults.get(key) is not None
+                        or key in (self._loaded_constants or {})):
+                    constants[key] = None
                 continue
             text = self.constant_edits[key].text().strip()
             if not text:

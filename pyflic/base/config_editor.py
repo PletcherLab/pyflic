@@ -3007,13 +3007,18 @@ class FLICConfigEditor(QMainWindow):
         ## Optional cutoffs: unchecked → YAML null (filter off, overrides the
         ## type default); checked + blank → omit (inherit); checked + number
         ## → override.  Materialising the type default would freeze this
-        ## config against today's numbers (ADR-0011).
+        ## config against today's numbers (ADR-0011).  A cutoff the type has
+        ## no default for is off unchecked already, so its null is written
+        ## only when the file stated it: a look-and-save adds nothing.
         constants: dict[str, Any] = {}
+        type_defaults = item.default_constants or {}
+        loaded = (self._loaded_raw.get("global") or {}).get("constants") or {}
         for check, widget, key in self._threshold_controls():
             if not self._threshold_row_visible(key):
                 continue
             if not check.isChecked():
-                constants[key] = None
+                if type_defaults.get(key) is not None or key in loaded:
+                    constants[key] = None
                 continue
             text = widget.text().strip()
             if not text:
@@ -3057,7 +3062,6 @@ class FLICConfigEditor(QMainWindow):
         ## section keeps what the file says.
         managed = ({key for _widget, key in self._threshold_fields()}
                    | {field.key for field in PR_CONSTANT_FIELDS} | opto_managed)
-        loaded = (self._loaded_raw.get("global") or {}).get("constants") or {}
         for key, value in loaded.items():
             if key not in managed:
                 constants.setdefault(key, value)

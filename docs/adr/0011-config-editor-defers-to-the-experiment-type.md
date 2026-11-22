@@ -77,7 +77,9 @@ and the one in the editor is the one nobody runs in CI.
 - To turn a typed cutoff **off**, the editors write an explicit YAML `null`
   for that key. `resolve_constants()` lets `null` win over the type default;
   omitting the key still inherits. Unchecked checkbox → `null`; checked +
-  blank → omit; checked + number → override.
+  blank → omit; checked + number → override. (2026-11-22: a cutoff the type
+  has no default for is already off, so unchecked writes `null` only when the
+  file already said so; a look-and-save adds no key.)
 - `app-config-editor.md`'s "`chamber_size` is required and cannot be inferred"
   is false and is rewritten. The remaining eight help topics that still speak
   of `chamber_size` are pre-existing ADR-0007 drift, tracked separately.
