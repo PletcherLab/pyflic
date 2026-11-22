@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re as _re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
@@ -17,7 +16,7 @@ from .progressive_ratio_experiment import ProgressiveRatioExperiment
 from .single_well_experiment import SingleWellExperiment
 from .treatment import Treatment
 from .two_well_experiment import TwoWellExperiment
-from .utils import ENVIRONMENTAL_MONITOR_MESSAGE, is_environmental_monitor
+from .utils import ENVIRONMENTAL_MONITOR_MESSAGE, dfm_file_id, is_environmental_monitor
 
 #: Chamber Layout -> the ``Experiment`` subclass that computes its metrics
 #: (ADR-0007).  This is the *data shape* map; an Experiment Type may name a
@@ -227,6 +226,19 @@ def _load_dfm_for_config(
         return DFM.load(dfm_id, params, data_dir=data_dir, range_minutes=range_minutes)
     except EmptyRangeError as err:
         return err
+
+
+def _data_dfm_ids(data_dir: Path) -> set[int]:
+    """The DFM ids whose files the loader reads in *data_dir*
+    (:func:`pyflic.base.utils.dfm_file_id`).  ``DFM99_*.csv`` is the
+    Environmental Monitor, never a DFM."""
+    ids: set[int] = set()
+    if Path(data_dir).is_dir():
+        for f in Path(data_dir).iterdir():
+            dfm_id = dfm_file_id(f.name)
+            if dfm_id is not None and f.is_file() and not is_environmental_monitor(dfm_id):
+                ids.add(dfm_id)
+    return ids
 
 
 def load_experiment_yaml(
@@ -622,18 +634,8 @@ def load_experiment_yaml(
     # ── Cross-check config DFMs vs. data directory ──────────────────────
     config_ids = {s[0] for s in dfm_specs}
 
-    # Discover DFM IDs present on disk (v3: DFM{id}_*.csv, v2: DFM_{id}[_*].csv).
-    # DFM99_*.csv is the Environmental Monitor, never a DFM.
-    data_ids: set[int] = set()
-    if data_dir.is_dir():
-        for f in data_dir.iterdir():
-            if not f.suffix.lower() == ".csv":
-                continue
-            name = f.name
-            # v3: DFM{id}_...; v2: DFM_{id}.csv or DFM_{id}_*.csv
-            m = _re.match(r"DFM(\d+)_", name) or _re.match(r"DFM_(\d+)(?:_|\.)", name)
-            if m and not is_environmental_monitor(m.group(1)):
-                data_ids.add(int(m.group(1)))
+    # Discover DFM IDs present on disk, by the loader's own rule.
+    data_ids = _data_dfm_ids(data_dir)
 
     config_only = sorted(config_ids - data_ids)
     data_only = sorted(data_ids - config_ids)

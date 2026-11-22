@@ -32,7 +32,7 @@ import re
 from .utils import (
     ENVIRONMENTAL_MONITOR_ID,
     ENVIRONMENTAL_MONITOR_MESSAGE,
-    natural_sorted,
+    dfm_files_for,
     range_bounds,
     range_is_specified,
 )
@@ -309,19 +309,11 @@ def _load_dfm_csvs(dfm_id: int, data_dir: str | Path = ".", range_minutes: Seque
         raise FileNotFoundError(f"data_dir does not exist: {data_dir}")
     if int(dfm_id) == ENVIRONMENTAL_MONITOR_ID:
         raise ValueError(ENVIRONMENTAL_MONITOR_MESSAGE)
-    v3 = natural_sorted(data_dir.glob(f"DFM{dfm_id}_*.csv"))
-    if v3:
-        files, version = v3, 3
-    else:
-        v2_single = data_dir / f"DFM_{dfm_id}.csv"
-        if v2_single.exists():
-            files, version = [v2_single], 2
-        else:
-            v2_link = natural_sorted(data_dir.glob(f"DFM_{dfm_id}_*.csv"))
-            if v2_link:
-                files, version = v2_link, 2
-            else:
-                raise FileNotFoundError(f"DFM data file(s) not found for id={dfm_id} in {data_dir}")
+    ## The one rule the classifier, the linter and the config's cross-check
+    ## use too (utils.DFM_FILE_RE), so "loadable" means the same everywhere.
+    files, version = dfm_files_for(data_dir, int(dfm_id))
+    if not files:
+        raise FileNotFoundError(f"DFM data file(s) not found for id={dfm_id} in {data_dir}")
     frames = [pd.read_csv(f) for f in files]
     df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
     ## The 63 Paradigm columns of a 90-column file come off before anything

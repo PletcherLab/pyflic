@@ -16,6 +16,59 @@ ENVIRONMENTAL_MONITOR_ID = 99
 ENVIRONMENTAL_MONITOR_MESSAGE = "DFM 99 is the Environmental Monitor, not a DFM"
 
 
+#: The DFM export spellings the loader reads, in exact case: ``DFM3_1.csv``
+#: (version 3), ``DFM_3.csv`` and ``DFM_3_1.csv`` (version 2).  The loader,
+#: the config's cross-check, the layout classifier, the linter and
+#: scaffolding all find a recording's files by this one rule
+#: (:func:`dfm_files_for`, :func:`dfm_file_id`), so a folder the classifier
+#: calls loadable is one the loader reads, on every filesystem.
+DFM_FILE_RE = re.compile(r"^DFM(?:(?P<v3>\d+)_\d+|_(?P<v2>\d+)(?:_\d+)?)\.csv$")
+
+
+def dfm_file_id(name: str) -> int | None:
+    """The DFM id a recording file *name* holds, or ``None`` when the loader
+    would not read it (:data:`DFM_FILE_RE`)."""
+    match = DFM_FILE_RE.match(name)
+    if match is None:
+        return None
+    return int(match.group("v3") if match.group("v3") is not None else match.group("v2"))
+
+
+def dfm_files_for(folder, dfm_id: int) -> tuple[list[Path], int]:
+    """``(files, version)``: the files the loader reads for *dfm_id* in
+    *folder*, in order.  Every version-3 ``DFM<id>_<n>.csv``; else version 2's
+    ``DFM_<id>.csv``; else its ``DFM_<id>_<n>.csv``.  ``([], 0)`` when there
+    is none.  A copy such as ``DFM1_0 - Copy.csv`` is no part of it."""
+    folder = Path(folder)
+    v3: list[Path] = []
+    v2_single: list[Path] = []
+    v2_linked: list[Path] = []
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return [], 0
+    for name in names:
+        match = DFM_FILE_RE.match(name)
+        if match is None or dfm_file_id(name) != int(dfm_id):
+            continue
+        path = folder / name
+        if not path.is_file():
+            continue
+        if match.group("v3") is not None:
+            v3.append(path)
+        elif name.count("_") == 1:
+            v2_single.append(path)
+        else:
+            v2_linked.append(path)
+    if v3:
+        return natural_sorted(v3), 3
+    if v2_single:
+        return v2_single[:1], 2
+    if v2_linked:
+        return natural_sorted(v2_linked), 2
+    return [], 0
+
+
 def is_environmental_monitor(dfm_id) -> bool:
     """Whether *dfm_id* names the Environmental Monitor, not a DFM."""
     try:

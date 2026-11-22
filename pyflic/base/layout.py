@@ -16,8 +16,8 @@ names those states and repairs the ones that are repairable:
   returns excluded chambers to the analysis (ADR-0010).
 
 "Loadable" is decided with the loader's own test — the same
-``data/DFM<id>_*.csv`` spellings :mod:`pyflic.base.dfm` globs for — rather than
-a lookalike.  A classifier that says "healthy" where the loader says "no DFM
+``data/DFM<id>_<n>.csv`` spellings :mod:`pyflic.base.dfm` reads
+(:data:`pyflic.base.utils.DFM_FILE_RE`) — rather than a lookalike.  A classifier that says "healthy" where the loader says "no DFM
 data file(s) found" is worse than no classifier: it moves the failure from the
 preflight, where someone is looking, into hour three of an unattended run.
 
@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 import yaml
 
 from .project import CONFIG_FILENAME
-from .utils import is_environmental_monitor
+from .utils import DFM_FILE_RE, dfm_file_id, is_environmental_monitor
 
 #: Where a recording belongs, and where everything else loose is parked.
 DATA_DIRNAME = "data"
@@ -60,13 +60,14 @@ EXTRA_DIRNAME = "extra_files"
 DATA_FOLDER_KEY = "data_folder"
 
 #: The DFM export spellings the loader accepts: ``DFM3_1.csv`` (v3),
-#: ``DFM_3.csv`` and ``DFM_3_1.csv`` (v2).  Matched case-insensitively here so
-#: a ``dfm3_1.csv`` is *reported* — the loader's glob is case-sensitive on
-#: Linux, and "no data here" is baffling when the files are plainly visible.
+#: ``DFM_3.csv`` and ``DFM_3_1.csv`` (v2).  Matched case-insensitively here,
+#: and with an optional part, so a ``dfm3_1.csv`` or a ``DFM3.csv`` is
+#: *reported* — the loader reads the exact spellings only, and "no data here"
+#: is baffling when the files are plainly visible.
 _DFM_RE = re.compile(r"^DFM_?(\d+)(_\d+)?\.csv$", re.IGNORECASE)
 
-#: The exact-case form the loader will actually find.
-_DFM_RE_STRICT = re.compile(r"^DFM_?(\d+)(_\d+)?\.csv$")
+#: The exact-case forms the loader will actually find: its own rule.
+_DFM_RE_STRICT = DFM_FILE_RE
 
 #: Never moved.  At an experiment root a YAML file is the config or a
 #: declaration sidecar; both are read from the root by definition.
@@ -204,12 +205,7 @@ def dfm_files(directory) -> list[str]:
 
 def dfm_ids(directory) -> list[int]:
     """DFM ids present in *directory*, parsed from the export filenames."""
-    ids: set[int] = set()
-    for name in dfm_files(directory):
-        match = _DFM_RE_STRICT.match(name)
-        if match:
-            ids.add(int(match.group(1)))
-    return sorted(ids)
+    return sorted({dfm_file_id(name) for name in dfm_files(directory)})
 
 
 def _dfm_lookalikes(directory) -> list[str]:

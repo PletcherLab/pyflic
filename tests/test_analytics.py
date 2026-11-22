@@ -69,7 +69,7 @@ def _write_synthetic_csv(proj: Path, *, dfm_id: int = 1, n_samples: int = 1500) 
             start = 50 + 100 * k + (w * 7) % 30
             sig[start:start + 8] += 10.0 + rng.normal(0, 0.5, size=8)
         cols[f"W{w}"] = sig.tolist()
-    pd.DataFrame(cols).to_csv(proj / "data" / f"DFM{dfm_id}_test.csv", index=False)
+    pd.DataFrame(cols).to_csv(proj / "data" / f"DFM{dfm_id}_0.csv", index=False)
 
 
 @pytest.fixture(scope="module")

@@ -416,9 +416,9 @@ def _file_generation(data_dir: Path, dfm_id: int) -> int | None:
     import pandas as pd
 
     from .paradigm_state import detect_generation
-    from .utils import natural_sorted
+    from .utils import dfm_files_for
 
-    files = natural_sorted(Path(data_dir).glob(f"DFM{int(dfm_id)}_*.csv"))
+    files, _version = dfm_files_for(data_dir, int(dfm_id))
     if not files:
         return None
     try:

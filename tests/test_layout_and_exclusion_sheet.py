@@ -348,3 +348,50 @@ def test_a_dotdot_in_a_cell_cannot_reach_a_project_that_is_not_running(tmp_path:
     assert read_exclusions(root / "Sept" / "ProjB" / "rep1") == {}
     assert batch_mod.normalize_key("ProjA/../Sept/./ProjB/") == "Sept/ProjB"
     assert batch_mod.normalize_key("../elsewhere") == "../elsewhere"
+
+
+# ---------------------------------------------------------------------------
+# One rule for a recording's files: the classifier's is the loader's
+# ---------------------------------------------------------------------------
+
+def test_a_file_the_loader_cannot_read_never_makes_a_member_usable(tmp_path: Path):
+    """``DFM1.csv`` matched the classifier's pattern but none of the loader's
+    globs, so a member classified OK failed in the run with "no DFMs to load"."""
+    root = tmp_path / "rep1"
+    _write(root / "flic_config.yaml", CONFIG)
+    _write(root / "data" / "DFM1.csv", "Sample,Seconds\n")
+    item = layout.classify(root)
+    assert item.status == layout.NO_RECORDING and not item.usable
+    assert "DFM1.csv" in item.detail
+
+
+@pytest.mark.parametrize("names, ids", [
+    (["DFM1_0.csv", "DFM1_1.csv", "DFM2_0.csv"], [1, 2]),
+    (["DFM_3.csv", "DFM_4_0.csv", "DFM_4_1.csv"], [3, 4]),
+    (["DFM1_0.csv", "DFM1_0 - Copy.csv", "DFM1_old.csv", "DFM1.csv", "dfm2_0.csv",
+      "DFM2_0.CSV", "DFM99_0.csv"], [1]),
+])
+def test_the_classifier_and_the_loader_find_the_same_files(tmp_path: Path, names, ids):
+    from pyflic.base import utils
+    from pyflic.base.yaml_config import _data_dfm_ids
+
+    data = tmp_path / "data"
+    for name in names:
+        _write(data / name, "Sample,Seconds\n")
+    assert layout.dfm_ids(data) == ids
+    assert sorted(_data_dfm_ids(data)) == ids
+    found = {i: [p.name for p in utils.dfm_files_for(data, i)[0]] for i in ids}
+    assert sorted(n for files in found.values() for n in files) == sorted(
+        layout.dfm_files(data))
+
+
+def test_the_loader_reads_only_the_recordings_own_files(tmp_path: Path):
+    from opto_fixtures import write_opto_csv
+
+    from pyflic.base.dfm import DFM
+    from pyflic.base.parameters import Parameters
+
+    path = write_opto_csv(tmp_path)
+    (tmp_path / "DFM1_0 - Copy.csv").write_bytes(path.read_bytes())
+    dfm = DFM.load(1, Parameters.single_well(), data_dir=tmp_path)
+    assert [p.name for p in dfm.source_files] == ["DFM1_0.csv"]

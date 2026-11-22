@@ -25,7 +25,7 @@ def _write_minimal_dfm_csv(experiment_dir: Path, dfm_id: int, n_samples: int = 1
     for w in range(1, 13):
         cols[f"W{w}"] = [0] * n_samples
     pd.DataFrame(cols).to_csv(
-        experiment_dir / "data" / f"DFM{dfm_id}_test.csv", index=False
+        experiment_dir / "data" / f"DFM{dfm_id}_0.csv", index=False
     )
 
 

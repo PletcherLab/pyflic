@@ -38,7 +38,7 @@ import pandas as pd
 import yaml
 
 from . import analysis_settings, experiment_types, slices, windowing
-from .utils import is_environmental_monitor
+from .utils import dfm_file_id, is_environmental_monitor
 
 #: The Paired-Yoked Difference columns the pooled statistics test, between
 #: treatments and against zero, when a Member's table has them.
@@ -160,10 +160,12 @@ def dfm_ids_in_folder(folder) -> list[int]:
     except OSError:
         return []
     for entry in entries:
-        match = re.match(r"^DFM(\d+)_\d+\.csv$", entry, flags=re.IGNORECASE)
-        ## DFM99_<n>.csv is the Environmental Monitor: never scaffolded.
-        if match and not is_environmental_monitor(match.group(1)):
-            ids.add(int(match.group(1)))
+        ## The loader's own rule, so scaffolding never names a DFM the load
+        ## would not find.  DFM99_<n>.csv is the Environmental Monitor: never
+        ## scaffolded.
+        dfm_id = dfm_file_id(entry)
+        if dfm_id is not None and not is_environmental_monitor(dfm_id):
+            ids.add(dfm_id)
     return sorted(ids)
 
 
