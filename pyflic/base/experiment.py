@@ -2524,10 +2524,14 @@ class Experiment:
                 label = f"({_fmt_min(a)},{_fmt_min(b)}]"
                 midpoint = (a + b) / 2.0
                 bin_dfm = {did: dfm_bin_results[(did, a, b)] for did in dfm_ids}
-                summ = self._assemble_from_dfm_summaries(bin_dfm)
-                # Cache this per-bin result so subsequent single-bin calls are free.
-                self._feeding_summary_cache[((float(a), float(b)), bool(transform_licks))] = summ
-                if summ.empty:
+                # Cached as feeding_summary caches it, then read through it, so
+                # a bin carries what every summary carries (the light and opto
+                # columns, a type's own), as the serial path's bins do.
+                self._feeding_summary_cache[((float(a), float(b)), bool(transform_licks))] = \
+                    self._assemble_from_dfm_summaries(bin_dfm)
+                summ = self.feeding_summary(range_minutes=(a, b),
+                                            transform_licks=transform_licks)
+                if summ is None or summ.empty:
                     continue
                 summ = summ.copy()
                 summ.insert(0, "Minutes", midpoint)

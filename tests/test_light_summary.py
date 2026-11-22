@@ -1305,3 +1305,22 @@ def test_a_light_metric_the_same_in_every_chamber_is_named_not_compared():
     asked.clear()
     blocks = rc.light_comparison_blocks(["LitSec"], rows, compare)
     assert asked == [] and len(blocks) == 1
+
+
+def test_a_binned_summary_has_the_same_columns_parallel_or_not(tmp_path):
+    """The parallel binned summary assembled each bin from the DFMs' own
+    summaries and skipped what feeding_summary adds (the light columns, the
+    opto light QC's, a type's own), so the Hub's binned CSV lacked them where
+    a serial load's had them."""
+    from opto_fixtures import make_opto_dir
+
+    from pyflic.base.yaml_config import load_experiment_yaml
+
+    root = make_opto_dir(tmp_path / "exp")
+    frames = {}
+    for parallel in (False, True):
+        exp = load_experiment_yaml(root, parallel=parallel, executor="threads",
+                                   use_disk_cache=False)
+        frames[parallel] = exp.binned_feeding_summary(binsize_min=20, save=False)
+        assert {"LitSec", "Activations"} <= set(frames[parallel].columns)
+    pd.testing.assert_frame_equal(frames[True], frames[False])
