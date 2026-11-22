@@ -401,7 +401,7 @@ def test_the_cache_key_follows_program_and_messages(tmp_path):
     spec, results = choice()
     root = recording_dir(tmp_path, spec, results=results, program=False, messages=False)
     key = lambda: cache.feeding_summary_key(root, range_minutes=(0, 0), transform_licks=False)  # noqa: E731
-    assert cache._CACHE_VERSION == "4" and key().startswith("v4_")
+    assert key().startswith(f"v{cache._CACHE_VERSION}_")
     bare = key()
     program = root / "data" / "Program.txt"
     program.write_text(program_text(spec), encoding="utf-8")

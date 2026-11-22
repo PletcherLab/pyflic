@@ -34,7 +34,11 @@ _CACHE_DIR_NAME = ".pyflic_cache"
 # from prior releases are automatically invalidated.  "3": firmware 4.0.0
 # recordings, whose light seconds come from OnMs (docs/v4-data-plan.md, 0b).
 # "4": the key carries the exclusions, the design and the Slice (ADR-0020).
-_CACHE_VERSION = "4"
+# "5": 780d0a0 changed the summary after "4" without a bump (MeanTimeBtw and
+# MedTimeBtw NaN where no stretch begins, generation-1 training read before a
+# range is clipped), and a cached Progressive Ratio summary keeps the Group
+# and Training columns it was written with.
+_CACHE_VERSION = "5"
 
 #: Files beside the DFM CSVs that change what an analysis reports: the Opto
 #: Program, PyMCU's message log and its Baseline sets.  Matched
