@@ -224,9 +224,13 @@ def _yoked_comparison(exp, ctx: _Context) -> list[Path]:
 
 
 def _breaking_point(exp, ctx: _Context) -> list[Path]:
-    path = exp.write_breaking_point()
+    paths = [exp.write_breaking_point()]
+    ## And every simulated light when the design asks for the Simulated
+    ## Yoked Breaking Point (ADR-0023), as basic analysis writes it.
+    if exp.simulated_yoked_enabled():
+        paths.append(exp.write_simulated_yoked_lights())
     ctx.log("\n".join(exp.breaking_point_lines()))
-    return [path]
+    return paths
 
 
 def _weighted_duration(exp, ctx: _Context) -> list[Path]:

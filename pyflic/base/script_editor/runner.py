@@ -355,6 +355,8 @@ def run_experiment_script(
 
         elif action == "breaking_point":
             ctx.log(f"Wrote: {exp.write_breaking_point()}")
+            if exp.simulated_yoked_enabled():
+                ctx.log(f"Wrote: {exp.write_simulated_yoked_lights()}")
             ctx.log("\n".join(exp.breaking_point_lines()))
 
         elif action == "plot_pr_still_responding":

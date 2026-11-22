@@ -196,7 +196,8 @@ ANALYSIS_SET: tuple[Item, ...] = (
         RATIO, "analysis/pr_cumulative_diff.csv"),
     _an("breaking_point", "Progressive Ratio", "Breaking point",
         "Per chamber group: the paired fly's breaking point, and its sensitivity to the "
-        "gap.  Writes analysis/pr_breaking_point.csv.", RATIO,
+        "gap.  Writes analysis/pr_breaking_point.csv, and analysis/"
+        "pr_simulated_yoked_lights.csv when pr_simulated_yoked_bp is on.", RATIO,
         "analysis/pr_breaking_point.csv"),
     _an("weighted_duration", "Hedonic", "Weighted duration summary",
         "Per treatment: median bout duration at each well, plain and weighted by each "

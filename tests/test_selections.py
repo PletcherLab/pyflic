@@ -783,3 +783,26 @@ def test_the_config_editor_keeps_a_standalone_selection(tmp_path):
     sel.set_included(exp, sel.QC, "bleeding", False)
     editor = FLICConfigEditor(root / "flic_config.yaml")
     assert editor._collect_yaml()["global"]["omit"] == {"qc": ["bleeding"]}
+
+
+def test_the_breaking_point_item_writes_the_simulated_lights_when_the_design_asks():
+    """Basic analysis writes pr_simulated_yoked_lights.csv when
+    pr_simulated_yoked_bp is on (ADR-0023); the Hub's Breaking point item and
+    a script's breaking_point step wrote pr_breaking_point.csv alone."""
+    from types import SimpleNamespace
+
+    written: list[str] = []
+
+    def exp(enabled: bool):
+        return SimpleNamespace(
+            write_breaking_point=lambda: written.append("bp") or Path("pr_breaking_point.csv"),
+            simulated_yoked_enabled=lambda: enabled,
+            write_simulated_yoked_lights=lambda: (written.append("sim")
+                                                  or Path("pr_simulated_yoked_lights.csv")),
+            breaking_point_lines=lambda: [])
+
+    on = rs._breaking_point(exp(True), rs._Context(None, lambda _m: None))
+    assert [p.name for p in on] == ["pr_breaking_point.csv", "pr_simulated_yoked_lights.csv"]
+    written.clear()
+    off = rs._breaking_point(exp(False), rs._Context(None, lambda _m: None))
+    assert [p.name for p in off] == ["pr_breaking_point.csv"] and written == ["bp"]
