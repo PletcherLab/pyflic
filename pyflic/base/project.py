@@ -2275,14 +2275,18 @@ class Project:
             diff = self.combined_diff_frame()
         diff_rows = self.diff_comparison_rows(diff)
         bar = "=" * 72
-        n_exp = (summary["Experiment"].nunique()
-                 if "Experiment" in summary.columns else 1)
+        ## The Members whose rows are here: one with no saved analysis is
+        ## named as left out, never listed as pooled.
+        pooled = (list(dict.fromkeys(summary["Experiment"].astype(str)))
+                  if "Experiment" in summary.columns else self._pooled_members())
         out = [bar, f"Combined Analysis — {self.name}", bar, ""]
         if self.slice is not None:
             out.append(f"Slice             : {self.slice.name} {self.slice.bounds_label()}, "
                        f"each Member analysed as if its recording were only these minutes")
-        out.append(f"Members pooled : {n_exp} "
-                   f"({', '.join(self._pooled_members())})")
+        out.append(f"Members pooled : {len(pooled)} ({', '.join(pooled)})")
+        for name in self._pooled_members():
+            if name not in pooled:
+                out.append(f"Not analysed   : {name}, no saved analysis, left out")
         for name, reason in self.not_covered().items():
             out.append(f"Not covered       : {name}, left out of this Slice ({reason})")
         for name in self.unfaceted_members(summary, facet):

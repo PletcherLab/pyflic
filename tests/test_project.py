@@ -474,3 +474,19 @@ def test_a_treatment_named_none_or_na_is_pooled(tmp_path: Path):
     assert summary["Drug"].tolist()[:3] == ["None", "NA", "01"]
     assert pd.isna(summary["Treatment"].iloc[3]) and pd.isna(summary["Licks"].iloc[3])
     assert summary["Licks"].dtype.kind in "if"
+
+
+def test_the_stats_text_pools_only_the_members_with_an_analysis(tmp_path: Path):
+    """It listed every Member as pooled, the one with no saved analysis too."""
+    root = _make_project(tmp_path, members=("rep1", "rep2"))
+    project = Project(root)
+    analysis = Path(project.member_output_dir("rep1")) / "analysis"
+    analysis.mkdir(parents=True, exist_ok=True)
+    (analysis / "feeding_summary.csv").write_text(
+        "Treatment,TreatmentNew,DFM,Chamber,Licks\nCtrl,Ctrl,1,1,10\nExp,Exp,1,2,20\n",
+        encoding="utf-8")
+    summary, facet, missing = project.combined_frames()
+    assert missing == ["rep2"]
+    text = project.stats_text(summary, facet)
+    assert "Members pooled : 1 (rep1)" in text
+    assert "Not analysed   : rep2" in text
