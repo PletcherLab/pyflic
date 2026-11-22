@@ -337,3 +337,14 @@ def test_a_sheet_excel_saved_is_read_and_applied(tmp_path: Path, encoding):
     assert result["counts"] == {"applied": 1}
     assert read_exclusions(root / "ProjA" / "rep1") == {"general": {1: [2]}}
 
+
+def test_a_dotdot_in_a_cell_cannot_reach_a_project_that_is_not_running(tmp_path: Path):
+    """``ProjA/../Sept/ProjB`` opens Sept/ProjB: the scope test must see
+    the Project the write will reach, not the one the cell starts with."""
+    root = _batch_with_sheet(tmp_path, "ProjA,../Sept/ProjB/rep1,1,2,general,b\n")
+    result = batch_mod.apply_exclusion_sheet(
+        root, log=lambda _m: None, projects=["ProjA"])
+    assert result["skipped"] == 1
+    assert read_exclusions(root / "Sept" / "ProjB" / "rep1") == {}
+    assert batch_mod.normalize_key("ProjA/../Sept/./ProjB/") == "Sept/ProjB"
+    assert batch_mod.normalize_key("../elsewhere") == "../elsewhere"

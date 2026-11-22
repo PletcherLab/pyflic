@@ -496,10 +496,21 @@ def normalize_key(value) -> str:
     Sheets are written by hand, so a cell may carry a backslash separator, a
     leading ``./``, a trailing slash, a doubled separator, or an interior
     ``/./`` — all of them name the same Project, and the scope test and the
-    write have to agree about which.
+    write have to agree about which.  An interior ``..`` is taken back as the
+    filesystem will take it: ``ProjA/../ProjB`` opens ``ProjB``, and scoping
+    it as ``ProjA`` let a row write into a Project that was not running.  A
+    ``..`` that climbs above the root is kept, for the write's root-escape
+    refusal to report.
     """
     text = str(value or "").strip().replace("\\", "/")
-    parts = [part for part in text.split("/") if part not in ("", ".")]
+    parts: list[str] = []
+    for part in text.split("/"):
+        if part in ("", "."):
+            continue
+        if part == ".." and parts and parts[-1] != "..":
+            parts.pop()
+        else:
+            parts.append(part)
     return "/".join(parts)
 
 
