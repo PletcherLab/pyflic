@@ -294,15 +294,6 @@ def with_about(config: dict, about) -> dict:
             **{key: value for key, value in config.items() if key != DATA_FOLDER_KEY}}
 
 
-def keep_about_on_disk(config: dict, config_path) -> dict:
-    """*config*, about to be written to *config_path* by a writer that does
-    not edit ``about:``, with the section that file holds now
-    (:func:`about_on_disk`).  A file that is gone or no longer parses leaves
-    *config* with the section it carries."""
-    found, about = about_on_disk(config_path)
-    return with_about(config, about) if found else config
-
-
 def without_run(config: dict) -> dict:
     """*config* without ``about.run``, and without the section when nothing
     else is in it: for a config written into another recording's folder.
@@ -835,6 +826,11 @@ class Project:
         self.experiment_scripts: list[dict] = _script_list("experiment_scripts")
 
         self.warnings: list[str] = []
+        #: The warnings that quote what Members typed in ``about:``: one
+        #: level or factor described two ways.  They are in ``warnings`` too,
+        #: for a person at the Hub, and never on a report
+        #: (:attr:`report_warnings`).
+        self.about_warnings: list[str] = []
         self._resolve_type()
         self._validate_design_match()
 
@@ -1046,8 +1042,9 @@ class Project:
         ## ways is worth knowing before its chambers are pooled as one group.
         from .about import meaning_spread, read_about
 
-        self.warnings.extend(meaning_spread(
-            {name: read_about(self.configs[name]) for name in self.member_names}))
+        self.about_warnings = meaning_spread(
+            {name: read_about(self.configs[name]) for name in self.member_names})
+        self.warnings.extend(self.about_warnings)
         ## Members that inherit everything still load; they just cannot be
         ## read on their own until the Design Copy is written (ADR-0025).
         if self.design_global and design_copy(self.design_global):
@@ -1060,6 +1057,18 @@ class Project:
                     f"{'their configs do' if len(bare) > 1 else 'its config does'} not "
                     f"read on {'their' if len(bare) > 1 else 'its'} own: saving the "
                     f"Project design offers to write it")
+
+    @property
+    def report_warnings(self) -> list[str]:
+        """:attr:`warnings` without :attr:`about_warnings`: what the Project
+        Report, and the AI prompt built from it, may print.
+
+        ``about:`` is never put on a report or in a prompt (ADR-0024), and
+        those warnings quote what Members typed there.  A person still reads
+        them where they work: the Hub's log and a script's ``validate_design``.
+        """
+        quoted = set(self.about_warnings)
+        return [warning for warning in self.warnings if warning not in quoted]
 
     # ------------------------------------------------------------------
     # Slices (ADR-0020)

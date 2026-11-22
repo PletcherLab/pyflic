@@ -115,10 +115,12 @@ def cover_text(project, summary: pd.DataFrame | None,
             "any pooled number in this report:")
         for name in missing:
             lines.append(f"  - {name}")
-    if project.warnings:
+    ## Not project.warnings: some of those quote what members typed in
+    ## about:, which never goes on a report or into a prompt (ADR-0024).
+    if project.report_warnings:
         lines.append("")
         lines.append("Notes on member differences:")
-        for warning in project.warnings:
+        for warning in project.report_warnings:
             lines.append(f"  - {warning}")
     return "\n".join(lines)
 
@@ -333,8 +335,8 @@ def _cover(project, summary: pd.DataFrame, missing: list[str],
             f"{len(exclusions)} chamber(s) excluded across members — {manual} by hand, "
             f"{auto} by the design's cutoffs.", tone="info", title="Exclusions"))
     blocks.extend(_flagged_callouts(project))
-    if project.warnings:
-        blocks.append(rl.Callout("; ".join(project.warnings), tone="warning",
+    if project.report_warnings:
+        blocks.append(rl.Callout("; ".join(project.report_warnings), tone="warning",
                                  title="Member differences"))
     blocks.append(rl.Contents())
     return blocks

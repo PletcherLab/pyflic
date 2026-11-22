@@ -101,6 +101,18 @@ copied one recording's `run:` and title into another.
 - **Still warnings, never errors.**  `pyflic lint` says nothing of `run:`,
   `term:`, `label:`, `role:` or a key it does not know.  Everything ADR-0024
   lists still warns, and nothing in `about:` stops a load, a save or a run.
+  That includes a design whose factor gives one value where a list of levels
+  belongs (`Dose: 2`): the loader reads only the factor names, so such a
+  config loads, and `about.declared_levels` reads the value as the one level
+  it names instead of raising.
+
+- **Nothing typed in `about:` reaches a report or an AI prompt.**  One thing
+  did: the Project's warning that two Members describe a level differently
+  quotes their words, and it was printed on the Project Report's cover, which
+  the AI payload reads.  Those warnings are now `Project.about_warnings`.
+  They stay in `Project.warnings`, which the Hub's log and a script's
+  `validate_design` show to a person, and are left out of
+  `Project.report_warnings`, which is what the report prints.
 
 - **pyflic stays unaware of the catalogue.**  It reads none of its files and
   gains no dependency.  The cache key is unchanged: a config holding `about:`

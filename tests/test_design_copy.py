@@ -405,3 +405,53 @@ def test_a_first_member_that_shares_nothing_leaves_a_scaffold_without_about(tmp_
     config, notes = Project(root).scaffold_member_config("rep2")
     assert "about" not in config
     assert not any(note.startswith("about:") for note in notes)
+
+
+# ---------------------------------------------------------------------------
+# about: never reaches a report or an AI prompt
+# ---------------------------------------------------------------------------
+
+def _two_wordings(tmp_path) -> Path:
+    def member(meaning):
+        return {"about": {"title": "TITLE-ONLY-IN-ABOUT", "purpose": "PURPOSE-ONLY-IN-ABOUT",
+                          "factors": {"Genotype": {"kind": "genotype",
+                                                   "levels": {"MBON10": meaning}}}},
+                "global": COPY, "dfms": DFMS}
+    return _project(tmp_path, {"rep1": member("WORDING-ALPHA"), "rep2": member("WORDING-BETA")})
+
+
+def test_what_members_say_of_a_level_is_a_warning_for_a_person_not_for_the_report(tmp_path):
+    """The warning quotes the Members' own words.  It is shown where a person
+    works; the Project Report, and so any AI prompt built from it, holds none
+    of about: (ADR-0024)."""
+    project = Project(_two_wordings(tmp_path))
+    assert len(project.about_warnings) == 1
+    assert "WORDING-ALPHA" in project.about_warnings[0]
+    assert project.about_warnings[0] in project.warnings      # the Hub and the logs
+    assert not any("WORDING" in w or w.startswith("about:") for w in project.report_warnings)
+    ## Everything else worth a warning still reaches the report.
+    assert project.report_warnings == [w for w in project.warnings
+                                       if w not in project.about_warnings]
+    assert Project(_project(tmp_path / "plain", {"rep1": {"dfms": DFMS}})).about_warnings == []
+
+
+def test_the_project_reports_content_holds_nothing_typed_in_about(tmp_path):
+    import pandas as pd
+
+    from pyflic.base import project_report
+
+    root = _two_wordings(tmp_path)
+    _write(root / "rep3" / "flic_config.yaml", {"dfms": DFMS})   # no copy: a warning
+    project = Project(root)
+    assert any("rep3" in w for w in project.report_warnings)
+
+    ## The cover as text, which the AI payload reads, and the cover's blocks.
+    missing = ["rep1", "rep2", "rep3"]
+    cover = project_report.cover_text(project, None, missing)
+    assert "carries no copy" in cover                         # the other warnings are there
+    blocks = project_report._cover(project, pd.DataFrame(columns=["Treatment"]), missing)
+    shown = cover + "\n" + "\n".join(repr(block) for block in blocks)
+    assert "carries no copy" in shown.split("\n", 1)[1]
+    for typed in ("WORDING-ALPHA", "WORDING-BETA", "TITLE-ONLY-IN-ABOUT",
+                  "PURPOSE-ONLY-IN-ABOUT", "about:"):
+        assert typed not in shown, typed
