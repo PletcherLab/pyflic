@@ -397,6 +397,21 @@ def test_saving_the_default_designation_never_creates_batch_yaml(tmp_path: Path)
     assert batch_mod.load_batch_file(root)["script"] is None
 
 
+def test_a_batch_yaml_that_does_not_parse_is_never_saved_over(tmp_path: Path):
+    """Its central project_scripts: would be lost to a file holding script:
+    alone; the designation is refused and the file left as the person wrote it."""
+    root = tmp_path / "batch"
+    _make_project(root, members=("rep1",))
+    text = "script: Mine\nproject_scripts:\n  - name: Mine\n    steps: [\n"
+    (root / "batch.yaml").write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="batch.yaml"):
+        batch_mod.save_batch_designation(root, "Report Pipeline")
+    (root / "batch.yaml").write_text("- a list\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="batch.yaml"):
+        batch_mod.save_batch_designation(root, None)
+    assert (root / "batch.yaml").read_text(encoding="utf-8") == "- a list\n"
+
+
 def test_a_project_key_cannot_escape_its_batch(tmp_path: Path):
     """The public key→directory resolver, and Exclusion Sheet cells are typed
     by hand."""

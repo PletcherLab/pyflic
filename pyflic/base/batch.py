@@ -421,7 +421,9 @@ def save_batch_designation(path, script_name: str | None) -> None:
 
     The lazy-marker rule: ``None`` (each Project's own default script) never
     CREATES the file — it only clears the ``script:`` key of an existing one.
-    Unknown keys are preserved.
+    Unknown keys are preserved, so a file that does not parse as a mapping
+    raises ``ValueError`` and is left as written: saving over it would keep
+    ``script:`` alone and lose the central ``project_scripts:``.
     """
     file_path = os.path.join(str(path), BATCH_FILENAME)
     exists = os.path.isfile(file_path)
@@ -432,10 +434,11 @@ def save_batch_designation(path, script_name: str | None) -> None:
         try:
             with open(file_path, encoding="utf-8") as handle:
                 payload = yaml.safe_load(handle) or {}
-        except Exception:  # noqa: BLE001
-            payload = {}
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as err:
+            raise ValueError(f"{file_path} cannot be read, so it is not saved over: "
+                             f"{err}") from err
         if not isinstance(payload, dict):
-            payload = {}
+            raise ValueError(f"{file_path} is not a mapping, so it is not saved over.")
     if script_name is None:
         payload.pop("script", None)
     else:
