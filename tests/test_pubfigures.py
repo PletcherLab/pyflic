@@ -276,6 +276,24 @@ def test_hidden_treatment_is_excluded_from_the_figure():
     assert set(data["Treatment"].astype(str)) == {"Ctrl"}
 
 
+def test_two_treatments_given_one_label_stay_two():
+    """A label typed twice, or one that is another treatment's name, made the
+    display categories repeat, and pd.Categorical refused them, so the figure
+    failed; merging them would draw two treatments as one.  Each keeps its
+    points, the repeated label told apart by the treatment's name."""
+    df = pubfigures.faceted_data(_facet_frame(), "PI")
+    spec = pubfigures.default_spec("faceted_pi")
+    spec.treatments = {"Ctrl": {"label": "Fed", "show": True},
+                       "Exp": {"label": "Fed", "show": True}}
+    data, labels, colors = pubfigures._apply_treatment_order(
+        df, spec, pubfigures.PlotStyle())
+    assert labels == ["Fed (Ctrl)", "Fed (Exp)"] and len(colors) == 2
+    counts = data["Treatment"].astype(str).value_counts()
+    assert counts["Fed (Ctrl)"] == counts["Fed (Exp)"] == len(df) // 2
+    figure = pubfigures.build_figure("faceted_pi", df, spec, pubfigures.PlotStyle())
+    assert pubfigures.render_png_bytes(figure, pubfigures.PlotStyle())[:4] == b"\x89PNG"
+
+
 def test_preview_png_is_returned_as_bytes():
     df = pubfigures.faceted_data(_facet_frame(), "PI")
     spec = pubfigures.default_spec("faceted_pi")

@@ -698,11 +698,18 @@ def _apply_treatment_order(data: pd.DataFrame, spec: PlotSpec, style: PlotStyle)
     treatments = merged_treatments(spec, data)
     order = [n for n, e in treatments.items() if e.get("show", True)]
     data = data[data["Treatment"].isin(order)].copy()
-    labels = [str(treatments[n].get("label", n)) for n in order]
+    display = {n: str(treatments[n].get("label", n)) for n in order}
+    ## Two treatments shown under one label would be drawn as one, and
+    ## repeated categories are refused outright: a repeated label is told
+    ## apart by the treatment's own name.
+    repeated = {label for label in display.values()
+                if list(display.values()).count(label) > 1}
+    display = {n: (f"{label} ({n})" if label in repeated else label)
+               for n, label in display.items()}
+    labels = [display[n] for n in order]
     colors = [style.color_for(n, i) for i, n in enumerate(order)]
     data["Treatment"] = pd.Categorical(
-        data["Treatment"].astype(str).map(
-            {n: str(treatments[n].get("label", n)) for n in order}),
+        data["Treatment"].astype(str).map(display),
         categories=labels, ordered=True)
     return data, labels, colors
 
