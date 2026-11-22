@@ -2782,11 +2782,17 @@ class ProgressiveRatioExperiment(TwoWellExperiment):
 
     def _replay_cache(self) -> dict:
         ## Keyed on the groups in the analysis: auto-removal thins the design
-        ## after load, and the contact credit is fitted on what remains.
+        ## after load, and the contact credit is fitted on what remains.  And
+        ## on the DFM objects, as the light QC's cache is: a QC Viewer
+        ## recompute or a parameter sweep swaps in DFMs whose licks differ.
         included = tuple((d, g.number) for d, g in self._group_pairs()
                          if self.design.treatment_for(d, g.paired) is not None)
-        if self._pr_replay is None or self._pr_replay.get("_included") != included:
-            self._pr_replay = {"_included": included}
+        dfms = tuple(self.dfms[d] for d in sorted(self.dfms))
+        cached = self._pr_replay
+        if (cached is None or cached.get("_included") != included
+                or len(cached.get("_dfms", ())) != len(dfms)
+                or any(a is not b for a, b in zip(cached.get("_dfms", ()), dfms))):
+            self._pr_replay = {"_included": included, "_dfms": dfms}
         return self._pr_replay
 
     @staticmethod

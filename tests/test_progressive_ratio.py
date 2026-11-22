@@ -645,3 +645,21 @@ def test_matplotlib_loads_before_qt_in_every_app_module():
                          env={**__import__('os').environ, "QT_QPA_PLATFORM": "offscreen"})
     assert out.returncode == 0, out.stderr[-800:]
     assert out.stdout.strip().endswith("True"), out.stdout
+
+
+def test_the_replay_cache_is_dropped_when_a_dfm_is_replaced(tmp_path):
+    """Like the light QC's cache: a QC Viewer recompute or a parameter sweep
+    swaps in DFMs re-detected under other Parameters, and the Simulated
+    Yoked Breaking Point's contact credit and lick-free lights were still
+    the old DFMs'."""
+    from pr_fixtures import make_pr_experiment_dir
+
+    e = load_experiment_yaml(make_pr_experiment_dir(tmp_path / "pr"), parallel=False,
+                             use_disk_cache=False)
+    e._replay_cache()["fitted"] = "from the old licks"
+    assert "fitted" in e._replay_cache()
+    swapped = {d: dfm.with_params(dfm.params.with_updates(feeding_threshold=40))
+               for d, dfm in e.dfms.items()}
+    e.dfms = swapped
+    e.design = e.design.with_dfms(swapped)
+    assert "fitted" not in e._replay_cache()
