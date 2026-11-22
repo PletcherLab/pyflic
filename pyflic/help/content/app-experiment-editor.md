@@ -32,43 +32,49 @@ pyflic never uses it to analyse; it is for whoever reads the config later.
   measured.
 - **Experimenter** and **Series**: who ran it, and a name shared by replicate recordings
   of the same question.
-- **Recorded**: the start, read from `Program.txt` in the data. It is shown, not saved.
-- **The flies**: organism, sex and age at the start.
+- **Recorded**: the start, read from `Program.txt` in the data, or beside the config in
+  an instrument folder. It is shown, not saved.
+- **The flies**: organism, sex and age at the start. The organism starts as *Drosophila melanogaster*, the lab's usual one, and is saved with the rest; change it, or empty the box to name none.
 - **Protocol and notes**: the protocol's name, version and where it is written down, and
   anything else worth knowing.
+- **From Program.txt**: what each DFM ran, in order and for how long, and which PyMCU
+  wrote the file (`PyMCU 3.x` or `PyMCU 4.x`). `Program.txt` names no protocol and no
+  version, so this is shown, not saved. **Use for protocol** copies it into **Protocol**
+  and **Version** where they are blank; a field you have typed in is left alone. Edit what
+  it writes before you save: the catalogue files it as the protocol's name.
 
 ## Start from another recording
 
-A replicate shares most of its description with the recording before it. **Start from
+A replicate repeats nearly everything about the recording before it. **Start from
 another recording…**, on the About tab and in the File menu, asks for that recording's
-`flic_config.yaml` and fills in this form from it. Nothing is saved until you save.
+`flic_config.yaml` and fills in this form with everything it can take. Nothing is saved
+until you save.
 
-It takes what replicates share:
+It takes:
 
-- the experimenter, the series, the organism, the sex, the age at the start and the
-  protocol;
-- each design factor's kind and what each level means, for the factors and levels this
-  recording declares. A level's registry term comes with its meaning.
-
-It leaves the **title**, the **purpose** and the **notes** as they are, and it never takes
-**Filed as**: those belong to one recording.
-
-A recording with no design yet takes more. When this recording has no design factors and
-no chamber assignments, and is not a member of a Project with a design, the action also
-takes the other recording's:
-
-- **design**: Experiment Type, Chamber Layout, well names, design factors and control
-  level;
-- **chamber map**, for the DFMs this recording's data holds: each chamber's levels and,
+- **the About**: the title, the purpose, the experimenter, the series, the flies, the
+  protocol, the notes, and each design factor's kind and what each level means, with a
+  level's registry term. A field the other recording leaves blank stays as it is here. It
+  never takes **Filed as**: that is the catalogue's id of the other recording.
+- **the design**: Experiment Type, Chamber Layout, well names, design factors and control
+  level. Inside a Project with a design, the design stays the Project's.
+- **the chamber map**, for the DFMs this recording's data holds: each chamber's levels and,
   for a Progressive Ratio type, the chamber groups. A DFM only the other recording has is
-  not added, and a DFM only this one has stays unassigned.
+  not added. When the factors change, a DFM only this recording has is cleared, since its
+  levels would name nothing. Inside a Project, the map is taken when the other
+  recording's factors are the design's.
 
-It takes no analysis setting and none of a DFM's parameter overrides. If you have already
-chosen a type or a single-well layout, or typed a well name or a control level that the
-other recording does not share, it asks before replacing them. Answer **No** and only the
-description is taken. What it says about factors this recording does not declare yet is
-kept, and the editor names them when you save; declare the factor on the Design tab and
-its kind and meanings appear.
+It takes no analysis setting and none of a DFM's parameter overrides, optogenetics or
+notes: the Hub's **Copy config from…** is for those.
+
+**When this recording already says something.** If what it takes would replace anything
+stated here — a title or purpose, an experimenter, a factor's meaning, the type, a well
+name, the factors, a DFM's chambers — it lists each one and asks first. **Yes** replaces
+them all; **No** leaves the recording exactly as it is. A recording with nothing stated
+yet is filled in without a question.
+
+If the other recording names an Experiment Type this one cannot use, it says so and takes
+everything but the design.
 
 ## Design
 

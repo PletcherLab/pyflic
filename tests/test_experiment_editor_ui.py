@@ -100,6 +100,7 @@ def test_saving_changes_only_about_the_design_and_chambers(app, tmp_path):
     assert list(saved) == ["data_folder", "about", "global", "dfms", "scripts"]
     assert saved["about"] == {
         "title": "Hedonic, replicate 1", "experimenter": "scott", "sex": ["female"],
+        "organism": "Drosophila melanogaster",          # the default, when none is named
         "protocol": {"name": "FLIC hedonic"},
         "factors": {"Genotype": {"kind": "genotype", "levels": {"Exp": "R12C11 > GtACR1"}}},
     }
@@ -495,7 +496,7 @@ def test_an_about_that_is_not_a_mapping_is_kept_until_something_is_typed(app, tm
         assert editor.write(path, confirm=False)
     finally:
         editor.close()
-    assert _read(path)["about"] == {"title": "A title"}
+    assert _read(path)["about"] == {"title": "A title", "organism": "Drosophila melanogaster"}
 
 
 # ---------------------------------------------------------------------------
@@ -672,17 +673,19 @@ def test_saving_as_into_another_folder_does_not_take_run_along(app, tmp_path, mo
 
 
 # ---------------------------------------------------------------------------
-# Start from another recording (ADR-0026)
+# Start from another recording (ADR-0027, amending ADR-0026)
 # ---------------------------------------------------------------------------
 #
-# Replicate recordings share most of their description.  The action takes an
-# earlier recording's config and fills the form with its shared About: who
-# ran it, the series, the flies, the protocol, and each factor's kind and each
-# level's whole entry.  The title, the purpose, the notes and run: stay this
-# recording's own.  A recording with no design yet takes the earlier one's
-# design and chamber map too.  Nothing is written until the person saves.
+# Replicate recordings share nearly everything.  The action takes an earlier
+# recording's config and fills the form with everything it can: the whole
+# About but run:, the design (unless a Project design governs this one), and
+# the chamber map for the DFMs this recording's data holds.  What that would
+# replace of what this recording already says is asked about once, and No
+# changes nothing.  Nothing is written until the person saves.
 
 SHARED = ("experimenter", "series", "organism", "sex", "age_at_start", "protocol", "factors")
+#: The earlier recording's whole About but its run:, which is what is taken.
+TAKEN = {k: v for k, v in ABOUT.items() if k != "run"}
 EARLIER = {
     "about": ABOUT,
     "global": FULL["global"],
@@ -712,7 +715,7 @@ def _questions(monkeypatch, answer=QMessageBox.StandardButton.Yes) -> list[str]:
     return asked
 
 
-def test_starting_from_another_recording_fills_only_the_shared_about(
+def test_starting_from_another_recording_takes_everything_but_run_after_asking(
         app, tmp_path, monkeypatch):
     mine = {"run": "R-20261128-scott-01", "title": "Replicate 2", "purpose": "Mine.",
             "notes": "My notes.", "experimenter": "someone", "organism": "D. simulans",
@@ -720,17 +723,35 @@ def test_starting_from_another_recording_fills_only_the_shared_about(
     path = _filed(tmp_path, mine, name="rep2")
     earlier = _earlier(tmp_path)
     before = path.read_bytes()
+
+    ## Declined: nothing changes.
+    asked = _questions(monkeypatch, QMessageBox.StandardButton.No)
+    editor = ExperimentEditor(path)
+    try:
+        form = editor.collect()
+        assert editor.start_from(earlier) is False
+        assert editor.collect() == form
+    finally:
+        editor.close()
+    assert len(asked) == 1
+
     asked = _questions(monkeypatch)
     editor = ExperimentEditor(path)
     try:
         editor.purpose_edit.setPlainText("Mine, as just typed.")
         assert editor.start_from(earlier.parent)             # a folder holding one
         assert path.read_bytes() == before                   # nothing is written yet
-        assert asked == []
-        ## The form shows what was taken, and what stayed.
-        assert editor.title_edit.text() == "Replicate 2"
-        assert editor.purpose_edit.toPlainText() == "Mine, as just typed."
-        assert editor.notes_edit.toPlainText() == "My notes."
+        ## One question names everything stated here that is replaced.
+        assert len(asked) == 1
+        for line in ("Title: Replicate 2 → Hedonic, replicate 1",
+                     "Purpose: Mine, as just typed. →", "Experimenter: someone → scott",
+                     "Organism: D. simulans →", "Notes: My notes. → Lid 3 was replaced."):
+            assert line in asked[0]
+        assert "R-20261128" not in asked[0]                  # run: is not replaced
+        ## The form shows what was taken.
+        assert editor.title_edit.text() == "Hedonic, replicate 1"
+        assert editor.purpose_edit.toPlainText() == ABOUT["purpose"]
+        assert editor.notes_edit.toPlainText() == "Lid 3 was replaced."
         assert editor.run_label.text() == "Filed as R-20261128-scott-01"
         assert editor.experimenter_edit.text() == "scott"
         assert editor.series_edit.text() == "hedonic-2026"
@@ -743,25 +764,35 @@ def test_starting_from_another_recording_fills_only_the_shared_about(
         assert editor.write(path, confirm=False)
     finally:
         editor.close()
-    about = _read(path)["about"]
-    for key in SHARED:
-        assert about[key] == ABOUT[key]                      # mapping keys and all
-    assert about["run"] == "R-20261128-scott-01"
-    assert about["title"] == "Replicate 2"
-    assert about["purpose"] == "Mine, as just typed."
-    assert about["notes"] == "My notes."
-    assert about["x_mine"] is True
-    assert "x_lab" not in about                              # the earlier one's own
+    ## Every field, mapping keys and unknown keys included; never its run:.
+    assert _read(path)["about"] == {**TAKEN, "run": "R-20261128-scott-01", "x_mine": True}
     assert _read(earlier) == EARLIER                         # and it is only read
 
 
-def test_with_a_design_here_only_the_shared_about_is_taken_and_nothing_is_asked(
+def test_a_field_the_earlier_recording_leaves_blank_stays_as_it_is_here(
+        app, tmp_path, monkeypatch):
+    path = _filed(tmp_path, {"title": "Replicate 2", "notes": "My notes."}, name="rep2")
+    earlier = _earlier(tmp_path, {**EARLIER, "about": {"experimenter": "scott",
+                                                       "title": "  ", "notes": None}})
+    asked = _questions(monkeypatch)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(earlier)
+        assert asked == []                                   # nothing stated is replaced
+        assert editor.title_edit.text() == "Replicate 2"
+        assert editor.notes_edit.toPlainText() == "My notes."
+        assert editor.experimenter_edit.text() == "scott"
+    finally:
+        editor.close()
+
+
+def test_a_design_here_is_replaced_with_its_chamber_map_after_asking(
         app, tmp_path, monkeypatch):
     path = _filed(tmp_path, {"title": "Replicate 2"}, name="rep2")
     other = {"about": {**ABOUT, "factors": {
                  "Genotype": {"kind": "genotype",
                               "levels": {"Ctrl": "w1118", "Exp": "the cross",
-                                         "Other": "not used here"}},
+                                         "Other": "the third"}},
                  "Dose": {"kind": "treatment", "levels": {"1": "1 mM"}}}},
              "global": {"chamber_layout": "single_well", "params": {},
                         "experimental_design_factors": {
@@ -771,20 +802,41 @@ def test_with_a_design_here_only_the_shared_about_is_taken_and_nothing_is_asked(
     asked = _questions(monkeypatch)
     editor = ExperimentEditor(path)
     try:
-        design = editor.design_section()
-        chambers = [w.get_dict() for w in editor._dfm_widgets]
         assert editor.start_from(earlier)
-        assert asked == []
-        assert editor.design_section() == design
-        assert [w.get_dict() for w in editor._dfm_widgets] == chambers
+        assert len(asked) == 1
+        for line in ("Experiment Type: Hedonic", "Well A: S5 → none",
+                     "Design factors: Genotype (Ctrl, Exp) → Genotype (Ctrl, Exp, Other); "
+                     "Dose (1)", "Chambers of DFM 1: replaced"):
+            assert line in asked[0]
+        assert editor.type_combo.currentData() == "Custom"
+        assert editor.chamber_layout() == "single_well"
+        assert editor.factor_table.factors() == {"Genotype": ["Ctrl", "Exp", "Other"],
+                                                 "Dose": ["1"]}
+        assert editor._dfm_widgets[0].get_dict()["chambers"] == {1: "Other, 1", 9: "Ctrl, 1"}
         about = editor.about_section()
     finally:
         editor.close()
-    assert about["experimenter"] == "scott"
-    assert about["title"] == "Replicate 2"
-    ## Limited to the factors and levels this recording declares.
-    assert about["factors"] == {"Genotype": {"kind": "genotype",
-                                             "levels": {"Ctrl": "w1118", "Exp": "the cross"}}}
+    assert about["title"] == "Hedonic, replicate 1"
+    assert about["factors"] == other["about"]["factors"]
+
+
+def test_a_dfm_the_earlier_recording_does_not_map_is_cleared_when_the_factors_change(
+        app, tmp_path, monkeypatch):
+    path = tmp_path / "rep2" / "flic_config.yaml"
+    _write(path, {"global": {"chamber_layout": "two_well", "params": {},
+                             "experimental_design_factors": {"Diet": ["Low", "High"]}},
+                  "dfms": [{"id": 1, "chambers": {1: "Low"}},
+                           {"id": 4, "optogenetics": False, "chambers": {2: "High"}}]})
+    asked = _questions(monkeypatch)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(_earlier(tmp_path))
+        assert "Chambers of DFM 4: cleared" in asked[0]
+        assert [w.get_dict() for w in editor._dfm_widgets] == [
+            {"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+            {"id": 4, "optogenetics": False}]                # its own keys stay
+    finally:
+        editor.close()
 
 
 def test_a_new_recording_takes_the_design_and_the_chamber_map_for_its_dfms(
@@ -815,8 +867,7 @@ def test_a_new_recording_takes_the_design_and_the_chamber_map_for_its_dfms(
         editor.close()
     saved = _read(folder / "flic_config.yaml")
     assert list(saved) == ["about", "global", "dfms"]
-    assert saved["about"] == {"title": "Hedonic, replicate 2",
-                              **{key: ABOUT[key] for key in SHARED}}
+    assert saved["about"] == {**TAKEN, "title": "Hedonic, replicate 2"}
     ## The design, and none of the earlier recording's analysis settings.
     assert saved["global"] == {
         "experiment_type": "Hedonic", "well_names": {"A": "S5", "B": "S5Y5"},
@@ -863,17 +914,13 @@ def test_a_design_stated_here_is_replaced_only_after_asking(app, tmp_path, monke
     asked = _questions(monkeypatch, QMessageBox.StandardButton.No)
     editor = ExperimentEditor(path)
     try:
-        assert editor.start_from(earlier)
+        assert editor.start_from(earlier) is False
         assert len(asked) == 1 and "Well A" in asked[0] and "Sucrose" in asked[0]
-        ## Declined: the design and the chambers stay, the shared About is taken.
+        ## Declined: nothing is taken, the About included.
         assert editor.well_a_edit.text() == "Sucrose"
         assert editor.factor_table.factors() == {}
         assert editor._dfm_widgets[0].get_dict() == {"id": 1}
-        assert editor.experimenter_edit.text() == "scott"
-        ## It declares no factors to limit to, so the earlier recording's
-        ## descriptions come along, and the editor says they are undeclared.
-        assert editor.about_section()["factors"] == ABOUT["factors"]
-        assert any("Genotype" in problem for problem in editor.problems())
+        assert editor.experimenter_edit.text() == ""
     finally:
         editor.close()
 
@@ -886,6 +933,7 @@ def test_a_design_stated_here_is_replaced_only_after_asking(app, tmp_path, monke
         assert editor.factor_table.factors() == {"Genotype": ["Ctrl", "Exp"]}
         assert editor._dfm_widgets[0].get_dict() == {"id": 1,
                                                      "chambers": {1: "Ctrl", 2: "Exp"}}
+        assert editor.experimenter_edit.text() == "scott"
     finally:
         editor.close()
     assert _read(path) == stated                             # still nothing written
@@ -908,7 +956,7 @@ def test_a_design_that_agrees_with_what_is_stated_here_is_taken_unasked(
         editor.close()
 
 
-def test_a_member_takes_only_the_shared_about_its_design_is_the_projects(
+def test_a_member_keeps_the_projects_design_and_takes_the_rest(
         app, tmp_path, monkeypatch):
     path = _member(tmp_path, {"dfms": [{"id": 1}]})
     other = {**EARLIER, "global": {**EARLIER["global"],
@@ -921,14 +969,29 @@ def test_a_member_takes_only_the_shared_about_its_design_is_the_projects(
         assert editor.start_from(earlier)
         assert asked == []
         assert editor.well_a_edit.text() == "S5"             # the Project design's
-        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        ## Its factors are the design's, so its chamber map is taken.
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1,
+                                                     "chambers": {1: "Ctrl", 2: "Exp"}}
         assert editor.factor_table.kinds() == {"Genotype": "genotype"}
         assert editor.write(path, confirm=False)
     finally:
         editor.close()
     saved = _read(path)
     assert saved["global"] == project_mod.design_copy(DESIGN)
-    assert saved["about"] == {key: ABOUT[key] for key in SHARED}
+    assert saved["about"] == TAKEN
+
+    ## A recording whose factors are not the design's: its map is not taken.
+    _write(earlier, {**other, "global": {**other["global"],
+                                         "experimental_design_factors": {"Diet": ["Low"]}},
+                     "dfms": [{"id": 1, "chambers": {1: "Low"}}]})
+    _write(path, {"dfms": [{"id": 1}]})
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(earlier)
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        assert editor.factor_table.factors() == DESIGN["experimental_design_factors"]
+    finally:
+        editor.close()
 
 
 def test_the_earlier_recording_may_be_a_member_whose_design_is_its_projects(
@@ -1030,7 +1093,7 @@ def test_a_lab_types_control_level_is_part_of_the_design_taken(app, tmp_path, mo
         for widget in editor._dfm_widgets:
             widget.load_dict({"id": 1}, 2)
         asked = _questions(monkeypatch, QMessageBox.StandardButton.No)
-        assert editor.start_from(earlier)
+        assert editor.start_from(earlier) is False
         assert len(asked) == 1 and "Control Level: Gr5a → w1118" in asked[0]
         assert editor.control_edit.text() == "Gr5a"
     finally:
@@ -1048,7 +1111,7 @@ def test_a_design_of_a_type_unknown_here_is_not_taken(app, tmp_path, monkeypatch
     try:
         assert editor.start_from(earlier)
         assert len(said) == 1 and "GenoPanel" in said[0]
-        ## The design is not guessed at: only the shared About is taken.
+        ## The design is not guessed at, nor a map of factors not declared here.
         assert editor.type_combo.currentData() == "Custom"
         assert editor.factor_table.factors() == {}
         assert editor._dfm_widgets[0].get_dict() == {"id": 1}
@@ -1111,5 +1174,155 @@ def test_a_dfm_in_the_data_with_no_tab_gets_one_when_its_map_is_taken(app, tmp_p
             {"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
             {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}}]
         assert "Not here yet: 5" in editor.data_label.text()
+    finally:
+        editor.close()
+
+
+# ---------------------------------------------------------------------------
+# The protocol, from Program.txt (ADR-0027)
+# ---------------------------------------------------------------------------
+#
+# Program.txt names no protocol and no version.  The About tab shows what the
+# MCU ran and which PyMCU wrote the file, read each time and never saved, and
+# *Use for protocol* copies them into Protocol and Version where those are
+# blank.
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_what_the_program_ran_is_shown_and_copied_only_into_blank_fields(app, tmp_path):
+    folder = tmp_path / "rec"
+    _dfm_csv(folder / "data", 1)
+    (folder / "data" / "Program.txt").write_text((FIXTURES / "Program_v4.txt").read_text())
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor._program_form.isRowVisible(editor._program_row)
+        assert "progressive ratio PR10 5.5 h" in editor.program_label.text()
+        assert "PyMCU 4.x" in editor.program_label.text()
+        editor.protocol_edits["name"].setText("FLIC progressive ratio")
+        assert editor.use_program_for_protocol() == ["version"]
+        assert editor.protocol_edits["name"].text() == "FLIC progressive ratio"
+        assert editor.protocol_edits["version"].text() == "PyMCU 4.x"
+        assert not editor.use_program_button.isEnabled()    # nothing blank to fill
+        editor.protocol_edits["name"].clear()
+        assert editor.use_program_for_protocol() == ["name"]
+        assert editor.protocol_edits["name"].text().startswith("DFM 1: closed loop")
+        assert editor.write(folder / "flic_config.yaml", confirm=False)
+    finally:
+        editor.close()
+    protocol = _read(folder / "flic_config.yaml")["about"]["protocol"]
+    assert protocol["version"] == "PyMCU 4.x"
+
+
+def test_without_a_program_the_row_is_hidden_and_nothing_is_saved_from_it(app, tmp_path):
+    folder = tmp_path / "rec"
+    _dfm_csv(folder / "data", 1)
+    editor = ExperimentEditor(folder)
+    try:
+        assert not editor._program_form.isRowVisible(editor._program_row)
+        assert editor.use_program_for_protocol() == []
+        assert editor.write(folder / "flic_config.yaml", confirm=False)
+    finally:
+        editor.close()
+    ## Nothing from a program; only the organism's default.
+    assert _read(folder / "flic_config.yaml")["about"] == {"organism": "Drosophila melanogaster"}
+
+
+def test_an_instrument_folder_keeps_its_program_beside_the_config(app, tmp_path):
+    """PyMCU writes the DFM files and Program.txt into one folder, and a
+    config may be put straight into it: the start and the program are read
+    there, as the DFMs already were."""
+    folder = tmp_path / "FLICMCU_10_12_2026_20_00"
+    _dfm_csv(folder, 1)
+    (folder / "Program.txt").write_text((FIXTURES / "Program_v4.txt").read_text())
+    editor = ExperimentEditor(folder)
+    try:
+        assert [w._id_spin.value() for w in editor._dfm_widgets] == [1]
+        assert editor.started_label.text() == "Started 2026-10-12 20:00, from Program.txt"
+        assert editor._program_form.isRowVisible(editor._program_row)
+    finally:
+        editor.close()
+
+    ## A config that names its data folder reads the program there and only there.
+    _write(folder / "flic_config.yaml", {"data_folder": "elsewhere", "dfms": []})
+    (folder / "elsewhere").mkdir()
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor.started_label.text().startswith("Program.txt not found")
+        assert not editor._program_form.isRowVisible(editor._program_row)
+    finally:
+        editor.close()
+
+
+# ---------------------------------------------------------------------------
+# Column widths
+# ---------------------------------------------------------------------------
+
+def test_a_factors_name_and_kind_get_room_and_the_levels_do_not_take_it_all(app, tmp_path):
+    editor = ExperimentEditor(tmp_path / "rec")
+    try:
+        editor.factor_table.add_row("Genotype", "genotype", ["Ctrl", "MBON10"])
+        editor.resize(980, 760)
+        editor.show()
+        editor.tabs.setCurrentIndex(1)
+        app.processEvents()
+        for table in (editor.factor_table.table, editor.meaning_table):
+            width = table.viewport().width()
+            first, second, last = (table.columnWidth(c) for c in range(3))
+            assert first >= 0.29 * width and second >= 0.2 * width
+            assert last <= 0.5 * width
+    finally:
+        editor.close()
+
+
+# ---------------------------------------------------------------------------
+# The organism's default (2026-11-22): Drosophila melanogaster, a value and not a hint
+# ---------------------------------------------------------------------------
+
+
+def test_a_recording_that_names_no_organism_saves_drosophila_melanogaster(app, tmp_path):
+    """Nearly every study in the lab is on Drosophila melanogaster, so the box starts with
+    it as a value, which Save writes; a grey hint looked like one but was never saved."""
+    path = tmp_path / "exp" / "flic_config.yaml"
+    _write(path, FULL)
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.organism_edit.text() == "Drosophila melanogaster"
+        assert "Drosophila melanogaster" != editor.organism_edit.placeholderText()
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert _read(path)["about"]["organism"] == "Drosophila melanogaster"
+
+
+def test_an_organism_the_file_names_is_kept(app, tmp_path):
+    path = _filed(tmp_path, {**ABOUT, "organism": "Drosophila simulans"})
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.organism_edit.text() == "Drosophila simulans"
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert _read(path)["about"]["organism"] == "Drosophila simulans"
+
+
+def test_an_organism_emptied_by_the_person_saves_none(app, tmp_path):
+    path = _filed(tmp_path, {k: v for k, v in ABOUT.items() if k != "organism"})
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.organism_edit.text() == "Drosophila melanogaster"
+        editor.organism_edit.clear()
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    assert "organism" not in _read(path)["about"]
+
+
+def test_a_new_recording_starts_with_drosophila_melanogaster(app, tmp_path):
+    folder = tmp_path / "FLICMCU_11_22_2026_09_00"
+    _dfm_csv(folder / "data", 1)
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor.organism_edit.text() == "Drosophila melanogaster"
     finally:
         editor.close()

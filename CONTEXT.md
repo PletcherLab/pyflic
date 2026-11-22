@@ -160,10 +160,11 @@ _Avoid_: metadata, info, notes (one of its fields), description.
 The part of an About that replicate recordings share: experimenter, series,
 organism, sex, age at start, protocol, and each factor's kind and each
 level's whole entry, a mapping's `term:` included. Never the title, the
-purpose, the notes or `run:`, which are one recording's alone. It is what
-*Start from another recording…* in the Experiment Editor takes from an
-earlier recording's config, and what a scaffolded Member takes from the first
-Member (ADR-0026). Copied once and the new recording's own from then on.
+purpose, the notes or `run:`, which are one recording's alone. It is what a
+scaffolded Member takes from the first Member, and what the Hub's *Copy config
+from…* takes (ADR-0026). *Start from another recording…* in the Experiment
+Editor takes more: the whole About but `run:`, with the design and chamber map
+(ADR-0027). Copied once and the new recording's own from then on.
 _Avoid_: template, defaults, inherited about (nothing is inherited).
 
 **Experiment Type**:

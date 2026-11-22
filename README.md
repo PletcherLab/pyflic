@@ -104,8 +104,9 @@ analyses:
 pyflic experiment my_experiment/
 ```
 
-A replicate starts from the recording before it (**Start from another recording…**), so
-nobody types a description twice. A catalogue that files the recording may rewrite the
+A replicate starts from the recording before it (**Start from another recording…**): its
+description, design and chamber map, after asking before anything already stated is
+replaced, so nobody types a description twice. A catalogue that files the recording may rewrite the
 section afterwards; every pyflic editor keeps what it wrote. See
 [`about`](pyflic/help/content/config-structure.md#about).
 

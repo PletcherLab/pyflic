@@ -847,6 +847,84 @@ def read_program(path: str | Path) -> OptoProgram:
 
 
 # ---------------------------------------------------------------------------
+# What ran, in a line for a person
+# ---------------------------------------------------------------------------
+#
+# The export names no protocol and no version.  What it does say is what each
+# DFM ran and for how long, and its shape says which PyMCU wrote it.  The
+# Experiment Editor shows both beside the About's protocol, and copies them
+# there only when asked (ADR-0027).
+
+def _duration_text(minutes: float | None) -> str:
+    if minutes is None:
+        return ""
+    if minutes < 120:
+        return f"{minutes:g} min"
+    return f"{round(minutes / 60, 1):g} h"
+
+
+def _dfm_list(ids: list[int]) -> str:
+    """``DFM 1``, ``DFM 1–3``, ``DFM 1, 3, 5``: consecutive ids as a range."""
+    runs: list[list[int]] = []
+    for dfm_id in sorted(ids):
+        if runs and dfm_id == runs[-1][-1] + 1:
+            runs[-1].append(dfm_id)
+        else:
+            runs.append([dfm_id])
+    return "DFM " + ", ".join(f"{run[0]}–{run[-1]}" if len(run) > 2
+                              else ", ".join(map(str, run)) for run in runs)
+
+
+def _interval_text(interval: ProgramInterval) -> str:
+    """The Program Interval's Paradigm in words: its type, and its name when
+    a person gave it one.  An interval that lights no well is "lights off"."""
+    if not interval.trigger_wells() and not interval.open_wells():
+        return "lights off"
+    paradigm = interval.paradigm
+    if paradigm.generated or type_from_name(paradigm.name) == paradigm.type:
+        return paradigm.type
+    return f"{paradigm.type} {paradigm.name}"
+
+
+def program_summary(program: OptoProgram) -> str:
+    """What the MCU ran, in one line: each DFM's Program Intervals in order
+    with how long each lasted, DFMs that ran the same naming together, e.g.
+    ``DFM 1: closed loop Closed 30 min, then progressive ratio PR10 5.5 h;
+    DFM 2: lights off 6 h``.  A Repeating or Circadian program says so."""
+    if program.grammar == GRAMMAR_SIMPLE or not program.dfms:
+        total = _duration_text(program.duration_min)
+        return "no program: every light off" + (f", {total}" if total else "")
+    same: dict[str, list[int]] = {}
+    for dfm_id, section in sorted(program.dfms.items()):
+        steps: list[list] = []
+        for interval in section.intervals:
+            text = _interval_text(interval)
+            if steps and steps[-1][0] == text:
+                steps[-1][1] += interval.duration_min
+            else:
+                steps.append([text, interval.duration_min])
+        line = ", then ".join(f"{text} {_duration_text(minutes)}"
+                              for text, minutes in steps) or "no intervals"
+        kind = str(section.program_type or "").strip().lower()
+        if kind in ("repeating", "circadian"):
+            line += f" ({kind})"
+        same.setdefault(line, []).append(dfm_id)
+    return "; ".join(f"{_dfm_list(ids)}: {line}" for line, ids in same.items())
+
+
+def pymcu_version(program: OptoProgram) -> str | None:
+    """Which PyMCU wrote the export, as far as its shape tells: ``PyMCU 3.x``
+    for the legacy export, ``PyMCU 4.x`` for 4.0.0's.  ``None`` for the
+    simple export, which both write.  A 4.0.1 export that uses nothing new
+    reads as 4.0.0's, so no finer version is claimed."""
+    if program.grammar == GRAMMAR_LEGACY:
+        return "PyMCU 3.x"
+    if program.grammar == GRAMMAR_V4:
+        return "PyMCU 4.x"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # The parser
 # ---------------------------------------------------------------------------
 

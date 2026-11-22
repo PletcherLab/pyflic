@@ -596,3 +596,32 @@ def test_a_v4_mismatch_is_checked_against_the_paradigm(tmp_path):
         e = load_experiment_yaml(root, parallel=False, use_disk_cache=False)
     assert oq.PROGRAM_MISMATCH in e.opto.result(1).flags
     assert any("OptoFreq is 50, the program says 40 Hz" in n for n in e.opto.result(1).notes)
+
+
+# ---------------------------------------------------------------------------
+# What ran, in a line for a person (ADR-0027)
+# ---------------------------------------------------------------------------
+#
+# Program.txt names no protocol and no version.  The Experiment Editor shows
+# what each DFM ran and which PyMCU wrote the file, and copies them into the
+# About's protocol only when asked.
+
+def test_the_summary_says_what_each_dfm_ran_in_order(v4):
+    ## A Paradigm a person named is named; PyMCU's generated name is not; an
+    ## interval that lights no well is "lights off".
+    assert op.program_summary(v4) == (
+        "DFM 1: closed loop Closed 30 min, then progressive ratio PR10 5.5 h; "
+        "DFM 2: lights off 6 h; DFM 3: closed loop 6 h")
+    assert op.pymcu_version(v4) == "PyMCU 4.x"
+
+
+def test_dfms_that_ran_the_same_are_named_together_and_a_repeat_is_said():
+    legacy = op.read_program(LEGACY)
+    assert op.program_summary(legacy) == "DFM 1–8: progressive ratio 24 h (repeating)"
+    assert op.pymcu_version(legacy) == "PyMCU 3.x"
+
+
+def test_a_recording_without_a_program_says_so_and_claims_no_version():
+    simple = op.read_program(SIMPLE)
+    assert op.program_summary(simple) == "no program: every light off, 3 h"
+    assert op.pymcu_version(simple) is None

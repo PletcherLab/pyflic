@@ -2,6 +2,11 @@
 status: accepted
 ---
 
+> Amended by ADR-0027: *Start from another recording…* now takes the whole
+> About but `run:`, and the design and chamber map, asking once before it
+> replaces anything stated here; No changes nothing.  Scaffolding and *Copy
+> config from…* still take the shared About alone.
+
 # A catalogue may rewrite `about:`, and pyflic keeps what it does not edit
 
 Amends ADR-0024 in one sentence: "Scaffolding a Member does not copy another
