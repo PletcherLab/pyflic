@@ -331,7 +331,9 @@ def load_experiment_yaml(
         raise FileNotFoundError(
             f"{config_name} not found in experiment directory: {resolved_experiment_dir}"
         )
-    cfg = yaml.safe_load(path.read_text())
+    ## UTF-8, as every editor writes it: the locale's encoding is cp1252 on
+    ## Windows, where "10 µM" read as "10 ÂµM".
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     if not isinstance(cfg, Mapping):
         raise ValueError("YAML root must be a mapping/object.")
     ## What this load's results will be computed from, taken from the files as

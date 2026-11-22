@@ -201,6 +201,28 @@ def test_a_cache_hit_keeps_a_treatment_named_like_a_missing_value(tmp_path: Path
     assert second["Treatment"].tolist() == first["Treatment"].tolist()
 
 
+def test_the_config_is_read_as_utf8_whatever_the_locale(tmp_path: Path, monkeypatch):
+    """Every editor writes flic_config.yaml as UTF-8.  The loader read it in
+    the locale's encoding, which on Windows is cp1252: "10 µM" loaded as
+    "10 ÂµM", and the stale rule, which reads UTF-8, then saw a change that
+    never happened.  Windows' default is emulated here."""
+    proj = tmp_path / "proj"
+    _write_yaml(proj)
+    cfg = (proj / "flic_config.yaml").read_text(encoding="utf-8")
+    cfg = cfg.replace("Treatment: [Ctrl, Exp]", "Dose: [10 µM, Ctrl]")
+    cfg = cfg.replace(": Exp\n", ": 10 µM\n")
+    (proj / "flic_config.yaml").write_text(cfg, encoding="utf-8")
+    _write_synthetic_csv(proj, dfm_id=1)
+    original = Path.read_text
+
+    def locale_default(self, encoding=None, errors=None, newline=None):
+        return original(self, encoding=encoding or "cp1252", errors=errors, newline=newline)
+
+    monkeypatch.setattr(Path, "read_text", locale_default)
+    exp = load_experiment_yaml(proj, parallel=False, use_disk_cache=False)
+    assert set(exp.feeding_summary()["Treatment"]) == {"Ctrl", "10 µM"}
+
+
 def test_another_config_in_the_folder_is_not_served_the_first_ones_summary(tmp_path: Path):
     """The key hashed flic_config.yaml whatever config the load read, so a
     load of another config with the same global: got the first one's
