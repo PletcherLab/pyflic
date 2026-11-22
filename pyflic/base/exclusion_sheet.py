@@ -148,11 +148,19 @@ def _canon(header) -> str:
 
 
 def _read_frame(path):
+    """The sheet as text cells.  A ``.csv`` is decoded as Excel may have
+    saved it (:func:`pyflic.base.exclusions.read_csv_text`): one accented
+    character in a Windows-1252 file made the whole sheet unreadable, and at
+    a Project root :func:`looks_like_sheet` then took it for no sheet at all."""
+    import io
+
     import pandas as pd
+
+    from .exclusions import read_csv_text
 
     if str(path).lower().endswith((".xlsx", ".xls")):
         return pd.read_excel(path, dtype=str)
-    return pd.read_csv(path, dtype=str)
+    return pd.read_csv(io.StringIO(read_csv_text(path)), dtype=str)
 
 
 def read_sheet(path) -> list[SheetRow]:

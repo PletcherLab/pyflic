@@ -17,10 +17,31 @@ CSV format::
 from __future__ import annotations
 
 import csv
+import io
 from pathlib import Path
 
 _FILENAME = "remove_chambers.csv"
 _FIELDNAMES = ["group", "dfm_id", "chamber", "note"]
+
+
+def read_csv_text(path: str | Path) -> str:
+    """The text of a CSV a person may have saved from Excel.
+
+    Excel's "CSV UTF-8" starts the file with a byte-order mark, which as
+    plain UTF-8 makes the first header ``\ufeffgroup``, so no row had a group;
+    its "CSV (Comma delimited)" writes Windows-1252, where one ``°`` or ``é``
+    is not UTF-8 and the whole file failed to decode.  Either way every
+    declaration in it vanished without a word.  UTF-8 (with or without the
+    mark) is tried first, then Windows-1252, then Latin-1, which reads any
+    bytes.  ``OSError`` is the caller's.
+    """
+    data = Path(path).read_bytes()
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1")
 
 
 def read_exclusions(experiment_dir: str | Path) -> dict[str, dict[int, list[int]]]:
@@ -34,21 +55,20 @@ def read_exclusions(experiment_dir: str | Path) -> dict[str, dict[int, list[int]
         return {}
     result: dict[str, dict[int, list[int]]] = {}
     try:
-        with path.open(newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                group = str(row.get("group", "") or "").strip()
-                try:
-                    dfm_id = int(row["dfm_id"])
-                    chamber = int(row["chamber"])
-                except (KeyError, ValueError, TypeError):
-                    continue
-                if not group:
-                    continue
-                group_dict = result.setdefault(group, {})
-                chambers = group_dict.setdefault(dfm_id, [])
-                if chamber not in chambers:
-                    chambers.append(chamber)
+        reader = csv.DictReader(io.StringIO(read_csv_text(path), newline=""))
+        for row in reader:
+            group = str(row.get("group", "") or "").strip()
+            try:
+                dfm_id = int(row["dfm_id"])
+                chamber = int(row["chamber"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if not group:
+                continue
+            group_dict = result.setdefault(group, {})
+            chambers = group_dict.setdefault(dfm_id, [])
+            if chamber not in chambers:
+                chambers.append(chamber)
     except Exception:  # noqa: BLE001
         return {}
     for group_dict in result.values():
@@ -72,17 +92,16 @@ def read_exclusion_notes(
         return {}
     result: dict[str, dict[tuple[int, int], str]] = {}
     try:
-        with path.open(newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                group = str(row.get("group", "") or "").strip()
-                try:
-                    key = (int(row["dfm_id"]), int(row["chamber"]))
-                except (KeyError, ValueError, TypeError):
-                    continue
-                if not group:
-                    continue
-                result.setdefault(group, {})[key] = str(
-                    row.get("note", "") or "").strip()
+        for row in csv.DictReader(io.StringIO(read_csv_text(path), newline="")):
+            group = str(row.get("group", "") or "").strip()
+            try:
+                key = (int(row["dfm_id"]), int(row["chamber"]))
+            except (KeyError, ValueError, TypeError):
+                continue
+            if not group:
+                continue
+            result.setdefault(group, {})[key] = str(
+                row.get("note", "") or "").strip()
     except Exception:  # noqa: BLE001
         return {}
     return result
@@ -120,17 +139,15 @@ def write_exclusions(
     path = Path(experiment_dir) / _FILENAME
     notes = notes or {}
 
-    # Preserve rows that belong to other groups
+    # Preserve rows that belong to other groups.  A file that cannot be read
+    # raises rather than being replaced by this one group: the rows it holds
+    # are other analyses' declarations, and the audit trail besides.
     existing_rows: list[dict] = []
     if path.exists():
-        try:
-            with path.open(newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    if str(row.get("group", "") or "").strip() != group:
-                        existing_rows.append(dict(row))
-        except Exception:  # noqa: BLE001
-            existing_rows = []
+        reader = csv.DictReader(io.StringIO(read_csv_text(path), newline=""))
+        for row in reader:
+            if str(row.get("group", "") or "").strip() != group:
+                existing_rows.append(dict(row))
 
     # Build new rows for the updated group
     new_rows: list[dict] = []

@@ -272,3 +272,68 @@ def test_the_sheet_is_found_whatever_case_excel_saved_it_in(tmp_path: Path):
     (tmp_path / "Remove_Chambers.csv").write_text(
         "project,member,dfm,chamber\n", encoding="utf-8")
     assert sheet_mod.find_sheet(tmp_path) is not None
+
+
+# ---------------------------------------------------------------------------
+# Files Excel saved: a byte-order mark, or Windows' own encoding
+# ---------------------------------------------------------------------------
+
+#: Excel's "CSV UTF-8" starts the file with a byte-order mark; its plain
+#: "CSV (Comma delimited)" writes Windows-1252, where ° and é are one byte
+#: each and not UTF-8.
+_EXCEL_ENCODINGS = [("utf-8-sig", "CSV UTF-8"), ("cp1252", "CSV (Comma delimited)")]
+
+
+@pytest.mark.parametrize("encoding", [e for e, _label in _EXCEL_ENCODINGS])
+def test_a_members_file_excel_saved_keeps_its_exclusions(tmp_path: Path, encoding):
+    from pyflic.base.exclusions import read_exclusion_notes
+
+    (tmp_path / "remove_chambers.csv").write_bytes(
+        "group,dfm_id,chamber,note\ngeneral,1,3,dead at 25°C\ndead,2,5,décédée\n"
+        .encode(encoding))
+    assert read_exclusions(tmp_path) == {"general": {1: [3]}, "dead": {2: [5]}}
+    assert read_exclusion_notes(tmp_path) == {
+        "general": {(1, 3): "dead at 25°C"}, "dead": {(2, 5): "décédée"}}
+
+
+@pytest.mark.parametrize("encoding", [e for e, _label in _EXCEL_ENCODINGS])
+def test_writing_one_group_keeps_the_others_of_a_file_excel_saved(tmp_path: Path, encoding):
+    from pyflic.base.exclusions import read_exclusion_notes, write_exclusions
+
+    (tmp_path / "remove_chambers.csv").write_bytes(
+        "group,dfm_id,chamber,note\ngeneral,1,3,dead at 25°C\ndead,2,5,\n"
+        .encode(encoding))
+    write_exclusions(tmp_path, "early", {1: [6]})
+    assert read_exclusions(tmp_path) == {
+        "general": {1: [3]}, "dead": {2: [5]}, "early": {1: [6]}}
+    assert read_exclusion_notes(tmp_path)["general"] == {(1, 3): "dead at 25°C"}
+
+
+def test_a_file_that_cannot_be_read_is_never_written_over(tmp_path: Path, monkeypatch):
+    """Rewriting one group keeps every other group's rows, so a file whose
+    rows cannot be read is refused rather than replaced by the one group."""
+    from pyflic.base import exclusions
+
+    path = tmp_path / "remove_chambers.csv"
+    path.write_text("group,dfm_id,chamber,note\ngeneral,1,3,x\n", encoding="utf-8")
+
+    def broken(_path):
+        raise OSError("locked by another program")
+
+    monkeypatch.setattr(exclusions, "read_csv_text", broken)
+    with pytest.raises(OSError, match="locked"):
+        exclusions.write_exclusions(tmp_path, "early", {1: [6]})
+    assert path.read_text(encoding="utf-8") == "group,dfm_id,chamber,note\ngeneral,1,3,x\n"
+
+
+@pytest.mark.parametrize("encoding", [e for e, _label in _EXCEL_ENCODINGS])
+def test_a_sheet_excel_saved_is_read_and_applied(tmp_path: Path, encoding):
+    root = _batch_with_sheet(tmp_path, "")
+    (root / "remove_chambers.csv").write_bytes(
+        "project,member,dfm,chamber,group,reason\nProjA,rep1,1,2,general,mort à 25°C\n"
+        .encode(encoding))
+    assert sheet_mod.looks_like_sheet(root / "remove_chambers.csv")
+    result = batch_mod.apply_exclusion_sheet(root, log=lambda _m: None)
+    assert result["counts"] == {"applied": 1}
+    assert read_exclusions(root / "ProjA" / "rep1") == {"general": {1: [2]}}
+
