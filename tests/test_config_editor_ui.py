@@ -1205,3 +1205,28 @@ def test_save_as_into_another_folder_does_not_take_run_along(app, tmp_path, monk
         win.close()
     assert _saved(other)["about"] == {k: v for k, v in AS_FILED.items() if k != "run"}
     assert _saved(path)["about"] == AS_FILED                 # the one it was read from
+
+
+def test_a_save_keeps_what_others_wrote_since_the_file_was_opened(app, tmp_path):
+    """The Script Editor writes scripts: and a Hub tick writes the Selection
+    (global.omit) while this editor may have the file open; neither has a
+    field here, and a save wrote back the copy read when the file was opened,
+    undoing both.  It now writes what the file holds at the save."""
+    win = _open(app, tmp_path, {
+        "global": {"chamber_layout": "single_well", "omit": {"items": ["old"]}},
+        "dfms": [{"id": 1, "chambers": {1: "Ctrl"}}],
+        "scripts": [{"name": "mine", "steps": []}],
+        "lab_note": "as opened"})
+    try:
+        path = tmp_path / "flic_config.yaml"
+        disk = yaml.safe_load(path.read_text(encoding="utf-8"))
+        disk["scripts"].append({"name": "added elsewhere", "steps": []})
+        disk["global"]["omit"] = {"items": ["ticked in the hub"]}
+        del disk["lab_note"]
+        path.write_text(yaml.safe_dump(disk, sort_keys=False), encoding="utf-8")
+        saved = win._collect_yaml()
+        assert [s["name"] for s in saved["scripts"]] == ["mine", "added elsewhere"]
+        assert saved["global"]["omit"] == {"items": ["ticked in the hub"]}
+        assert "lab_note" not in saved
+    finally:
+        win.close()

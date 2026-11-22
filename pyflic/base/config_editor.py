@@ -3140,7 +3140,53 @@ class FLICConfigEditor(QMainWindow):
         else:
             cfg["global"] = self._global_section()
         cfg["dfms"] = [w.get_dict() for w in self._dfm_widgets]
+        cfg = self._with_unedited_on_disk(cfg)
         return self._with_about_on_disk(self._with_data_folder(cfg))
+
+    def _with_unedited_on_disk(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        """*cfg* with what this editor has no field for as the file holds it
+        **now**: every top-level key but ``global:``, ``dfms:``, ``about:``
+        (:meth:`_with_about_on_disk`) and ``data_folder:``, and a standalone
+        config's Selection (``global.omit``).
+
+        The Script Editor writes ``scripts:`` and a Hub tick writes the
+        Selection, each perhaps while this editor has the file open, and a
+        save wrote back the copy read when it was opened, undoing them.  Only
+        a save over the file that was opened reads it again; a file that is
+        gone or no longer parses keeps what was loaded.
+        """
+        if (self._current_path is None or self._loaded_path is None
+                or not _same_path(self._current_path, self._loaded_path)):
+            return cfg
+        try:
+            disk = yaml.safe_load(self._current_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            return cfg
+        if not isinstance(disk, dict):
+            return cfg
+        from .about import ABOUT_KEY
+        from .layout import DATA_FOLDER_KEY
+
+        edited = {"global", "dfms", "DFMs", ABOUT_KEY, DATA_FOLDER_KEY}
+        out: dict[str, Any] = {}
+        for key, value in cfg.items():
+            if key in edited:
+                out[key] = value
+            elif key in disk:
+                out[key] = disk[key]
+        for key, value in disk.items():
+            if key not in edited and key not in out:
+                out[key] = value
+        if not self._design and isinstance(out.get("global"), dict):
+            section = dict(out["global"])
+            on_disk = disk.get("global") if isinstance(disk.get("global"), dict) else {}
+            omit = self._slices_widget.follow_renames(on_disk.get("omit"))
+            if omit:
+                section["omit"] = omit
+            else:
+                section.pop("omit", None)
+            out["global"] = section
+        return out
 
     def _with_about_on_disk(self, cfg: dict[str, Any]) -> dict[str, Any]:
         """*cfg* with the ``about:`` its file holds now (ADR-0026).
