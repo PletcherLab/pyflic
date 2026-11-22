@@ -1994,8 +1994,12 @@ class DFM:
             return fig
         fig, ax = _subplots(figsize=(10, 4))
         if "LicksA" in binned.columns:
+            from .utils import lick_total
+
             binned = binned.copy()
-            binned["LicksTotal"] = binned["LicksA"] + binned["LicksB"]
+            ## (A + B)^¼ on the fourth-root scale, never A^¼ + B^¼.
+            binned["LicksTotal"] = lick_total(binned["LicksA"], binned["LicksB"],
+                                              transformed=transform_licks)
             for chamber, grp in binned.groupby("Chamber"):
                 ax.plot(grp["Minutes"], grp["LicksTotal"], marker="o", linewidth=1.0, label=f"Ch{int(chamber)}")
             ax.set_ylabel("Transformed Licks" if transform_licks else "Licks")

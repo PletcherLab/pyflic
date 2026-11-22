@@ -155,6 +155,23 @@ def test_parameter_sensitivity_recomputes_a_serial_experiment(experiment):
             assert tc.dfm is experiment.dfms[tc.dfm_id]
 
 
+def test_the_binned_licks_plot_totals_two_wells_on_the_fourth_root_scale(experiment):
+    """(A + B)^¼, the rule utils.lick_total states, never A^¼ + B^¼."""
+    import matplotlib.pyplot as plt
+
+    dfm = experiment.dfms[1]
+    binned = dfm.binned_feeding_summary(binsize_min=1.0, transform_licks=True)
+    fig = dfm.plot_binned_licks(binsize_min=1.0, transform_licks=True)
+    try:
+        line = fig.axes[0].get_lines()[0]
+        first = binned[binned["Chamber"] == binned["Chamber"].min()]
+        expected = (first["LicksA"] ** 4 + first["LicksB"] ** 4) ** 0.25
+        assert np.allclose(line.get_ydata(), expected.to_numpy())
+        assert (first["LicksA"] + first["LicksB"] > expected + 1e-9).any()
+    finally:
+        plt.close(fig)
+
+
 def test_yaml_lint_clean_config(tmp_path: Path):
     from pyflic.base.yaml_lint import lint_flic_config
     proj = tmp_path / "p"
