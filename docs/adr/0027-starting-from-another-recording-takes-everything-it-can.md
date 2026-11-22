@@ -2,6 +2,10 @@
 status: accepted
 ---
 
+> Amended by ADR-0028: each DFM's PI Direction, the side well A is on, is taken
+> too, where the other recording states one.  A DFM's other overrides,
+> optogenetics and notes are still never taken.
+
 # Starting from another recording takes everything it can, and asks before replacing
 
 Amends ADR-0026's *Start from another recording…*, which took only the

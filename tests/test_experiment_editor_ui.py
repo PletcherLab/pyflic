@@ -679,7 +679,8 @@ def test_saving_as_into_another_folder_does_not_take_run_along(app, tmp_path, mo
 # Replicate recordings share nearly everything.  The action takes an earlier
 # recording's config and fills the form with everything it can: the whole
 # About but run:, the design (unless a Project design governs this one), and
-# the chamber map for the DFMs this recording's data holds.  What that would
+# the chamber map and each DFM's PI Direction (ADR-0028) for the DFMs this
+# recording's data holds.  What that would
 # replace of what this recording already says is asked about once, and No
 # changes nothing.  Nothing is written until the person saves.
 
@@ -833,7 +834,8 @@ def test_a_dfm_the_earlier_recording_does_not_map_is_cleared_when_the_factors_ch
         assert editor.start_from(_earlier(tmp_path))
         assert "Chambers of DFM 4: cleared" in asked[0]
         assert [w.get_dict() for w in editor._dfm_widgets] == [
-            {"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+            {"id": 1, "params": {"pi_direction": "right"},   # its side (ADR-0028)
+             "chambers": {1: "Ctrl", 2: "Exp"}},
             {"id": 4, "optogenetics": False}]                # its own keys stay
     finally:
         editor.close()
@@ -856,9 +858,11 @@ def test_a_new_recording_takes_the_design_and_the_chamber_map_for_its_dfms(
         assert editor.well_a_edit.text() == "S5"
         ## The chamber map of the DFMs this recording's data holds: DFM 2 is
         ## the earlier recording's alone, and DFM 5 this one's.  A DFM's
-        ## overrides and notes are the earlier recording's own.
+        ## other overrides and notes are the earlier recording's own; its
+        ## side is taken (ADR-0028).
         assert [w.get_dict() for w in editor._dfm_widgets] == [
-            {"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+            {"id": 1, "params": {"pi_direction": "right"},   # its side (ADR-0028)
+             "chambers": {1: "Ctrl", 2: "Exp"}},
             {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}},
             {"id": 5}]
         editor.title_edit.setText("Hedonic, replicate 2")
@@ -896,7 +900,8 @@ def test_a_progressive_ratio_replicate_takes_its_chamber_groups_with_the_map(
         assert editor.start_from(earlier)
         assert editor.type_combo.currentData() == "ProgressiveRatio"
         assert [w.get_dict() for w in editor._dfm_widgets] == [
-            {"id": 1, "paired_chambers": [1, 4, 5], "chambers": six},
+            {"id": 1, "params": {"pi_direction": "left"},    # its side (ADR-0028)
+             "paired_chambers": [1, 4, 5], "chambers": six},
             {"id": 2, "chamber_groups": "single", "chambers": six},
             {"id": 3, "chambers": six}]                      # its groups: Program.txt's
     finally:
@@ -932,6 +937,7 @@ def test_a_design_stated_here_is_replaced_only_after_asking(app, tmp_path, monke
         assert editor.well_a_edit.text() == "S5"
         assert editor.factor_table.factors() == {"Genotype": ["Ctrl", "Exp"]}
         assert editor._dfm_widgets[0].get_dict() == {"id": 1,
+                                                     "params": {"pi_direction": "right"},
                                                      "chambers": {1: "Ctrl", 2: "Exp"}}
         assert editor.experimenter_edit.text() == "scott"
     finally:
@@ -971,6 +977,7 @@ def test_a_member_keeps_the_projects_design_and_takes_the_rest(
         assert editor.well_a_edit.text() == "S5"             # the Project design's
         ## Its factors are the design's, so its chamber map is taken.
         assert editor._dfm_widgets[0].get_dict() == {"id": 1,
+                                                     "params": {"pi_direction": "right"},
                                                      "chambers": {1: "Ctrl", 2: "Exp"}}
         assert editor.factor_table.kinds() == {"Genotype": "genotype"}
         assert editor.write(path, confirm=False)
@@ -1171,7 +1178,8 @@ def test_a_dfm_in_the_data_with_no_tab_gets_one_when_its_map_is_taken(app, tmp_p
         assert editor._dfm_widgets == []
         assert editor.start_from(_earlier(tmp_path))
         assert [w.get_dict() for w in editor._dfm_widgets] == [
-            {"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+            {"id": 1, "params": {"pi_direction": "right"},   # its side (ADR-0028)
+             "chambers": {1: "Ctrl", 2: "Exp"}},
             {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}}]
         assert "Not here yet: 5" in editor.data_label.text()
     finally:

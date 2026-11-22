@@ -164,7 +164,7 @@ purpose, the notes or `run:`, which are one recording's alone. It is what a
 scaffolded Member takes from the first Member, and what the Hub's *Copy config
 from…* takes (ADR-0026). *Start from another recording…* in the Experiment
 Editor takes more: the whole About but `run:`, with the design and chamber map
-(ADR-0027). Copied once and the new recording's own from then on.
+(ADR-0027), and each DFM's PI Direction (ADR-0028). Copied once and the new recording's own from then on.
 _Avoid_: template, defaults, inherited about (nothing is inherited).
 
 **Experiment Type**:

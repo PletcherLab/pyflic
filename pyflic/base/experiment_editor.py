@@ -1232,7 +1232,12 @@ class ExperimentEditor(QMainWindow):
           when no data is found): each chamber's levels and, for Progressive
           Ratio, the chamber groups.  Taken with its design, or without it
           when its factors are the ones this recording declares.  When the
-          factors change, a DFM it has no map for is cleared here.
+          factors change, a DFM it has no map for is cleared here;
+        * each DFM's PI Direction, the side well A is on, where it states one
+          for a DFM this recording's data holds and the layout has two wells
+          (ADR-0028).  It says how the DFM was set up, not what the design is,
+          so it is taken with or without the map.  A DFM's other overrides,
+          its optogenetics and notes are that recording's own.
 
         Whatever that replaces of what this recording already says is listed
         in one question first, and No changes nothing.  Nothing is written:
@@ -1254,6 +1259,7 @@ class ExperimentEditor(QMainWindow):
         takes_map = theirs is not None or list(_declared(their_design)) == list(factors_now)
         load, clear = self._map_plan(other, clear_rest=theirs is not None
                                      and factors != factors_now) if takes_map else ({}, [])
+        sides = self._side_plan(other)
         mine = self.about_section()
         earlier = about_mod.read_about(other)
         merged = _about_taken(mine, earlier, factors or None)
@@ -1262,6 +1268,7 @@ class ExperimentEditor(QMainWindow):
         if theirs is not None:
             changes += self._design_changes(theirs)
         changes += self._map_changes(load, clear)
+        changes += self._side_changes(sides)
         if changes and not self._confirm_replace(config, changes):
             self.statusBar().showMessage(f"Nothing was taken from {config}.")
             return False
@@ -1273,6 +1280,9 @@ class ExperimentEditor(QMainWindow):
         mapped = self._take_map(load, clear)
         if mapped:
             took.append(f"the chamber map of DFM {', '.join(map(str, mapped))}")
+        sided = self._take_sides(sides)
+        if sided:
+            took.append(f"the PI Direction of DFM {', '.join(map(str, sided))}")
         raw = {k: v for k, v in self._loaded_raw.items() if k != about_mod.ABOUT_KEY}
         self._loaded_raw = {**raw, about_mod.ABOUT_KEY: merged} if merged else raw
         self._load_about(merged)
@@ -1417,7 +1427,8 @@ class ExperimentEditor(QMainWindow):
         *other* maps, the map it would show; and, with *clear_rest*, the DFMs
         here with chambers assigned that *other* has no map for, whose levels
         the new factors would not know.  A DFM's overrides, optogenetics and
-        notes are that recording's own, and are never part of it."""
+        notes are that recording's own, and are never part of it; its PI
+        Direction is taken apart from the map (:meth:`_side_plan`)."""
         theirs_by_id = {node["id"]: node for node in dfm_nodes(other)}
         tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
         load: dict[int, dict] = {}
@@ -1446,6 +1457,50 @@ class ExperimentEditor(QMainWindow):
             lines.append(f"Chambers of DFM {', '.join(map(str, clear))}: cleared, since "
                          "that recording maps none and the factors change")
         return lines
+
+    def _side_plan(self, other: dict) -> dict[int, str]:
+        """Each DFM's PI Direction to take from the config *other*
+        (ADR-0028): for each DFM this recording's data holds (its tabs, when
+        no data is found), the side well A is on, where *other* states one for
+        that DFM, legacy ``pi_multiplier`` included.  A DFM it states none for
+        keeps its own here, as an About field it leaves blank does."""
+        from .yaml_config import _normalize_param_overrides
+
+        theirs_by_id = {node["id"]: node for node in dfm_nodes(other)}
+        tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
+        sides: dict[int, str] = {}
+        for dfm_id in (self._found_dfms() or sorted(tabs)):
+            node = theirs_by_id.get(dfm_id) or {}
+            params = node.get("params", node.get("parameters"))
+            try:
+                side = _normalize_param_overrides(params).get("pi_direction") \
+                    if isinstance(params, dict) else None
+            except (TypeError, ValueError):
+                side = None                    # not a side the loader takes
+            if side is not None:
+                sides[dfm_id] = side
+        return sides
+
+    def _side_changes(self, sides: dict[int, str]) -> list[str]:
+        """The sides stated here that *sides* would replace."""
+        tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
+        replaced = []
+        for dfm_id, side in sides.items():
+            here = tabs[dfm_id].pi_direction() if dfm_id in tabs else None
+            if here is not None and here != side:
+                replaced.append(f"DFM {dfm_id} {here} → {side}")
+        return [f"PI Direction: {', '.join(replaced)}"] if replaced else []
+
+    def _take_sides(self, sides: dict[int, str]) -> list[int]:
+        """Give each listed DFM its side from *sides*; none on a one-well
+        layout, whose chambers have no side.  Returns the DFMs given one."""
+        if _layout_chamber_size(self.chamber_layout()) != 2:
+            return []
+        tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
+        taken = [dfm_id for dfm_id in sides if dfm_id in tabs]
+        for dfm_id in taken:
+            tabs[dfm_id].set_pi_direction(sides[dfm_id])
+        return taken
 
     def _show_design(self, theirs: dict) -> None:
         """Show the design *theirs*, and fit every DFM tab to it."""
@@ -1591,11 +1646,13 @@ class ExperimentEditor(QMainWindow):
             ## The layout says it now (ADR-0007); two statements could differ.
             params = {k: v for k, v in params.items() if k != "chamber_size"}
             rest["params"] = params
-        if "params" not in rest and "parameters" not in rest and not any(
+        if "params" not in rest and "parameters" not in rest and not (dfms and all(
                 isinstance(node, dict) and ("params" in node or "parameters" in node)
-                for node in dfms):
-            ## The loader needs a params: section somewhere; empty is every
-            ## default, until the Config Editor or a Design says otherwise.
+                for node in dfms)):
+            ## The loader needs a params: section for every DFM, under global:
+            ## or its own; empty is every default, until the Config Editor or a
+            ## Design says otherwise.  One DFM's own (its PI Direction, say) is
+            ## not the others'.
             rest["params"] = {}
         return {**self.design_section(), **rest}
 

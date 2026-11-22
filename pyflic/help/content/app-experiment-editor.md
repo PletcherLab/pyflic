@@ -64,8 +64,13 @@ It takes:
   levels would name nothing. Inside a Project, the map is taken when the other
   recording's factors are the design's.
 
-It takes no analysis setting and none of a DFM's parameter overrides, optogenetics or
-notes: the Hub's **Copy config from…** is for those.
+- **each DFM's PI Direction**, the side well A is on, where the other recording states one
+  for a DFM this recording's data holds, on a two-well layout (ADR-0028). It is how the DFM
+  was set up, so it is taken with or without the chamber map. A DFM the other recording
+  states none for keeps its own.
+
+It takes no analysis setting and none of a DFM's other parameter overrides, optogenetics
+or notes: the Hub's **Copy config from…** is for those.
 
 **When this recording already says something.** If what it takes would replace anything
 stated here — a title or purpose, an experimenter, a factor's meaning, the type, a well
