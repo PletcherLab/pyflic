@@ -2923,10 +2923,13 @@ class Experiment:
 
         Returns ``None`` (writing nothing) when the experiment is not faceted —
         an absent file then means "no facets", which is why it is never written
-        empty.
+        empty, and why one left at the default path from when the design was
+        faceted is removed: the Project pools the Facets it finds.
         """
         df = self.feeding_summary_facet(transform_licks=transform_licks)
         if df.empty:
+            if path is None and self.analysis_dir is not None:
+                (Path(self.analysis_dir) / "feeding_summary_facet.csv").unlink(missing_ok=True)
             return None
         if path is None:
             if self.analysis_dir is None:

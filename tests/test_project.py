@@ -490,3 +490,28 @@ def test_the_stats_text_pools_only_the_members_with_an_analysis(tmp_path: Path):
     text = project.stats_text(summary, facet)
     assert "Members pooled : 1 (rep1)" in text
     assert "Not analysed   : rep2" in text
+
+
+def test_a_rebuild_leaves_no_pooled_table_no_member_backs(tmp_path: Path):
+    """A design that is no longer faceted pools no Facets, and the old
+    <project>_Summary_Facet.csv, which the publication figures read first,
+    must not outlive the rebuild; nor a paired-yoked, light QC or breaking
+    point table no Member has any more."""
+    design = {"global": {k: v for k, v in DESIGN["global"].items()
+                         if k != "facet_cutoffs"}}
+    root = _make_project(tmp_path, members=("rep1",), design=design)
+    project = Project(root)
+    analysis = Path(project.member_output_dir("rep1")) / "analysis"
+    analysis.mkdir(parents=True, exist_ok=True)
+    (analysis / "feeding_summary.csv").write_text(
+        "Treatment,TreatmentNew,DFM,Chamber,Licks\nCtrl,Ctrl,1,1,10\nExp,Exp,1,2,20\n",
+        encoding="utf-8")
+    pooled = Path(project.analysis_path)
+    pooled.mkdir(parents=True, exist_ok=True)
+    stale = [pooled / f"proj_{stem}.csv"
+             for stem in ("Summary_Facet", "PairedYokedDiff", "LightQC", "BreakingPoint")]
+    for path in stale:
+        path.write_text("old\n", encoding="utf-8")
+    project.build_combined_analysis()
+    assert (pooled / "proj_Summary.csv").is_file()
+    assert [p.name for p in stale if p.exists()] == []

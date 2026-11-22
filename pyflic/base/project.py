@@ -1846,27 +1846,20 @@ class Project:
         path = os.path.join(self.analysis_path, f"{self.name}_Summary.csv")
         summary.to_csv(path, index=False, na_rep="NA")
         written.append(path)
-        if facet is not None:
-            path = os.path.join(self.analysis_path,
-                                f"{self.name}_Summary_Facet.csv")
-            facet.to_csv(path, index=False, na_rep="NA")
-            written.append(path)
         diff = self.combined_diff_frame()
-        if diff is not None:
-            path = os.path.join(self.analysis_path,
-                                f"{self.name}_PairedYokedDiff.csv")
-            diff.to_csv(path, index=False, na_rep="NA")
-            written.append(path)
-        light_qc = self.combined_light_qc_frame()
-        if light_qc is not None:
-            path = os.path.join(self.analysis_path, f"{self.name}_LightQC.csv")
-            light_qc.to_csv(path, index=False, na_rep="NA")
-            written.append(path)
-        breaking = self.combined_breaking_point_frame()
-        if breaking is not None:
-            path = os.path.join(self.analysis_path, f"{self.name}_BreakingPoint.csv")
-            breaking.to_csv(path, index=False, na_rep="NA")
-            written.append(path)
+        ## A pooled table no Member backs any more must not outlive the
+        ## rebuild, as the light tables below: the figures read
+        ## _Summary_Facet.csv before _Summary.csv, so one left from when the
+        ## design was faceted drew the old Facets.
+        for stem, frame in (("Summary_Facet", facet), ("PairedYokedDiff", diff),
+                            ("LightQC", self.combined_light_qc_frame()),
+                            ("BreakingPoint", self.combined_breaking_point_frame())):
+            path = os.path.join(self.analysis_path, f"{self.name}_{stem}.csv")
+            if frame is not None:
+                frame.to_csv(path, index=False, na_rep="NA")
+                written.append(path)
+            elif os.path.isfile(path):
+                os.remove(path)
         light = self.combined_light_frames()
         for key in LIGHT_TABLES:
             path = os.path.join(self.analysis_path, f"{self.name}_{key}.csv")

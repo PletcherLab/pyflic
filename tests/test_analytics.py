@@ -172,6 +172,25 @@ def test_the_binned_licks_plot_totals_two_wells_on_the_fourth_root_scale(experim
         plt.close(fig)
 
 
+def test_an_experiment_no_longer_faceted_leaves_no_facet_table(tmp_path: Path):
+    """An absent feeding_summary_facet.csv means "no facets", and the Project
+    pools whichever it finds: one left from when the design was faceted was
+    pooled in place of the fresh summary."""
+    proj = tmp_path / "proj"
+    _write_yaml(proj)
+    _write_synthetic_csv(proj, dfm_id=1)
+    text = (proj / "flic_config.yaml").read_text(encoding="utf-8")
+    (proj / "flic_config.yaml").write_text(
+        text.replace("global:\n", "global:\n  facet_cutoffs: [2]\n", 1), encoding="utf-8")
+    faceted = load_experiment_yaml(proj, parallel=False, use_disk_cache=False)
+    path = faceted.write_feeding_summary_facet()
+    assert path is not None and path.is_file()
+    (proj / "flic_config.yaml").write_text(text, encoding="utf-8")
+    plain = load_experiment_yaml(proj, parallel=False, use_disk_cache=False)
+    assert plain.write_feeding_summary_facet() is None
+    assert not path.exists()
+
+
 def test_yaml_lint_clean_config(tmp_path: Path):
     from pyflic.base.yaml_lint import lint_flic_config
     proj = tmp_path / "p"
