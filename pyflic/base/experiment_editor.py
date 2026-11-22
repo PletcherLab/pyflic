@@ -1054,6 +1054,10 @@ class ExperimentEditor(QMainWindow):
                     took.append(f"the chamber map of DFM {', '.join(map(str, ids))}")
         factors = self.factor_table.factors()
         merged = about_mod.start_from(mine, about_mod.read_about(other), factors or None)
+        if about_mod.RUN_KEY in mine:
+            ## The catalogue's, as read: cleaning the section must not reword it.
+            merged = {about_mod.RUN_KEY: mine[about_mod.RUN_KEY],
+                      **{k: v for k, v in merged.items() if k != about_mod.RUN_KEY}}
         raw = {k: v for k, v in self._loaded_raw.items() if k != about_mod.ABOUT_KEY}
         self._loaded_raw = {**raw, about_mod.ABOUT_KEY: merged} if merged else raw
         self._load_about(merged)
@@ -1173,10 +1177,10 @@ class ExperimentEditor(QMainWindow):
         tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
         taken: list[int] = []
         for dfm_id in (self._found_dfms() or sorted(tabs)):
-            widget = tabs.get(dfm_id) or self._append_dfm(dfm_id)
             node = theirs_by_id.get(dfm_id)
             if node is None:
-                continue
+                continue                       # this recording's alone: left as it is
+            widget = tabs.get(dfm_id) or self._append_dfm(dfm_id)
             shown = {k: node[k] for k in _DFM_KEYS[1:] if k in node}
             shown.setdefault("chambers", node.get("Chambers") or {})
             kept = {k: v for k, v in widget.get_dict().items() if k not in _DFM_KEYS[1:]}

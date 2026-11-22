@@ -1076,3 +1076,40 @@ def test_saving_as_over_another_recordings_config_keeps_that_recordings_run(app,
     assert list(about)[0] == "run"
     assert about == {**ABOUT, "run": "R-20261128-scott-01"}
     assert _read(path)["about"] == ABOUT
+
+
+def test_starting_from_another_recording_leaves_run_exactly_as_read(app, tmp_path):
+    """Even a run: that is not text: it is the catalogue's, and is written
+    back as read whatever else the form takes in."""
+    path = _filed(tmp_path, {"run": ["R-20261128-scott-01"], "title": "Replicate 2"},
+                  name="rep2")
+    editor = ExperimentEditor(path)
+    try:
+        assert editor.start_from(_earlier(tmp_path))
+        assert editor.write(path, confirm=False)
+    finally:
+        editor.close()
+    about = _read(path)["about"]
+    assert list(about)[0] == "run"
+    assert about["run"] == ["R-20261128-scott-01"]
+    assert about["experimenter"] == "scott"
+
+
+def test_a_dfm_in_the_data_with_no_tab_gets_one_when_its_map_is_taken(app, tmp_path):
+    """A config that lists none of the DFMs its data holds: starting from an
+    earlier recording adds the tabs it has a chamber map for, and no other."""
+    folder = tmp_path / "rep2"
+    for dfm_id in (1, 3, 5):
+        _dfm_csv(folder / "data", dfm_id)
+    _write(folder / "flic_config.yaml",
+           {"global": {"chamber_layout": "two_well", "params": {}}, "dfms": []})
+    editor = ExperimentEditor(folder)
+    try:
+        assert editor._dfm_widgets == []
+        assert editor.start_from(_earlier(tmp_path))
+        assert [w.get_dict() for w in editor._dfm_widgets] == [
+            {"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+            {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}}]
+        assert "Not here yet: 5" in editor.data_label.text()
+    finally:
+        editor.close()
