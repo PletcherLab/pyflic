@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -21,6 +22,16 @@ def is_environmental_monitor(dfm_id) -> bool:
         return int(dfm_id) == ENVIRONMENTAL_MONITOR_ID
     except (TypeError, ValueError):
         return False
+
+
+def user_config_dir() -> Path:
+    """The user's pyflic settings folder: ``$XDG_CONFIG_HOME/pyflic``, or
+    ``~/.config/pyflic`` when the variable is unset, empty or relative (the
+    XDG spec ignores both).  Asked on every call, so the settings file, the
+    type library and ``.env`` follow the environment as it is now."""
+    raw = os.environ.get("XDG_CONFIG_HOME", "")
+    base = Path(raw) if raw and os.path.isabs(raw) else Path.home() / ".config"
+    return base / "pyflic"
 
 
 def natural_key(s: str) -> list[object]:

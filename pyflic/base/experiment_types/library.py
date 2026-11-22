@@ -75,7 +75,9 @@ def is_shipped_name(name) -> bool:
 # ---------------------------------------------------------------------------
 
 def _config_dir() -> Path:
-    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "pyflic"
+    from ..utils import user_config_dir
+
+    return user_config_dir()
 
 
 def default_library_dir() -> Path:

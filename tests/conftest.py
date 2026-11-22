@@ -15,11 +15,9 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _isolated_settings(tmp_path_factory, monkeypatch):
+    ## Every reader of the settings folder asks
+    ## pyflic.base.utils.user_config_dir on each call, so the variable is
+    ## enough; it must be absolute, or the folder is ~/.config/pyflic again.
     folder = tmp_path_factory.mktemp("config")
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(folder))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(folder.resolve()))
     monkeypatch.delenv("PYFLIC_TYPE_LIBRARY", raising=False)
-    ## ui.settings fixes its path at import, so the variable alone is not enough.
-    from pyflic.base.ui import settings
-
-    monkeypatch.setattr(settings, "_CONFIG_DIR", folder / "pyflic")
-    monkeypatch.setattr(settings, "_CONFIG_FILE", folder / "pyflic" / "ui.json")

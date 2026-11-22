@@ -56,9 +56,9 @@ def load_api_env() -> None:
         from dotenv import find_dotenv, load_dotenv
     except ImportError:
         return
-    config_env = os.path.join(
-        os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
-        "pyflic", ".env")
+    from ..utils import user_config_dir
+
+    config_env = str(user_config_dir() / ".env")
     if os.path.isfile(config_env):
         load_dotenv(config_env, override=False)
     found = find_dotenv(usecwd=True)

@@ -1,18 +1,18 @@
 """Persisted UI preferences (theme mode, recent projects).
 
-Stored as JSON at ``~/.config/pyflic/ui.json``.  No external deps; failures
-are silent so the apps keep working even when the config dir is unwritable.
+Stored as JSON at ``ui.json`` in :func:`pyflic.base.utils.user_config_dir`
+(``~/.config/pyflic`` unless ``XDG_CONFIG_HOME`` says otherwise), found again
+on every call.  No external deps; failures are silent so the apps keep working
+even when the config dir is unwritable.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
-_CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "pyflic"
-_CONFIG_FILE = _CONFIG_DIR / "ui.json"
+from ..utils import user_config_dir
 
 _DEFAULTS: dict[str, Any] = {
     "theme": "auto",
@@ -20,11 +20,20 @@ _DEFAULTS: dict[str, Any] = {
 }
 
 
+def config_dir() -> Path:
+    return user_config_dir()
+
+
+def config_file() -> Path:
+    return config_dir() / "ui.json"
+
+
 def load() -> dict[str, Any]:
-    if not _CONFIG_FILE.is_file():
+    path = config_file()
+    if not path.is_file():
         return dict(_DEFAULTS)
     try:
-        data = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return dict(_DEFAULTS)
         merged = dict(_DEFAULTS)
@@ -36,8 +45,8 @@ def load() -> dict[str, Any]:
 
 def save(data: dict[str, Any]) -> None:
     try:
-        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        _CONFIG_FILE.write_text(
+        config_dir().mkdir(parents=True, exist_ok=True)
+        config_file().write_text(
             json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
         )
     except Exception:  # noqa: BLE001

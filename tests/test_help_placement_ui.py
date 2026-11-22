@@ -37,7 +37,7 @@ from pyflic.base.ui import settings as _settings  # noqa: E402
 from pyflic.help import topics as _topics  # noqa: E402
 
 #: The settings file this process would write without the patch below.
-_REAL_SETTINGS = Path(_settings._CONFIG_FILE)
+_REAL_SETTINGS = Path(_settings.config_file())
 
 
 def _stamp(path: Path):
@@ -61,11 +61,10 @@ def _isolated_settings(tmp_path, monkeypatch):
 
     before = _stamp(_REAL_SETTINGS)
     folder = tmp_path / "config"
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(folder))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(folder.resolve()))
     (tmp_path / "types").mkdir()
     monkeypatch.setenv(library.ENV_LIBRARY, str(tmp_path / "types"))
-    monkeypatch.setattr(_settings, "_CONFIG_DIR", folder / "pyflic")
-    monkeypatch.setattr(_settings, "_CONFIG_FILE", folder / "pyflic" / "ui.json")
+    assert _settings.config_file() == folder.resolve() / "pyflic" / "ui.json"
     yield
     assert _stamp(_REAL_SETTINGS) == before, "a test wrote the user's ui.json"
 
