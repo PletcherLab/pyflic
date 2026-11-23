@@ -173,9 +173,9 @@ def test_a_new_recording_gets_a_config_the_loader_and_linter_accept(app, tmp_pat
     assert saved["global"] == {
         "chamber_layout": "two_well",
         "experimental_design_factors": {"Treatment": ["Ctrl", "Drug"]},
-        "params": {},
-    }
+    }                        # every DFM states its own params: (ADR-0029)
     assert saved["dfms"][0]["chambers"] == {1: "Ctrl", 2: "Drug"}
+    assert [d["params"] for d in saved["dfms"]] == [{"pi_direction": "left"}] * 2
     assert not [i for i in lint_flic_config(folder / "flic_config.yaml")
                 if i.severity == "error"]
     exp = load_experiment_yaml(folder, eager=False, use_disk_cache=False)
@@ -266,7 +266,8 @@ def test_a_config_whose_dfms_are_keyed_by_id_keeps_its_chambers(app, tmp_path):
     finally:
         editor.close()
     saved = _read(path)
-    assert saved["dfms"] == [{"id": 1, "chambers": {1: "Ctrl", 2: "Exp"}},
+    assert saved["dfms"] == [{"id": 1, "params": {"pi_direction": "left"},  # ADR-0029
+                              "chambers": {1: "Ctrl", 2: "Exp"}},
                              {"id": 4, "params": {"pi_direction": "right"},
                               "chambers": {3: "Exp"}}]
 
@@ -836,7 +837,8 @@ def test_a_dfm_the_earlier_recording_does_not_map_is_cleared_when_the_factors_ch
         assert [w.get_dict() for w in editor._dfm_widgets] == [
             {"id": 1, "params": {"pi_direction": "right"},   # its side (ADR-0028)
              "chambers": {1: "Ctrl", 2: "Exp"}},
-            {"id": 4, "optogenetics": False}]                # its own keys stay
+            {"id": 4, "optogenetics": False,                 # its own keys stay
+             "params": {"pi_direction": "left"}}]                # its side, filled in
     finally:
         editor.close()
 
@@ -863,8 +865,8 @@ def test_a_new_recording_takes_the_design_and_the_chamber_map_for_its_dfms(
         assert [w.get_dict() for w in editor._dfm_widgets] == [
             {"id": 1, "params": {"pi_direction": "right"},   # its side (ADR-0028)
              "chambers": {1: "Ctrl", 2: "Exp"}},
-            {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}},
-            {"id": 5}]
+            {"id": 3, "params": {"pi_direction": "left"}, "chambers": {3: "Ctrl", 4: "Exp"}},
+            {"id": 5, "params": {"pi_direction": "left"}}]  # sides filled in (ADR-0029)
         editor.title_edit.setText("Hedonic, replicate 2")
         assert editor.write(folder / "flic_config.yaml", confirm=False)
     finally:
@@ -875,7 +877,7 @@ def test_a_new_recording_takes_the_design_and_the_chamber_map_for_its_dfms(
     ## The design, and none of the earlier recording's analysis settings.
     assert saved["global"] == {
         "experiment_type": "Hedonic", "well_names": {"A": "S5", "B": "S5Y5"},
-        "experimental_design_factors": {"Genotype": ["Ctrl", "Exp"]}, "params": {}}
+        "experimental_design_factors": {"Genotype": ["Ctrl", "Exp"]}}
     assert not [i for i in lint_flic_config(folder / "flic_config.yaml")
                 if i.severity == "error"]
     assert sorted(load_experiment_yaml(folder, eager=False, use_disk_cache=False).dfms) \
@@ -902,8 +904,8 @@ def test_a_progressive_ratio_replicate_takes_its_chamber_groups_with_the_map(
         assert [w.get_dict() for w in editor._dfm_widgets] == [
             {"id": 1, "params": {"pi_direction": "left"},    # its side (ADR-0028)
              "paired_chambers": [1, 4, 5], "chambers": six},
-            {"id": 2, "chamber_groups": "single", "chambers": six},
-            {"id": 3, "chambers": six}]                      # its groups: Program.txt's
+            {"id": 2, "params": {"pi_direction": "left"}, "chamber_groups": "single", "chambers": six},
+            {"id": 3, "params": {"pi_direction": "left"}, "chambers": six}]  # its groups: Program.txt's
     finally:
         editor.close()
 
@@ -924,7 +926,7 @@ def test_a_design_stated_here_is_replaced_only_after_asking(app, tmp_path, monke
         ## Declined: nothing is taken, the About included.
         assert editor.well_a_edit.text() == "Sucrose"
         assert editor.factor_table.factors() == {}
-        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1, "params": {"pi_direction": "left"}}
         assert editor.experimenter_edit.text() == ""
     finally:
         editor.close()
@@ -995,7 +997,7 @@ def test_a_member_keeps_the_projects_design_and_takes_the_rest(
     editor = ExperimentEditor(path)
     try:
         assert editor.start_from(earlier)
-        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1, "params": {"pi_direction": "left"}}
         assert editor.factor_table.factors() == DESIGN["experimental_design_factors"]
     finally:
         editor.close()
@@ -1012,7 +1014,7 @@ def test_the_earlier_recording_may_be_a_member_whose_design_is_its_projects(
         assert editor.start_from(member)
         assert editor.type_combo.currentData() == "Hedonic"
         assert editor.factor_table.factors() == DESIGN["experimental_design_factors"]
-        assert editor._dfm_widgets[0].get_dict() == {"id": 1,
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1, "params": {"pi_direction": "left"},
                                                      "chambers": {1: "Ctrl", 2: "Exp"}}
     finally:
         editor.close()
@@ -1121,7 +1123,7 @@ def test_a_design_of_a_type_unknown_here_is_not_taken(app, tmp_path, monkeypatch
         ## The design is not guessed at, nor a map of factors not declared here.
         assert editor.type_combo.currentData() == "Custom"
         assert editor.factor_table.factors() == {}
-        assert editor._dfm_widgets[0].get_dict() == {"id": 1}
+        assert editor._dfm_widgets[0].get_dict() == {"id": 1, "params": {"pi_direction": "left"}}
         assert editor.experimenter_edit.text() == "scott"
     finally:
         editor.close()
@@ -1180,7 +1182,7 @@ def test_a_dfm_in_the_data_with_no_tab_gets_one_when_its_map_is_taken(app, tmp_p
         assert [w.get_dict() for w in editor._dfm_widgets] == [
             {"id": 1, "params": {"pi_direction": "right"},   # its side (ADR-0028)
              "chambers": {1: "Ctrl", 2: "Exp"}},
-            {"id": 3, "chambers": {3: "Ctrl", 4: "Exp"}}]
+            {"id": 3, "params": {"pi_direction": "left"}, "chambers": {3: "Ctrl", 4: "Exp"}}]
         assert "Not here yet: 5" in editor.data_label.text()
     finally:
         editor.close()

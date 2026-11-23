@@ -12,10 +12,12 @@ exists.  It edits three things in ``flic_config.yaml`` and nothing else:
   the well names, the Experimental Design Factors and the control level: the
   Design Copy keys of ADR-0025.
 * ``dfms:`` — each DFM's id and which levels each chamber had (and, for
-  Progressive Ratio, its paired chambers).
+  Progressive Ratio, its paired chambers), and on a two-well layout the side
+  well A is on, left or right, which every DFM states (``params:
+  pi_direction``, ADR-0029).
 
 Everything else the file holds — detection ``params:``, ``constants:``,
-Slices, the Selection, optogenetics, per-DFM overrides, ``scripts:``,
+Slices, the Selection, optogenetics, a DFM's other overrides, ``scripts:``,
 ``data_folder:`` — belongs to the Config Editor and is written back exactly
 as it was read.  Inside a Project with a Design the design is shown, not
 edited, and saving writes the Design Copy, as the Config Editor does.
@@ -179,6 +181,22 @@ def _states(value: Any) -> bool:
     if isinstance(value, (list, tuple, dict)):
         return bool(value)
     return True
+
+
+def _stated_side(section: Any) -> str | None:
+    """The ``pi_direction`` that *section*, a DFM's entry or a ``global:``,
+    states in its ``params:`` (legacy ``pi_multiplier`` included), or
+    ``None``."""
+    from .yaml_config import _normalize_param_overrides
+
+    params = section.get("params", section.get("parameters")) \
+        if isinstance(section, dict) else None
+    if not isinstance(params, dict):
+        return None
+    try:
+        return _normalize_param_overrides(params).get("pi_direction")
+    except (TypeError, ValueError):
+        return None                            # not a side the loader takes
 
 
 def _states_design(design: dict) -> bool:
@@ -894,6 +912,7 @@ class ExperimentEditor(QMainWindow):
     def _append_dfm(self, dfm_id: int) -> DFMWidget:
         widget = DFMWidget(dfm_id=dfm_id, chamber_size=_layout_chamber_size(self.chamber_layout()),
                            simple=True)
+        widget.set_side_default(self._experiment_side())
         widget.update_factors(self.factor_table.factors())
         widget.set_progressive_ratio(self.current_type().has_module("ratio"))
         widget._id_spin.valueChanged.connect(
@@ -1462,31 +1481,37 @@ class ExperimentEditor(QMainWindow):
         """Each DFM's PI Direction to take from the config *other*
         (ADR-0028): for each DFM this recording's data holds (its tabs, when
         no data is found), the side well A is on, where *other* states one for
-        that DFM, legacy ``pi_multiplier`` included.  A DFM it states none for
-        keeps its own here, as an About field it leaves blank does."""
-        from .yaml_config import _normalize_param_overrides
-
+        that DFM, legacy ``pi_multiplier`` included, or in its ``global:``
+        for a DFM it lists with none of its own (ADR-0029), as the loader
+        reads it.  A DFM it states none for keeps its own here, as an About
+        field it leaves blank does."""
         theirs_by_id = {node["id"]: node for node in dfm_nodes(other)}
+        their_side = _stated_side(other.get("global"))
         tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
         sides: dict[int, str] = {}
         for dfm_id in (self._found_dfms() or sorted(tabs)):
-            node = theirs_by_id.get(dfm_id) or {}
-            params = node.get("params", node.get("parameters"))
-            try:
-                side = _normalize_param_overrides(params).get("pi_direction") \
-                    if isinstance(params, dict) else None
-            except (TypeError, ValueError):
-                side = None                    # not a side the loader takes
+            if dfm_id not in theirs_by_id:
+                continue
+            side = _stated_side(theirs_by_id[dfm_id]) or their_side
             if side is not None:
                 sides[dfm_id] = side
         return sides
 
+    def _experiment_side(self) -> str:
+        """The side a DFM that states none is read with: the Design's
+        ``params:`` inside a Project with one, else this file's ``global:``
+        ``params:``, else ``left``, the loader's default.  Each two-well DFM
+        that states none is given it as its own (ADR-0029)."""
+        return _stated_side(self._design or self._loaded_raw.get("global")) or "left"
+
     def _side_changes(self, sides: dict[int, str]) -> list[str]:
-        """The sides stated here that *sides* would replace."""
+        """The sides stated here that *sides* would replace.  A side filled in
+        with the experiment's is not one stated here (ADR-0029)."""
         tabs = {w._id_spin.value(): w for w in self._dfm_widgets}
         replaced = []
         for dfm_id, side in sides.items():
-            here = tabs[dfm_id].pi_direction() if dfm_id in tabs else None
+            widget = tabs.get(dfm_id)
+            here = widget.pi_direction() if widget and widget.side_stated() else None
             if here is not None and here != side:
                 replaced.append(f"DFM {dfm_id} {here} → {side}")
         return [f"PI Direction: {', '.join(replaced)}"] if replaced else []

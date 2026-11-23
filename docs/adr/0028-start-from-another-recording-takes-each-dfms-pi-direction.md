@@ -2,6 +2,10 @@
 status: accepted
 ---
 
+> Amended by ADR-0029: every two-well DFM states its side, with no *inherit*.
+> A side filled in with the experiment's is not one stated here, and a side
+> the other recording's `global:` states is taken too.
+
 # Start from another recording takes each DFM's PI Direction
 
 Amends ADR-0027, under which *Start from another recording…* never took a

@@ -1336,17 +1336,21 @@ class DFMWidget(QWidget):
         ## from DFM to DFM even inside a Project (PHYSICAL_DFM_KEYS).  It is
         ## the override form's pi_direction, so loading and saving are the
         ## form's.  The Config Editor shows the whole form instead.
+        ## Left or right, never inherited (ADR-0029): the side is fixed when
+        ## the recording is set up, so every two-well DFM states its own.  One
+        ## whose config states none is given the side it is read with.
         self._simple = simple
+        self._side_default = "left"   # the experiment's: set_side_default()
+        self._side_stated = False     # read from the file or chosen, not filled in
         self.side_card = Card(
             "PI Direction", Category.LOAD,
             subtitle="The side well A is on in this DFM's chambers, whose "
-                     "preference index is 1. inherit takes the experiment's "
-                     "setting: left, unless it states another.")
+                     "preference index is 1. It is how this DFM was set up, "
+                     "so each DFM states its own.")
         side_row = QHBoxLayout()
         side_row.setContentsMargins(0, 0, 0, 0)
         side_row.addWidget(QLabel(_PARAM_LABELS["pi_direction"] + ":"))
         self.side_combo = NoWheelComboBox()
-        self.side_combo.addItem("inherit", None)
         self.side_combo.addItem("left", "left")
         self.side_combo.addItem("right", "right")
         self.side_combo.setFixedWidth(90)
@@ -1359,28 +1363,63 @@ class DFMWidget(QWidget):
         self.side_card.add_body(side_row)
         outer.addWidget(self.side_card)
         self._show_side_card()
+        self._sync_side_combo()
 
     # ------------------------------------------------------------------
 
     def pi_direction(self) -> str | None:
-        """This DFM's own ``pi_direction``, or ``None`` when it inherits."""
+        """This DFM's own ``pi_direction``.  In the Experiment Editor every
+        two-well DFM has one; in the Config Editor ``None`` when it states
+        none."""
         return self._params_form.get_values().get("pi_direction")
 
-    def set_pi_direction(self, side: str | None) -> None:
-        """Give this DFM its own ``pi_direction`` (``left`` or ``right``), or
-        ``None`` to inherit the experiment's."""
+    def side_stated(self) -> bool:
+        """Whether this DFM's side was read from its file or chosen, rather
+        than filled in with the experiment's (:meth:`set_side_default`)."""
+        return self._side_stated
+
+    def set_pi_direction(self, side: str) -> None:
+        """Give this DFM its own ``pi_direction``, ``left`` or ``right``."""
         self._params_form.set_override("pi_direction", side)
+        self._side_stated = True
+        self._sync_side_combo()
+
+    def set_side_default(self, side: str) -> None:
+        """The experiment's side: what a DFM stating none is read with (its
+        ``global:`` or the Design's ``params:``, else ``left``).  In the
+        Experiment Editor a two-well DFM that states none is given it as its
+        own, so the file says each DFM's side; a side read or chosen stays."""
+        self._side_default = side
+        if not self._side_stated:
+            self._params_form.set_override("pi_direction", None)
         self._sync_side_combo()
 
     def _side_chosen(self, *_args) -> None:
         self._params_form.set_override("pi_direction", self.side_combo.currentData())
+        self._side_stated = True
 
     def _sync_side_combo(self) -> None:
+        """Show this DFM's side.  In the Experiment Editor a two-well DFM that
+        states none is first given the experiment's: there is no inheriting
+        (ADR-0029)."""
         side = self.pi_direction()
-        index = 0 if side is None else self.side_combo.findData(str(side))
+        if side is None and self._simple and self._chamber_size == 2:
+            side = self._side_default
+            self._params_form.set_override("pi_direction", side)
+        index = self.side_combo.findData(str(side or self._side_default))
         self.side_combo.blockSignals(True)
         self.side_combo.setCurrentIndex(max(index, 0))
         self.side_combo.blockSignals(False)
+
+    def _fit_side(self, was: int) -> None:
+        """After the chamber size changes from *was*.  In the Experiment
+        Editor a DFM that becomes one-well loses its side, since one-well
+        chambers have none, and one that becomes two-well is given one."""
+        if self._simple and was == 2 and self._chamber_size != 2:
+            self._params_form.set_override("pi_direction", None)
+            self._side_stated = False
+        self._sync_side_combo()
+        self._show_side_card()
 
     def _show_side_card(self) -> None:
         """Shown in the Experiment Editor, for two wells: one well has no side."""
@@ -1589,6 +1628,7 @@ class DFMWidget(QWidget):
         return out
 
     def update_chamber_size(self, chamber_size: int) -> None:
+        was = self._chamber_size
         self._chamber_size = chamber_size
         n_new = 12 if chamber_size == 1 else 6
         n_old = self._chamber_table.rowCount()
@@ -1618,7 +1658,7 @@ class DFMWidget(QWidget):
         _fit_chamber_table(self._chamber_table)
 
         self._params_form.set_chamber_size(chamber_size)
-        self._show_side_card()
+        self._fit_side(was)
 
     def update_factors(self, factor_levels: dict[str, list[str]]) -> None:
         """Restructure the chamber table to show one column per factor."""
@@ -1737,8 +1777,20 @@ class DFMWidget(QWidget):
             ## them), so saving must not write the pickers' defaults.
             self.set_groups_mode(PR_GROUPS_PROGRAM)
 
-        params_raw = data.get("params", data.get("parameters", {})) or {}
-        self._params_form.load_values(dict(params_raw), chamber_size)
+        params_raw = dict(data.get("params", data.get("parameters", {})) or {})
+        if "pi_direction" not in params_raw and "pi_multiplier" in params_raw:
+            ## The legacy spelling, which the form has no field for: saving
+            ## dropped it, and the DFM was read as left.  Read it as the loader
+            ## does, 1 left and anything else right (ADR-0029).
+            from .yaml_config import _normalize_param_overrides
+
+            try:
+                params_raw["pi_direction"] = _normalize_param_overrides(
+                    {"pi_multiplier": params_raw["pi_multiplier"]})["pi_direction"]
+            except (TypeError, ValueError):
+                pass                      # not a side the loader takes either
+        self._params_form.load_values(params_raw, chamber_size)
+        self._side_stated = self.pi_direction() is not None
         self._sync_side_combo()
 
         chambers_raw = data.get("chambers", data.get("Chambers", {})) or {}

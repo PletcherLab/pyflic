@@ -65,9 +65,10 @@ It takes:
   recording's factors are the design's.
 
 - **each DFM's PI Direction**, the side well A is on, where the other recording states one
-  for a DFM this recording's data holds, on a two-well layout (ADR-0028). It is how the DFM
-  was set up, so it is taken with or without the chamber map. A DFM the other recording
-  states none for keeps its own.
+  for a DFM this recording's data holds, on a two-well layout (ADR-0028): for that DFM, or
+  for all its DFMs in its `global:` parameters. It is how the DFM was set up, so it is
+  taken with or without the chamber map. A DFM the other recording states none for keeps
+  its own. A side this editor filled in (see *Chambers*) is replaced without asking.
 
 It takes no analysis setting and none of a DFM's other parameter overrides, optogenetics
 or notes: the Hub's **Copy config from…** is for those.
@@ -102,12 +103,15 @@ adds the paired chamber of each group. Above the tabs, the editor says which DFM
 holds and which tabs have no data; **Add the DFMs found in the data** adds the missing
 ones.
 
-On a two-well layout each DFM also has **PI Direction**: the side well A is on in that DFM's
-chambers, whose preference index is 1. **inherit** takes the experiment's setting (left,
-unless it states another); **left** or **right** is written as that DFM's
-`params: {pi_direction: ...}`. It is the one parameter that may differ between DFMs inside a
-Project, since it says how the DFM was set up, not how it is analysed. A DFM's other
-parameter overrides are kept as read; the Config Editor shows them.
+On a two-well layout each DFM also has **PI Direction**, **left** or **right**: the side
+well A is on in that DFM's chambers, whose preference index is 1. It is fixed when the
+recording is set up, so every DFM states its own, written as that DFM's
+`params: {pi_direction: ...}`; there is no inheriting (ADR-0029). A DFM whose config states
+none shows the side it is read with, the experiment's (its `global:` parameters, or the
+Project design's) or else left, and **Save** writes it. Check each DFM before saving. It is
+the one parameter that may differ between DFMs inside a Project, since it says how the DFM
+was set up, not how it is analysed. A DFM's other parameter overrides are kept as read; the
+Config Editor shows them.
 
 ## What a save writes
 
