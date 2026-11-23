@@ -327,6 +327,17 @@ def load_experiment_yaml(
 
     resolved_experiment_dir = Path(experiment_dir).expanduser().resolve()
     path = resolved_experiment_dir / config_name
+    named = None
+    if config_name == "flic_config.yaml":
+        ## Which config the experiment reads (ADR-0031): its own, or its
+        ## recording's, named by its flic_member.yaml; a name that cannot be
+        ## read stops here, before anything is read or written.
+        from . import layout as _layout
+
+        named = _layout.config_location(resolved_experiment_dir)
+        if named.problem:
+            raise _layout.DataLocationError(named.problem)
+        path = Path(named.path)
     if not path.exists():
         raise FileNotFoundError(
             f"{config_name} not found in experiment directory: {resolved_experiment_dir}"
@@ -336,6 +347,13 @@ def load_experiment_yaml(
     cfg = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
     if not isinstance(cfg, Mapping):
         raise ValueError("YAML root must be a mapping/object.")
+    if in_project and named is not None and named.referenced:
+        ## A Member reading its recording's own config takes the recording's
+        ## description from it and every analysis setting from the design
+        ## (ADR-0031); the Project names what it does not use.
+        from .project import named_config_reads
+
+        cfg = named_config_reads(dict(cfg))
     ## What this load's results will be computed from, taken from the files as
     ## read, before anything below resolves them: the stale rule compares it
     ## with the files as they stand later (ADR-0022).

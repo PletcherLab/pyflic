@@ -457,6 +457,16 @@ def selection_file(experiment: Any) -> Path:
     directory = Path(directory)
     marker = _project_file(directory)
     if marker is None:
+        from .layout import MEMBER_FILENAME, config_location
+
+        found = config_location(directory)
+        if found.referenced:
+            ## The recording's own config is never written from a Member
+            ## (ADR-0031): a Selection belongs to the Project analysing it.
+            raise ValueError(
+                f"{directory.name} names its recording's config ({found.path}) in its "
+                f"{MEMBER_FILENAME}, which pyflic never writes: make the folder that holds "
+                f"it a Project, whose project.yaml holds the Selection.")
         return directory / CONFIG_FILENAME
     if not (read_design(marker.parent).get("global") or {}):
         raise ValueError(

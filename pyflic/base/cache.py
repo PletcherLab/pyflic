@@ -57,6 +57,12 @@ def _config_hash(experiment_dir: Path, config_name: str = "flic_config.yaml") ->
     cached summaries.  A config without one is hashed byte for byte, exactly
     as it always was."""
     cfg = experiment_dir / config_name
+    if config_name == "flic_config.yaml":
+        ## The config the load reads: the Member's own, or its recording's
+        ## (ADR-0031).
+        from .layout import config_path
+
+        cfg = Path(config_path(experiment_dir))
     if not cfg.is_file():
         return "noconfig"
     data = cfg.read_bytes()

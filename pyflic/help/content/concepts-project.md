@@ -267,6 +267,47 @@ A Project whose members read their recordings this way no longer carries them. C
 analysis folder on its own and those members are blocked, each naming the folder it
 looked for; move the whole tree and the relative paths still resolve.
 
+## A member that reads its recording's own config
+
+A member does not have to hold a config either. A recording filed in the lab's catalogue
+keeps one `flic_config.yaml`, beside its `data/`, and a member of a Project analysing it
+can read that config where it is rather than hold a copy that drifts from it. Such a
+member holds `flic_member.yaml` instead, naming the config with `config:` and, optionally,
+the data with `data_folder:`, both relative to the member:
+
+```
+managed/
+  runs/flic/2026/R-20261020-asmith-01/
+    flic_config.yaml               ← the recording's one config: its About, design, chamber map
+    data/                          ← the recording
+  studies/mbon10-silencing/analyses/A-20261105-asmith-01/
+    project.yaml                   ← the Project: every analysis setting
+    R-20261020-asmith-01/          ← a member
+      flic_member.yaml             ← config: ../../../../../runs/flic/2026/R-20261020-asmith-01/flic_config.yaml
+                                     data_folder: ../../../../../runs/flic/2026/R-20261020-asmith-01/data
+      remove_chambers.csv  analysis/  qc/   ← everything pyflic writes for it
+```
+
+Without `data_folder:` the data are the `data/` beside the named config. Correct a chamber
+map or a DFM's PI Direction in the recording's config, in the
+[Experiment Editor](app-experiment-editor.md) for instance, and every Project reading it
+sees the correction at once; opened on such a member's folder, the editors open the
+recording's config.
+
+Inside the Project, the recording's config says what the recording *is*: its
+experiment type, chamber layout, well names and factors must agree with the design, as
+any member's must, and each DFM's PI Direction is read from it. Every analysis setting is
+the design's: detection parameters, constants and transforms the recording's config
+states are **not used**, and the Project's warnings name them. So two Projects may analyse
+one recording with different settings, and neither changes the recording. *Write the
+design into the members* never writes such a member, and nothing pyflic writes for it goes
+beside the recording's config.
+
+The member is blocked, with the path it looked for, when `config:` is missing or names a
+config that does not exist, when the member also holds a `flic_config.yaml` of its own
+("which is the experiment's config?") or a recording of its own, or when the recording's
+folder holds the member folder.
+
 ## Adding a member
 
 The same three cases, one level down — **Create member…** when it does not exist yet,

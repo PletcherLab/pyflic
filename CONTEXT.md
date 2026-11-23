@@ -49,6 +49,19 @@ Member of a Project; a second is a **duplicate**. `data_dir:` is not this: it
 was retired in April 2026 and is never read.
 _Avoid_: data dir, data path, data root, source folder.
 
+**Member File**:
+`flic_member.yaml`, which a Member holds instead of a config when it reads its
+recording's own `flic_config.yaml` where the recording keeps it (ADR-0031):
+`config:` names that config and, optionally, `data_folder:` the data, both
+relative to the Member; without `data_folder:` the Data Folder is the `data/`
+beside the named config.  A recording then has one config however many Projects
+analyse it.  The named config is only ever read from the Member; inside a
+Project only its description of the recording (the Design Copy keys) and each
+DFM's physical keys are used, and every analysis setting is the Design's, so
+the settings it states are named in a warning and not used.  One `layout`
+resolver, `config_location`, answers which config every Member reads.
+_Avoid_: pointer, link, shortcut, member config (it holds none).
+
 **Member**:
 An Experiment Directory inside a Project — one of the several *different*
 experiments that Project brings to bear on its question, not a repeat of its

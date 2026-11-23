@@ -3014,6 +3014,13 @@ class FLICConfigEditor(QMainWindow):
             if p.is_file():
                 candidates.append(p)
             elif p.is_dir():
+                ## A Member holding flic_member.yaml reads its recording's own
+                ## config, which is the one to open (ADR-0031).
+                from .layout import config_location
+
+                found = config_location(p)
+                if found.referenced:
+                    candidates.append(Path(found.path))
                 candidates.extend(p / name for name in names)
                 self._save_hint = p / names[0]
             else:

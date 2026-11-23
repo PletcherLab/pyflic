@@ -311,7 +311,7 @@ def _evaluate_sheet(root, rows) -> tuple:
         if not prj.is_experiment_dir(member_dir):
             results.append(RowResult(
                 row, "unknown member",
-                f"no {prj.CONFIG_FILENAME} in "
+                f"no {prj.CONFIG_FILENAME} (or flic_member.yaml naming one) in "
                 f"{os.path.relpath(member_dir, root)}"))
             continue
 
@@ -399,7 +399,9 @@ def _groups_read(member_dir) -> tuple[str, set]:
             return {}
         return loaded if isinstance(loaded, dict) else {}
 
-    config = read_yaml(os.path.join(str(member_dir), prj.CONFIG_FILENAME))
+    from .layout import config_path
+
+    config = read_yaml(config_path(member_dir))
     meta = read_yaml(os.path.join(os.path.dirname(os.path.abspath(str(member_dir))),
                                   prj.PROJECT_FILENAME))
     design, _path = prj.design_for_member(member_dir)
@@ -425,7 +427,9 @@ def _config_dfms(member_dir) -> set:
 
     from . import project as prj
 
-    path = os.path.join(str(member_dir), prj.CONFIG_FILENAME)
+    from .layout import config_path
+
+    path = config_path(member_dir)
     try:
         with open(path, encoding="utf-8") as handle:
             config = yaml.safe_load(handle) or {}

@@ -183,7 +183,9 @@ def check_directory(directory: Path, *, in_project: bool = False
 
     configs = sorted(p for p in directory.glob("*.yaml")
                      if p.name not in ("project.yaml", "batch.yaml",
-                                       "plot_specs.yaml", "experiment_type.yaml"))
+                                       "plot_specs.yaml", "experiment_type.yaml",
+                                       ## Names the recording's config (ADR-0031).
+                                       "flic_member.yaml"))
     configs += sorted(directory.glob("*.yml"))
     canonical = directory / "flic_config.yaml"
 

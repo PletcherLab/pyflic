@@ -3117,7 +3117,8 @@ class AnalysisHubWindow(QMainWindow):
 
     def _open_config_editor(self) -> None:
         directory = self._current_dir()
-        config = os.path.join(directory, "flic_config.yaml") if directory else None
+        ## A Member's own config, or its recording's (ADR-0031).
+        config = layout_mod.config_path(directory) if directory else None
         self._open_config_editor_on(
             config if config and os.path.isfile(config) else None)
 
@@ -3169,7 +3170,8 @@ class AnalysisHubWindow(QMainWindow):
         from .experiment_editor import ExperimentEditor
 
         directory = self._current_dir()
-        config = os.path.join(directory, "flic_config.yaml") if directory else None
+        ## A Member's own config, or its recording's (ADR-0031).
+        config = layout_mod.config_path(directory) if directory else None
         editor = ExperimentEditor(config if config and os.path.isfile(config) else None)
         self._experiment_editor = editor
         return self._show_editor(editor, "_experiment_editors")
@@ -4153,8 +4155,7 @@ class MemberConfigsDialog(QDialog):
         chosen = self._selected()
         if chosen is None:
             return
-        path = os.path.join(self._project.member_dir(chosen[0]),
-                            project_mod.CONFIG_FILENAME)
+        path = layout_mod.config_path(self._project.member_dir(chosen[0]))
         self._hub._open_config_editor_on(path)
 
 

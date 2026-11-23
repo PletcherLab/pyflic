@@ -163,13 +163,17 @@ def _read_yaml(path: str) -> Any:
     return data
 
 
-def current(project_yaml: str | None, config_path: str) -> dict | None:
+def current(project_yaml: str | None, config_path: str, *, reads=None) -> dict | None:
     """The settings the files on disk state now, or ``None`` when the
     config cannot be read.  Read fresh (behind a modification-time cache),
-    so a save made anywhere, in an editor or by hand, is seen at once."""
+    so a save made anywhere, in an editor or by hand, is seen at once.
+    *reads*, when given, is what of the config the load reads: for a Member
+    reading its recording's own config, its description alone (ADR-0031)."""
     config = _read_yaml(config_path)
     if not isinstance(config, Mapping):
         return None
+    if reads is not None:
+        config = reads(dict(config))
     design_global = None
     if project_yaml is not None:
         meta = _read_yaml(project_yaml)

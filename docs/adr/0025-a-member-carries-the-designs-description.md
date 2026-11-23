@@ -2,6 +2,9 @@
 status: accepted
 ---
 
+> Amended by ADR-0031: a Member reading its recording's own config carries no
+> copy; the recording's config describes the recording, and is never written.
+
 # A Member carries a copy of the Design's description of its recording
 
 Amends ADR-0005, whose consequence "a Replicate's config is therefore no

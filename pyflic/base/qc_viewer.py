@@ -692,7 +692,9 @@ def _declared_slices(experiment_dir: Path) -> list:
         parent = exp_dir.parent
         if project_mod.is_project_dir(parent) and not project_mod.is_project_dir(exp_dir):
             return list(project_mod.Project(str(parent)).slices)
-        config = yaml.safe_load((exp_dir / "flic_config.yaml").read_text(encoding="utf-8"))
+        from .layout import config_path
+
+        config = yaml.safe_load(Path(config_path(exp_dir)).read_text(encoding="utf-8"))
         g = dict((config or {}).get("global") or {})
         etype = experiment_types.get_experiment_type(g.get("experiment_type"), exp_dir)
         return slices_mod.usable_slices(g, etype)
@@ -918,7 +920,9 @@ class LoadTab(QtWidgets.QWidget):
     def _on_reload_config(self) -> None:
         """Re-read flic_config.yaml and print a summary to the log."""
         p = self._current_experiment_dir()
-        config_path = p / "flic_config.yaml"
+        from .layout import config_path as _config_path
+
+        config_path = Path(_config_path(p))
         if not config_path.exists():
             self._append_log(f"[Reload] flic_config.yaml not found in {p}")
             return

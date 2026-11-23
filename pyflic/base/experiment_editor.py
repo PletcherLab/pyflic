@@ -200,6 +200,16 @@ def _stated_side(section: Any) -> str | None:
         return None                            # not a side the loader takes
 
 
+def _folder_config(folder: Path) -> Path:
+    """The config a folder's experiment reads: its own ``flic_config.yaml``,
+    or, for a Project Member holding ``flic_member.yaml``, the recording's own
+    config that it names (ADR-0031), so that Save writes the one config the
+    recording has and never a second one beside the Member file."""
+    from .layout import config_path
+
+    return Path(config_path(folder))
+
+
 def _states_design(design: dict) -> bool:
     """Whether *design* (a ``global:``) states any key of the design, so
     that taking it describes something rather than resetting the form."""
@@ -1068,7 +1078,7 @@ class ExperimentEditor(QMainWindow):
         """Open a ``flic_config.yaml``, or a folder: its config if it has one,
         and otherwise a new config for it, one DFM tab per DFM in its data."""
         p = Path(path).expanduser()
-        config = p if p.is_file() else p / CONFIG_NAME
+        config = p if p.is_file() else _folder_config(p)
         if p.is_dir() and not config.exists() and (p / "flic_config.yml").exists():
             config = p / "flic_config.yml"
         if config.is_file():
@@ -1362,7 +1372,7 @@ class ExperimentEditor(QMainWindow):
         """Another recording's config and where it is, or ``None`` (and the
         reason said) when *source* is not one."""
         given = Path(source).expanduser()
-        config = given / CONFIG_NAME if given.is_dir() else given
+        config = _folder_config(given) if given.is_dir() else given
         if given.is_dir() and not config.exists() and (given / "flic_config.yml").exists():
             config = given / "flic_config.yml"
         if not config.is_file():

@@ -101,7 +101,93 @@ def is_project_dir(path) -> bool:
 
 
 def is_experiment_dir(path) -> bool:
-    return os.path.isfile(os.path.join(str(path), CONFIG_FILENAME))
+    """A folder holding ``flic_config.yaml``, or a ``flic_member.yaml`` naming
+    its recording's own config (ADR-0031)."""
+    from .layout import MEMBER_FILENAME
+
+    return (os.path.isfile(os.path.join(str(path), CONFIG_FILENAME))
+            or os.path.isfile(os.path.join(str(path), MEMBER_FILENAME)))
+
+
+def _read_config(path) -> dict:
+    """A config file as a mapping ({} for an empty one); raises as yaml and
+    open do."""
+    with open(path, encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def named_config_reads(config: dict) -> dict:
+    """What a Project reads of a recording's own config that a Member's
+    ``flic_member.yaml`` names (ADR-0031): its ``global:`` holds only the
+    description of the recording (:data:`DESCRIPTION_KEYS`), and each DFM's
+    ``params:`` only the physical keys (``PHYSICAL_DFM_KEYS``).  Every
+    analysis setting is the design's, so two Projects may analyse one
+    recording with different settings."""
+    from .yaml_config import _PARAM_ALIASES, PHYSICAL_DFM_KEYS, _norm_key
+
+    if not isinstance(config, dict):
+        return config
+    out = dict(config)
+    own = config.get("global")
+    if isinstance(own, dict):
+        kept = {k: v for k, v in own.items() if k in DESCRIPTION_KEYS}
+        if kept:
+            out["global"] = kept
+        else:
+            out.pop("global", None)
+    def physical_only(node):
+        if not isinstance(node, dict):
+            return node
+        key = "params" if "params" in node else "parameters"
+        params = node.get(key)
+        if not isinstance(params, dict):
+            return node
+        physical = {k: v for k, v in params.items()
+                    if _PARAM_ALIASES.get(_norm_key(k), _norm_key(k)) in PHYSICAL_DFM_KEYS}
+        node = {k: v for k, v in node.items() if k != key}
+        if physical:
+            node[key] = physical
+        return node
+
+    ## dfms: as a list of entries, or as a mapping keyed by DFM id.
+    nodes = config.get("dfms")
+    if isinstance(nodes, list):
+        out["dfms"] = [physical_only(node) for node in nodes]
+    elif isinstance(nodes, dict):
+        out["dfms"] = {dfm_id: physical_only(node) for dfm_id, node in nodes.items()}
+    return out
+
+
+def ignored_settings(config: dict, design_global: dict) -> list[str]:
+    """The analysis settings a recording's own config states that a Project
+    reading it does not use (:func:`named_config_reads`), where they differ
+    from the design's: ``params``, ``constants``, ``DFM 3 params
+    feeding_threshold``."""
+    from .yaml_config import _PARAM_ALIASES, PHYSICAL_DFM_KEYS, _norm_key
+
+    found: list[str] = []
+    own = config.get("global") if isinstance(config, dict) else None
+    for key, value in (own.items() if isinstance(own, dict) else ()):
+        if key in DESCRIPTION_KEYS or analysis_settings.says_nothing(key, value):
+            continue
+        if key in DESIGN_KEYS and _normalize(value) == _normalize(design_global.get(key)):
+            continue
+        found.append(str(key))
+    nodes = config.get("dfms") if isinstance(config, dict) else None
+    entries = (list(nodes.items()) if isinstance(nodes, dict)
+               else [(None, node) for node in nodes] if isinstance(nodes, list) else [])
+    for dfm_id, node in entries:
+        if not isinstance(node, dict):
+            continue
+        params = node.get("params", node.get("parameters"))
+        if not isinstance(params, dict):
+            continue
+        other = sorted(str(k) for k in params
+                       if _PARAM_ALIASES.get(_norm_key(k), _norm_key(k))
+                       not in PHYSICAL_DFM_KEYS)
+        if other:
+            found.append(f"DFM {node.get('id', dfm_id)} params {', '.join(other)}")
+    return found
 
 
 def _data_folder(path) -> str | None:
@@ -327,10 +413,12 @@ def members_stating_global(project_dir) -> list[tuple[str, bool]]:
         sub = os.path.join(str(project_dir), entry)
         if not os.path.isdir(sub) or not is_experiment_dir(sub):
             continue
+        from . import layout
+
+        if layout.config_location(sub).referenced:
+            continue        # it reads its recording's config, never this Project's to edit
         try:
-            with open(os.path.join(sub, CONFIG_FILENAME),
-                      encoding="utf-8") as handle:
-                cfg = yaml.safe_load(handle) or {}
+            cfg = _read_config(os.path.join(sub, CONFIG_FILENAME))
         except Exception:  # noqa: BLE001 - an unreadable member is not one of these
             continue
         own = cfg.get("global")
@@ -530,10 +618,14 @@ class MemberDesignState:
 
 
 def _member_state(name: str, config: dict, design_global: dict,
-                  where=None) -> MemberDesignState:
+                  where=None, *, referenced: bool = False) -> MemberDesignState:
     conflicts = description_conflicts(config, design_global, where)
     if conflicts:
         return MemberDesignState(name, "conflict", conflicts)
+    if referenced:
+        ## It reads its recording's own config, which nothing in a Project
+        ## writes (ADR-0031): the config says what the recording is.
+        return MemberDesignState(name, "in_step", [])
     own = config.get("global")
     own = dict(own) if isinstance(own, dict) else {}
     wanted = design_copy(design_global)
@@ -556,19 +648,26 @@ def _member_state(name: str, config: dict, design_global: dict,
     return MemberDesignState(name, "write" if reasons else "in_step", reasons)
 
 
-def _read_member_configs(project_dir) -> list[tuple[str, dict]]:
-    out: list[tuple[str, dict]] = []
+def _read_member_configs(project_dir, *, whole: bool = False) -> list[tuple[str, dict, bool]]:
+    """Each Member's name, the config it reads as the Project reads it, and
+    whether that is its recording's own config (ADR-0031).  *whole* gives a
+    recording's own config as written, settings and all."""
+    from . import layout
+
+    out: list[tuple[str, dict, bool]] = []
     for entry in sorted(os.listdir(str(project_dir))):
         sub = os.path.join(str(project_dir), entry)
         if not os.path.isdir(sub) or not is_experiment_dir(sub):
             continue
+        found = layout.config_location(sub)
         try:
-            with open(os.path.join(sub, CONFIG_FILENAME), encoding="utf-8") as handle:
-                cfg = yaml.safe_load(handle) or {}
+            cfg = _read_config(found.path)
         except Exception:  # noqa: BLE001 - an unreadable member is the loader's to report
             continue
         if isinstance(cfg, dict):
-            out.append((entry, cfg))
+            if found.referenced and not whole:
+                cfg = named_config_reads(cfg)
+            out.append((entry, cfg, found.referenced))
     return out
 
 
@@ -578,8 +677,8 @@ def member_design_states(project_dir) -> list[MemberDesignState]:
     design_global = dict(read_design(project_dir).get("global") or {})
     if not design_global:
         return []
-    return [_member_state(name, cfg, design_global, str(project_dir))
-            for name, cfg in _read_member_configs(project_dir)]
+    return [_member_state(name, cfg, design_global, str(project_dir), referenced=named)
+            for name, cfg, named in _read_member_configs(project_dir)]
 
 
 def adopt_design(project_dir, names=None) -> list[str]:
@@ -610,9 +709,13 @@ def adopt_design(project_dir, names=None) -> list[str]:
     else:
         targets = list(names)
     changed: list[str] = []
+    from . import layout
+
     for name in targets:
         path = os.path.join(str(project_dir), name, CONFIG_FILENAME)
-        if not os.path.isfile(path):
+        ## A Member reading its recording's config holds none to write, and
+        ## the recording's own is never written from a Project (ADR-0031).
+        if not os.path.isfile(path) or layout.config_location(path[:-len(CONFIG_FILENAME) - 1]).referenced:
             continue
         with open(path, encoding="utf-8") as handle:
             cfg = yaml.safe_load(handle) or {}
@@ -651,13 +754,16 @@ def design_from_members(directory) -> dict:
     experiments (a genotype panel, a dose series), so the Design must declare
     every level any of them used.  Nothing is written.
     """
-    configs = _read_member_configs(directory)
+    ## A recording's own config whole (ADR-0031): the settings it was
+    ## recorded with are a first design's starting point, which the person
+    ## checks before the Project owns them.
+    configs = _read_member_configs(directory, whole=True)
     if not configs:
         return {}
     first = configs[0][1].get("global")
     design = copy.deepcopy(dict(first)) if isinstance(first, dict) else {}
     factor_sets = []
-    for _name, cfg in configs:
+    for _name, cfg, _named in configs:
         g = cfg.get("global")
         factors = g.get("experimental_design_factors") if isinstance(g, dict) else None
         if isinstance(factors, dict) and factors:
@@ -781,6 +887,11 @@ class Project:
 
         self.member_names: list[str] = []
         self.configs: dict[str, dict] = {}
+        #: Each Member's config, its own or its recording's (ADR-0031).
+        self.config_locations: dict = {}
+        #: What a Member's recording's config states that this Project does
+        #: not use: ``{member: [setting, ...]}`` (ADR-0031).
+        self.ignored_settings: dict[str, list[str]] = {}
         #: Where each Member reads its recording (ADR-0021).
         self.data_locations: dict = {}
         #: Members skipped because an earlier one (in sorted order) already
@@ -802,22 +913,32 @@ class Project:
                 if real in seen:
                     continue
                 seen.add(real)
-                with open(os.path.join(sub, CONFIG_FILENAME),
-                          encoding="utf-8") as handle:
-                    config = yaml.safe_load(handle) or {}
-                location = layout.data_location(sub, config=config)
+                found = layout.config_location(sub)
+                if found.problem:
+                    raise ValueError(f"Project '{self.name}': {entry}: {found.problem}")
+                config = _read_config(found.path)
+                location = layout.data_location(sub, config=config, config_path=found.path)
                 first = reads.claim(entry, location)
                 if first is not None:
                     self.duplicates[entry] = first
                     continue
                 self.member_names.append(entry)
+                if found.referenced:
+                    ## Its recording's own config: the design's settings, the
+                    ## recording's description (ADR-0031).
+                    ignored = ignored_settings(config, self.design_global or {})
+                    if ignored:
+                        self.ignored_settings[entry] = ignored
+                    config = named_config_reads(config)
                 self.configs[entry] = config
+                self.config_locations[entry] = found
                 self.data_locations[entry] = location
         if not self.member_names and not self.design:
             raise ValueError(
                 f"Project '{self.name}' has no members: no subdirectory of "
-                f"{self.project_directory} contains a {CONFIG_FILENAME}, and "
-                f"there is no design: section to scaffold from")
+                f"{self.project_directory} contains a {CONFIG_FILENAME} (or a "
+                f"flic_member.yaml naming one), and there is no design: section "
+                f"to scaffold from")
 
         ## Lenient here: a malformed script block must not block loading the
         ## Project (the Script Editor and runner surface the specifics).
@@ -875,6 +996,19 @@ class Project:
         one.  Design validation compares what the file states, so a Member
         that states nothing is conformant by construction."""
         return dict((self.configs[name].get("global") or {}))
+
+    def reads_recordings_config(self, name: str) -> bool:
+        """Member *name* reads its recording's own config, named by its
+        ``flic_member.yaml`` (ADR-0031)."""
+        found = self.config_locations.get(name)
+        return bool(found is not None and found.referenced)
+
+    def member_config_path(self, name: str) -> str:
+        """The config Member *name* reads: its own, or its recording's."""
+        found = self.config_locations.get(name)
+        if found is not None:
+            return found.path
+        return os.path.join(self.member_dir(name), CONFIG_FILENAME)
 
     def resolved_global(self, name: str) -> dict:
         """The ``global:`` a Member loads with: the Design's, with its own
@@ -1052,9 +1186,16 @@ class Project:
         self.warnings.extend(self.about_warnings)
         ## Members that inherit everything still load; they just cannot be
         ## read on their own until the Design Copy is written (ADR-0025).
+        for name, ignored in self.ignored_settings.items():
+            self.warnings.append(
+                f"{name}: its recording's config "
+                f"({self.config_locations[name].path}) states {', '.join(ignored)}; "
+                f"this Project's design sets the analysis settings, so those are "
+                f"not used (ADR-0031)")
         if self.design_global and design_copy(self.design_global):
             bare = [name for name in self.member_names
-                    if not self._own_global(name)]
+                    if not self._own_global(name)
+                    and not self.reads_recordings_config(name)]
             if bare:
                 self.warnings.append(
                     f"{', '.join(bare)} carr{'y' if len(bare) > 1 else 'ies'} no copy "
@@ -1410,7 +1551,7 @@ class Project:
         """
         from .about import read_about, shared_about
 
-        found, about = about_on_disk(os.path.join(self.member_dir(name), CONFIG_FILENAME))
+        found, about = about_on_disk(self.member_config_path(name))
         if not found:
             about = read_about(self.configs.get(name))
         return shared_about(about, self.design_factors)
@@ -1537,11 +1678,13 @@ class Project:
         as ADR-0010 judges the exclusions: a config or ``project.yaml`` saved
         since reads stale.  Conservative in the right direction — a save that
         changed nothing costs one re-run, after which the record decides."""
-        config_path = os.path.join(self.member_dir(name), CONFIG_FILENAME)
+        config_path = self.member_config_path(name)
         project_yaml = os.path.join(self.project_directory, PROJECT_FILENAME)
         recorded = analysis_settings.read(analysis)
         if recorded is not None:
-            now = analysis_settings.current(project_yaml, config_path)
+            now = analysis_settings.current(
+                project_yaml, config_path,
+                reads=named_config_reads if self.reads_recordings_config(name) else None)
             ## A config that no longer reads is the loader's to report.
             return [] if now is None else analysis_settings.differences(recorded, now)
         saved = []

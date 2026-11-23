@@ -2,6 +2,9 @@
 status: accepted
 ---
 
+> Extended by ADR-0031: a Member may also read its recording's own config,
+> named by its `flic_member.yaml`, with the data beside it.
+
 # A Member can read its recording from a folder its config names
 
 Amends ADR-0009: its "one recording, one Member" rule now compares data

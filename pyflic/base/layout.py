@@ -29,9 +29,16 @@ Unlike PyTrackingAnalysis, whose experiment is one workbook, a FLIC recording
 is *many* files — one or more per DFM — so "more than one recording here" is
 the normal case and is never ambiguous on its own.
 
+**Which config a Member reads** is answered once, by :func:`config_location`
+(ADR-0031): its own ``flic_config.yaml``, or the recording's own config that
+its ``flic_member.yaml`` names, so a recording has one config however many
+Projects analyse it.  That config is only ever read from a Member: nothing
+pyflic writes for the Member goes beside it.
+
 **Where the recording is** is answered once, by :func:`data_location`
 (ADR-0021): the Member's own ``data/``, or the folder its ``data_folder:`` key
-names.  The loader, the disk cache, this classifier, the Project, Batch
+names, or, for a Member reading its recording's config, the ``data/`` beside
+that config (or the folder its ``data_folder:`` names, from there).  The loader, the disk cache, this classifier, the Project, Batch
 discovery, the linter, the Project Report and the Config Editor all ask it,
 so none of them can read a different folder from the others.  A referenced
 recording is only ever read: it is never filed, moved, or written beside.
@@ -58,6 +65,13 @@ EXTRA_DIRNAME = "extra_files"
 #: one config: never under ``global:``, never in a Project design, never
 #: inherited by a scaffolded Member.
 DATA_FOLDER_KEY = "data_folder"
+
+#: What a Member holds instead of a config of its own, to read its recording's
+#: config where the recording keeps it (ADR-0031), and the one key it has.  A
+#: relative ``config:`` is resolved against the Member folder.  Everything
+#: pyflic writes for the Member still goes in the Member folder.
+MEMBER_FILENAME = "flic_member.yaml"
+CONFIG_KEY = "config"
 
 #: The DFM export spellings the loader accepts: ``DFM3_1.csv`` (v3),
 #: ``DFM_3.csv`` and ``DFM_3_1.csv`` (v2).  Matched case-insensitively here,
@@ -123,8 +137,9 @@ class MemberLayout:
     detail: str = ""
     #: Loose recording files that filing would move into ``data/``.
     loose: tuple[str, ...] = ()
-    #: Whether ``flic_config.yaml`` is present — the Project's own membership
-    #: test, which is not the same question as "can it run".
+    #: Whether ``flic_config.yaml``, or a ``flic_member.yaml`` naming one, is
+    #: present — the Project's own membership test, which is not the same
+    #: question as "can it run".
     configured: bool = False
     #: DFM ids the loader would find in ``data/``.
     dfm_ids: tuple[int, ...] = ()
@@ -218,14 +233,16 @@ def _dfm_lookalikes(directory) -> list[str]:
 
 
 def has_config(directory) -> bool:
-    """``flic_config.yaml`` at the root — the Experiment membership test.
+    """``flic_config.yaml``, or a ``flic_member.yaml`` naming the recording's
+    config (ADR-0031), at the root — the Experiment membership test.
 
     Deliberately the same exact-case test as
     :func:`pyflic.base.project.is_experiment_dir`: a directory this says has no
     config is one the Project genuinely cannot see, which is what makes
     "scaffold a config" the right offer.
     """
-    return os.path.isfile(os.path.join(str(directory), CONFIG_FILENAME))
+    return (os.path.isfile(os.path.join(str(directory), CONFIG_FILENAME))
+            or os.path.isfile(os.path.join(str(directory), MEMBER_FILENAME)))
 
 
 def _is_sidecar(name: str) -> bool:
@@ -251,6 +268,103 @@ def _loose_recording_files(directory) -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class ConfigLocation:
+    """Which config one Member reads (ADR-0031).
+
+    *path* is the config file.  *written* is the ``config:`` value of the
+    Member's ``flic_member.yaml`` as written, or None when the Member holds its
+    own ``flic_config.yaml``.  *data_written* is that file's ``data_folder:``
+    as written, when it names the data itself.  *problem* says why a named
+    config cannot be read; it is empty when it can.
+    """
+
+    path: str
+    written: str | None = None
+    problem: str = ""
+    kind: str = ""
+    data_written: str | None = None
+
+    @property
+    def referenced(self) -> bool:
+        """The Member reads its recording's config, not one of its own."""
+        return self.written is not None
+
+    @property
+    def folder(self) -> str:
+        """The folder holding the config: the recording's, whose ``data/``
+        is the default data location."""
+        return os.path.dirname(self.path)
+
+    def describe(self) -> str:
+        """The config said both ways: the path, then the key as written."""
+        if not self.referenced:
+            return str(self.path)
+        return f"{self.path} ({MEMBER_FILENAME}: {CONFIG_KEY}: {self.written})"
+
+
+def config_location(directory) -> ConfigLocation:
+    """Which config the Member in *directory* reads (ADR-0031).
+
+    Without ``flic_member.yaml`` it is the Member's own ``flic_config.yaml``,
+    and nothing is read or checked.  The file's ``data_folder:``, when it has
+    one, is kept for :func:`data_location`: it names the data, resolved
+    against *directory*, and wins over the config's.  With one, its ``config:`` value is
+    resolved against *directory* and checked, in this order: a value that is
+    not a path; the Member holding a ``flic_config.yaml`` of its own too
+    ("which is the experiment's?"); the recording's folder holding the Member
+    folder (everything pyflic writes for the Member goes there, and nothing
+    is ever written beside the recording's config); a config that does not
+    exist; and a folder where the file belongs.
+    """
+    directory = str(directory)
+    own = os.path.join(directory, CONFIG_FILENAME)
+    member_file = os.path.join(directory, MEMBER_FILENAME)
+    if not os.path.isfile(member_file):
+        return ConfigLocation(own)
+
+    def refused(path, written, kind, problem):
+        return ConfigLocation(path, written, problem, kind)
+
+    try:
+        with open(member_file, encoding="utf-8") as handle:
+            pointer = yaml.safe_load(handle)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as err:
+        return refused(member_file, "", _NOT_A_PATH,
+                       f"{member_file} cannot be read: {err}")
+    value = pointer.get(CONFIG_KEY) if isinstance(pointer, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return refused(member_file, "" if value is None else repr(value), _NOT_A_PATH,
+                       f"{member_file} names no config: its {CONFIG_KEY}: is "
+                       f"{'missing' if value is None else repr(value)}")
+    data = pointer.get(DATA_FOLDER_KEY)
+    data = None if data is None or (isinstance(data, str) and not data.strip()) else (
+        data if isinstance(data, str) else repr(data))
+    path = resolve_data_folder(directory, value)
+    where = f"{MEMBER_FILENAME}: {CONFIG_KEY}: {value} resolves to {path}"
+    if os.path.isfile(own):
+        return refused(path, value, _CONFLICT,
+                       f"{where}, but {directory} also holds a {CONFIG_FILENAME} "
+                       "of its own — which is the experiment's config?  Keep one")
+    if _contains(os.path.dirname(path), directory):
+        return refused(path, value, _HOLDS_MEMBER,
+                       f"{where}, whose folder holds the experiment folder "
+                       f"{os.path.realpath(directory)} itself — the analysis is "
+                       "written there, and nothing is ever written beside a "
+                       "recording's config")
+    if not os.path.exists(path):
+        return refused(path, value, _MISSING, f"{where}, which does not exist")
+    if not os.path.isfile(path):
+        return refused(path, value, _NOT_A_FOLDER, f"{where}, which is a folder, not a file")
+    return ConfigLocation(path, value, data_written=data)
+
+
+def config_path(directory) -> str:
+    """The config the Member in *directory* reads: :func:`config_location`'s
+    path, whether or not it can be read."""
+    return config_location(directory).path
+
+
 class DataLocationError(ValueError):
     """A Member's ``data_folder:`` cannot be read as it stands — the folder is
     missing, is a file, holds the Member itself, or competes with a recording
@@ -274,19 +388,24 @@ class DataLocation:
     *path* is the folder the loader reads.  *written* is the ``data_folder:``
     value exactly as the config spells it, or None when the Member reads its
     own ``data/`` — in which case *path* is :func:`data_dir`'s answer and
-    nothing else about the Member has changed.  *problem* says why the loader
-    cannot read a referenced location; it is empty when it can.
+    nothing else about the Member has changed.  *via* is the ``config:`` of a
+    Member reading its recording's config (ADR-0031), whose data is beside
+    that config, or where its ``data_folder:`` says from there.  *problem*
+    says why the loader cannot read a referenced location; it is empty when
+    it can.
     """
 
     path: str
     written: str | None = None
     problem: str = ""
     kind: str = ""
+    via: str | None = None
 
     @property
     def referenced(self) -> bool:
-        """The Member names its data location in its config."""
-        return self.written is not None
+        """The Member reads a recording outside its own folder: its config
+        names the data location, or it reads its recording's config."""
+        return self.written is not None or self.via is not None
 
     @property
     def identity(self) -> str:
@@ -300,14 +419,18 @@ class DataLocation:
         key."""
         if not self.referenced:
             return str(self.path)
-        return f"{self.path} ({DATA_FOLDER_KEY}: {self.written})"
+        if self.via is None:
+            return f"{self.path} ({DATA_FOLDER_KEY}: {self.written})"
+        if self.written is None:
+            return f"{self.path} (beside {CONFIG_KEY}: {self.via})"
+        return f"{self.path} ({DATA_FOLDER_KEY}: {self.written} in {CONFIG_KEY}: {self.via})"
 
 
 def configured_data_folder(directory, config=None, config_path=None):
     """The ``data_folder:`` value for *directory*, as written, or None.
 
     *config* is a config already parsed; otherwise the file at *config_path*
-    (default ``<directory>/flic_config.yaml``) is read.  A config that never
+    (default the config the Member reads, :func:`config_path`) is read.  A config that never
     mentions the key is not parsed at all, so a Member without one costs a
     file read and nothing it did before can change.  A config that cannot be
     read or parsed counts as having no key: the loader reports a broken
@@ -315,7 +438,7 @@ def configured_data_folder(directory, config=None, config_path=None):
     blank value is no key.
     """
     if config is None:
-        path = config_path or os.path.join(str(directory), CONFIG_FILENAME)
+        path = config_path or config_location(directory).path
         try:
             with open(path, encoding="utf-8", errors="replace") as handle:
                 text = handle.read()
@@ -412,9 +535,18 @@ def data_location(directory, *, config=None, config_path=None) -> DataLocation:
     key, the value as written and the resolved path.
 
     *config* (already parsed) or *config_path* (another config file) are for
-    a caller that has one; the default reads ``flic_config.yaml``.
+    a caller that has one; the default reads the config the Member reads
+    (:func:`config_location`).
+
+    A Member reading its recording's config (ADR-0031) reads the ``data/``
+    beside that config, or the folder its ``data_folder:`` names resolved
+    from there, and is checked the same way; a config it cannot read is
+    the location's problem.
     """
     directory = str(directory)
+    found = config_location(directory)
+    if found.referenced:
+        return _data_beside_config(directory, found, config, config_path)
     value = configured_data_folder(directory, config, config_path)
     if value is None:
         return DataLocation(data_dir(directory))
@@ -448,12 +580,60 @@ def data_location(directory, *, config=None, config_path=None) -> DataLocation:
     return DataLocation(path, written)
 
 
+def _data_beside_config(directory, found: ConfigLocation, config, config_path) -> DataLocation:
+    """:func:`data_location` for a Member reading its recording's config."""
+    if found.problem:
+        return DataLocation(found.path, None, found.problem, found.kind, via=found.written)
+    value = (found.data_written if found.data_written is not None else
+             configured_data_folder(found.folder, config, config_path or found.path))
+    if found.data_written is not None:
+        ## The Member file names the data itself (as the lab's catalogue
+        ## writes it): resolved against the Member folder, as data_folder:
+        ## always is, and winning over the config's.
+        written = found.data_written
+        path = resolve_data_folder(directory, written)
+        where = f"{MEMBER_FILENAME}: {DATA_FOLDER_KEY}: {written} resolves to {path}"
+    elif value is None:
+        written, path = None, data_dir(found.folder)
+        where = f"{DATA_DIRNAME}/ beside {found.describe()} is {path}"
+    else:
+        written = value if isinstance(value, str) else repr(value)
+        path = resolve_data_folder(found.folder, written)
+        where = (f"{DATA_FOLDER_KEY}: {written} in {found.describe()} "
+                 f"resolves to {path}")
+
+    def refused(kind, problem):
+        return DataLocation(path, written, problem, kind, via=found.written)
+
+    if value is not None and not isinstance(value, str):
+        return refused(_NOT_A_PATH, f"{DATA_FOLDER_KEY}: {written} in {found.path} "
+                                    "is not a folder path")
+    if _contains(path, directory):
+        return refused(
+            _HOLDS_MEMBER,
+            f"{where}, which holds the experiment folder "
+            f"{os.path.realpath(directory)} itself — the analysis is written "
+            "there, and nothing is ever written at a data location")
+    own = _own_recording(directory, path)
+    if own:
+        return refused(
+            _CONFLICT,
+            f"the recording is {where}, but {directory} also holds a recording "
+            f"of its own ({own}) — which is the experiment?  Move the local "
+            "recording out")
+    if not os.path.exists(path):
+        return refused(_MISSING, f"{where}, which does not exist")
+    if not os.path.isdir(path):
+        return refused(_NOT_A_FOLDER, f"{where}, which is a file, not a folder")
+    return DataLocation(path, written, via=found.written)
+
+
 def require_data_location(directory, *, config=None, config_path=None) -> DataLocation:
     """:func:`data_location`, raising :class:`DataLocationError` for a
     referenced location the loader cannot read.  The loader's entry point."""
     location = data_location(directory, config=config, config_path=config_path)
     if location.problem:
-        source = config_path or os.path.join(str(directory), CONFIG_FILENAME)
+        source = config_path or config_location(directory).path
         raise DataLocationError(f"{location.problem} (set in {source})")
     return location
 
@@ -571,7 +751,8 @@ def _classify_referenced(directory, name, location: DataLocation) -> MemberLayou
                   else NO_RECORDING)
         return blocked(status, location.problem)
 
-    where = f"{DATA_FOLDER_KEY}: {location.written} ({location.path})"
+    where = (f"{DATA_FOLDER_KEY}: {location.written} ({location.path})"
+             if location.via is None else location.describe())
     if dfm_files(location.path):
         return MemberLayout(directory, name, OK, configured=True,
                             dfm_ids=tuple(dfm_ids(location.path)))
@@ -583,7 +764,7 @@ def _classify_referenced(directory, name, location: DataLocation) -> MemberLayou
     detail = f"no DFM CSV in {where}"
     nested = data_dir(location.path)
     inside = dfm_files(nested) if os.path.isdir(nested) else []
-    if inside:
+    if inside and location.written is not None:
         ## The usual slip: the key names the run folder, one level above the
         ## data/ that holds the recording.
         detail += (f"; its {DATA_DIRNAME}/ holds {inside[0]} — point "
@@ -769,6 +950,13 @@ def plan_filing(directory) -> FilingPlan:
     directory = str(directory)
     plan = FilingPlan(directory)
     location = data_location(directory)
+    if location.via is not None:
+        ## Its recording, and the recording's config, live where its
+        ## flic_member.yaml says (ADR-0031), and are only ever read.
+        plan.refused = (f"it reads its recording's config ({MEMBER_FILENAME}: "
+                        f"{CONFIG_KEY}: {location.via}) — a member that names "
+                        "its config is never filed")
+        return plan
     if location.referenced:
         ## Its recording lives where data_folder: says, and is only ever read
         ## (ADR-0021).  Whatever is loose here is a conflict to settle by hand,
