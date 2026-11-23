@@ -62,9 +62,10 @@ or the linkage of the `Program.txt` in `data/`
 ([Progressive Ratio experiments](concepts-progressive-ratio.md)).
 
 Everything else has a default. See [Parameter reference](reference-parameters.md) for what
-those defaults are and when to change them. Only the `params:` section itself must be there,
-under `global:` or under each DFM, even when it sets a single value as `pi_direction` does
-above: a config with no `params` section at all does not load.
+those defaults are and when to change them. A config needs no `params:` section at all: with
+none, every setting is the Experiment Type's default. Inside a Project the design states the
+analysis settings, so a recording's config is best left with only what was recorded, such
+as each DFM's `pi_direction`.
 
 ## Checking it before you run
 

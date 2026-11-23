@@ -540,7 +540,8 @@ def _member_state(name: str, config: dict, design_global: dict,
     if not own:
         return MemberDesignState(name, "write", ["no copy of the design yet"])
     reasons: list[str] = []
-    extra = [k for k in own if k not in DESCRIPTION_KEYS]
+    extra = [k for k in own
+             if k not in DESCRIPTION_KEYS and not analysis_settings.says_nothing(k, own[k])]
     if extra:
         reasons.append(f"states {', '.join(map(str, extra))}, which the design owns")
     missing = [k for k in wanted if k not in own]
@@ -879,7 +880,7 @@ class Project:
         """The ``global:`` a Member loads with: the Design's, with its own
         (already validated) keys layered on top."""
         merged = dict(self.design_global)
-        merged.update(self._own_global(name))
+        merged.update(analysis_settings.stated_global(self._own_global(name)))
         return merged
 
     def _validate_design_match(self) -> None:
@@ -921,6 +922,8 @@ class Project:
 
         problems: list[str] = []
         for key, value in dict(config.get("global") or {}).items():
+            if analysis_settings.says_nothing(key, value):
+                continue
             if key not in DESIGN_KEYS:
                 ## An unknown global key is not silently blessed: the Design
                 ## owns global:, so anything it does not name has nowhere

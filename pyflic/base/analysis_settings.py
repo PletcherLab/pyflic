@@ -34,6 +34,22 @@ IGNORED_GLOBAL_KEYS = frozenset({"omit", "slices", "slice_tolerance_min"})
 _OTHER_CONFIG_KEYS = ("data_folder",)
 
 
+def says_nothing(key: Any, value: Any) -> bool:
+    """An empty ``params:`` (or ``parameters:``) in a config's ``global:``:
+    every default, which states no setting (ADR-0030).  The Experiment Editor
+    once wrote one into every new config, only to get past a loader check
+    that is gone."""
+    return key in ("params", "parameters") and isinstance(value, Mapping) and not value
+
+
+def stated_global(own: Any) -> dict:
+    """A config's own ``global:`` without what :func:`says_nothing`, so that
+    over a Project Design's it never hides the Design's settings."""
+    if not isinstance(own, Mapping):
+        return {}
+    return {k: v for k, v in own.items() if not says_nothing(k, v)}
+
+
 def _comparable(value: Any) -> Any:
     """JSON-ready comparison form: numbers as floats (``20`` and ``20.0`` in
     two hand-edited files are one setting), mapping keys as strings."""
@@ -79,9 +95,7 @@ def settings(design_global: Mapping[str, Any] | None,
     """
     config = config if isinstance(config, Mapping) else {}
     merged = dict(design_global or {})
-    own = config.get("global")
-    if isinstance(own, Mapping):
-        merged.update(own)
+    merged.update(stated_global(config.get("global")))
     for key in IGNORED_GLOBAL_KEYS:
         merged.pop(key, None)
     out: dict[str, Any] = {"global": merged,

@@ -17,7 +17,7 @@ dfms:
       1: Paired,WCS
       2: Unpaired,WCS
   2:
-    params: {}                # no overrides; inherits everything from global
+                              # no params: it inherits everything from global
     chambers:
       1: Unpaired,Chrim
       2: Paired,Chrim

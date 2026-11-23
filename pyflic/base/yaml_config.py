@@ -365,7 +365,8 @@ def load_experiment_yaml(
     ## one that states only part of the block.
     if design_global:
         merged = dict(design_global)
-        merged.update(global_cfg)
+        ## An empty params: says nothing, so it must not hide the Design's.
+        merged.update(_analysis_settings.stated_global(global_cfg))
         global_cfg = merged
 
     from . import experiment_types as _experiment_types
@@ -390,7 +391,6 @@ def load_experiment_yaml(
 
     global_params_node = global_cfg.get("params", global_cfg.get("parameters", None))
     global_overrides = _normalize_param_overrides(global_params_node)
-    global_params_present = global_params_node is not None
     ## The type's default cutoffs, with the yaml's values layered on top.
     global_constants = exp_type.resolve_constants(global_cfg)
 
@@ -535,12 +535,11 @@ def load_experiment_yaml(
 
         dfm_params_node = node.get("params", node.get("parameters", None))
         dfm_overrides = _normalize_param_overrides(dfm_params_node)
-        dfm_params_present = dfm_params_node is not None
-
-        if not (global_params_present or dfm_params_present):
-            raise ValueError(
-                f"DFM {dfm_id} must define a `params` section either under global: or under the DFM entry."
-            )
+        ## No params: section, under global: or the DFM's own, is the Experiment
+        ## Type's defaults (ADR-0030).  The analysis settings belong to whoever
+        ## analyses the recording, a Project's design above all, so a
+        ## recording's config need not state any; an empty `params: {}` written
+        ## only to get past this check said nothing.
 
         ## Inside a Project only the physical keys may be overridden per DFM
         ## (ADR-0005): pi_direction and chamber_sets describe hardware, and

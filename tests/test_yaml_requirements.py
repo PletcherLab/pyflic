@@ -29,7 +29,12 @@ def _write_minimal_dfm_csv(experiment_dir: Path, dfm_id: int, n_samples: int = 1
     )
 
 
-def test_yaml_requires_params_somewhere(tmp_path: Path):
+def test_a_config_with_no_params_reads_the_types_defaults(tmp_path: Path):
+    """No params: section anywhere is the Experiment Type's defaults
+    (ADR-0030): the analysis settings belong to whoever analyses the
+    recording, so its config need not state any."""
+    from pyflic.base.parameters import Parameters
+
     proj = _make_project(
         tmp_path,
         """
@@ -39,8 +44,12 @@ dfms:
     chambers: {1: A}
 """.lstrip(),
     )
-    with pytest.raises(ValueError, match=r"must define a `params` section"):
-        load_experiment_yaml(proj)
+    _write_minimal_dfm_csv(proj, 1)
+    exp = load_experiment_yaml(proj, use_disk_cache=False)
+    params, defaults = exp.dfms[1].params, Parameters.two_well()
+    for key in ("feeding_threshold", "feeding_minimum", "tasting_minimum",
+                "samples_per_second", "pi_direction"):
+        assert getattr(params, key) == getattr(defaults, key)
 
 
 def test_chamber_size_is_derived_from_the_chamber_layout(tmp_path: Path):

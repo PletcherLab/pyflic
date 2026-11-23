@@ -22,9 +22,10 @@ Slices, the Selection, optogenetics, a DFM's other overrides, ``scripts:``,
 as it was read.  Inside a Project with a Design the design is shown, not
 edited, and saving writes the Design Copy, as the Config Editor does.
 
-The ``global:`` it writes for a new recording is the smallest one the loader
-accepts: every analysis setting is the Experiment Type's default until the
-Config Editor or a Project Design says otherwise (ADR-0011).
+The ``global:`` it writes holds the design and no analysis setting: every
+one is the Experiment Type's default until the Config Editor or a Project
+Design says otherwise (ADR-0011).  It writes no ``params:`` there and drops an
+empty one it reads, which said nothing (ADR-0030).
 
 **Another program may write the file** (ADR-0026).  A catalogue that files
 the recording rewrites ``about:`` to match its record, adding ``run:`` and,
@@ -1671,14 +1672,11 @@ class ExperimentEditor(QMainWindow):
             ## The layout says it now (ADR-0007); two statements could differ.
             params = {k: v for k, v in params.items() if k != "chamber_size"}
             rest["params"] = params
-        if "params" not in rest and "parameters" not in rest and not (dfms and all(
-                isinstance(node, dict) and ("params" in node or "parameters" in node)
-                for node in dfms)):
-            ## The loader needs a params: section for every DFM, under global:
-            ## or its own; empty is every default, until the Config Editor or a
-            ## Design says otherwise.  One DFM's own (its PI Direction, say) is
-            ## not the others'.
-            rest["params"] = {}
+        for key in ("params", "parameters"):
+            if key in rest and not rest[key]:
+                ## Empty: every default, which no section says as well
+                ## (ADR-0030).  A setting the Config Editor wrote stays.
+                del rest[key]
         return {**self.design_section(), **rest}
 
     def collect(self) -> dict:
