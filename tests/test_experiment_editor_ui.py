@@ -1336,3 +1336,97 @@ def test_a_new_recording_starts_with_drosophila_melanogaster(app, tmp_path):
         assert editor.organism_edit.text() == "Drosophila melanogaster"
     finally:
         editor.close()
+
+
+# ---------------------------------------------------------------------------
+# File → Open folder…
+# ---------------------------------------------------------------------------
+
+def test_open_folder_starts_a_config_for_a_bare_folder_and_loads_one_that_is_there(
+        app, tmp_path, monkeypatch):
+    from pyflic.base import experiment_editor as module
+
+    bare = tmp_path / "FLICMCU_11_22_2026_09_00"      # as PyMCU writes it
+    for dfm_id in (1, 2):
+        _dfm_csv(bare, dfm_id)
+    (bare / "Program.txt").write_text((FIXTURES / "Program_v4.txt").read_text())
+    described = _filed(tmp_path, {"title": "Replicate 1"}, name="rep1")
+    chosen: list[Path] = []
+
+    def pick(*args, **_kwargs):
+        return str(chosen.pop(0))
+
+    monkeypatch.setattr(module.QFileDialog, "getExistingDirectory", staticmethod(pick))
+    editor = ExperimentEditor()
+    try:
+        actions = {a.text(): a for a in editor.menuBar().actions()[0].menu().actions()}
+        assert actions["Open &folder…"].shortcut().toString() == "Ctrl+Shift+O"
+
+        chosen.append(bare)
+        actions["Open &folder…"].trigger()
+        assert [w._id_spin.value() for w in editor._dfm_widgets] == [1, 2]
+        assert editor.started_label.text().startswith("Started 2026-10-12")
+        assert "No flic_config.yaml here yet" in editor.statusBar().currentMessage()
+        assert not (bare / "flic_config.yaml").exists()  # nothing written until a save
+
+        chosen.append(described.parent)
+        actions["Open &folder…"].trigger()
+        assert editor.title_edit.text() == "Replicate 1"
+        assert editor._current_path == described
+
+        chosen.append("")                                # cancelled: nothing changes
+        actions["Open &folder…"].trigger()
+        assert editor._current_path == described
+    finally:
+        editor.close()
+
+
+# ---------------------------------------------------------------------------
+# A DFM's number
+# ---------------------------------------------------------------------------
+#
+# A DFM's id is what its data files say it is, and the list down the left
+# names each one.  The Experiment Editor has no box to change it.  Add DFM,
+# under that list, adds the next DFM: the first the data holds that has no
+# tab yet, else the one after the highest listed, in number order.
+
+def test_add_dfm_adds_the_next_dfm_to_the_list_and_its_number_is_never_edited(
+        app, tmp_path, monkeypatch):
+    from pyflic.base.config_editor import DFMWidget
+
+    folder = tmp_path / "rec"
+    for dfm_id in (1, 2, 3):
+        _dfm_csv(folder / "data", dfm_id)
+    _write(folder / "flic_config.yaml", {"global": {"chamber_layout": "two_well", "params": {}},
+                                         "dfms": [{"id": 1}, {"id": 3}]})
+    editor = ExperimentEditor(folder)
+    try:
+        widget = editor._dfm_widgets[0]
+        assert not widget._id_card.isVisibleTo(widget)       # no box to change it in
+        ## The buttons are in the list's column, not under the page.
+        assert editor.dfm_tabs.nav_column.isAncestorOf(editor.add_dfm_button)
+        assert editor.dfm_tabs.nav_column.isAncestorOf(editor.remove_dfm_button)
+
+        def listed():
+            return [editor.dfm_tabs.tabText(i) for i in range(editor.dfm_tabs.count())]
+
+        editor.add_dfm_button.click()                        # in the data, no tab yet
+        assert listed() == ["DFM 1", "DFM 2", "DFM 3"]
+        assert editor.dfm_tabs.currentIndex() == 1           # and it is shown
+        editor.add_dfm_button.click()                        # the data has no more
+        assert listed() == ["DFM 1", "DFM 2", "DFM 3", "DFM 4"]
+        assert [w._id_spin.value() for w in editor._dfm_widgets] == [1, 2, 3, 4]
+
+        editor.dfm_tabs.setCurrentIndex(1)
+        editor.remove_dfm_button.click()
+        assert listed() == ["DFM 1", "DFM 3", "DFM 4"]
+        assert [w._id_spin.value() for w in editor._dfm_widgets] == [1, 3, 4]
+        assert editor.write(folder / "flic_config.yaml", confirm=False)
+    finally:
+        editor.close()
+    assert [node["id"] for node in _read(folder / "flic_config.yaml")["dfms"]] == [1, 3, 4]
+
+    ## The Config Editor's tab keeps its box.
+    full = DFMWidget(dfm_id=1)
+    assert full._id_card.isVisibleTo(full)
+    full.deleteLater()

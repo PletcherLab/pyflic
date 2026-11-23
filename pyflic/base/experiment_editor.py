@@ -70,6 +70,9 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
+    QTabBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -316,6 +319,74 @@ class _ColumnShares(QObject):
             self._table.setColumnWidth(column, int(width * share / total))
 
 
+class _DfmTabs(QWidget):
+    """The Chambers page's DFMs: their list down the left, with the buttons
+    that add and remove one under it, and the chosen DFM's page to its right.
+
+    A ``QTabWidget`` cannot hold a button in a West tab bar's column, so this
+    is that bar beside a stack of pages, answering the few calls the editor
+    makes of a tab widget.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.bar = _WestTabBar()
+        self.bar.setShape(QTabBar.Shape.RoundedWest)
+        self.bar.setExpanding(False)
+        ## As tall as its DFMs, so the buttons sit right under the last one.
+        self.bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.stack = QStackedWidget()
+        self.stack.setFrameShape(QFrame.Shape.StyledPanel)
+        self.bar.currentChanged.connect(self.stack.setCurrentIndex)
+        self.nav_column = QWidget()
+        nav = QVBoxLayout(self.nav_column)
+        nav.setContentsMargins(0, 0, 4, 0)
+        nav.setSpacing(6)
+        nav.addWidget(self.bar)
+        self._buttons = QVBoxLayout()
+        nav.addLayout(self._buttons)
+        nav.addStretch(1)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        row.addWidget(self.nav_column)
+        row.addWidget(self.stack, 1)
+
+    def add_button(self, button: QWidget) -> None:
+        self._buttons.addWidget(button)
+
+    def insertTab(self, index: int, page: QWidget, text: str) -> int:  # noqa: N802
+        self.stack.insertWidget(index, page)
+        index = self.bar.insertTab(index, text)
+        self.stack.setCurrentIndex(self.bar.currentIndex())
+        return index
+
+    def addTab(self, page: QWidget, text: str) -> int:  # noqa: N802
+        return self.insertTab(self.count(), page, text)
+
+    def removeTab(self, index: int) -> None:  # noqa: N802
+        page = self.stack.widget(index)
+        self.bar.removeTab(index)
+        self.stack.removeWidget(page)
+        page.deleteLater()
+        self.stack.setCurrentIndex(self.bar.currentIndex())
+
+    def count(self) -> int:
+        return self.bar.count()
+
+    def currentIndex(self) -> int:  # noqa: N802
+        return self.bar.currentIndex()
+
+    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+        self.bar.setCurrentIndex(index)
+
+    def tabText(self, index: int) -> str:  # noqa: N802
+        return self.bar.tabText(index)
+
+    def setTabText(self, index: int, text: str) -> None:  # noqa: N802
+        self.bar.setTabText(index, text)
+
+
 class FactorTable(QWidget):
     """The design factors, one row each: name, kind (``about:``) and levels
     (``experimental_design_factors``).  Under a Project Design the names and
@@ -550,6 +621,7 @@ class ExperimentEditor(QMainWindow):
         menu = self.menuBar().addMenu("&File")
         for text, shortcut, slot in (
                 ("&Open…", "Ctrl+O", self._open),
+                ("Open &folder…", "Ctrl+Shift+O", self._open_folder),
                 ("&Save", "Ctrl+S", self._save),
                 ("Save &As…", "Ctrl+Shift+S", self._save_as),
                 ("Start &from another recording…", None, self._start_from),
@@ -792,22 +864,26 @@ class ExperimentEditor(QMainWindow):
         self.data_label = QLabel("")
         self.data_label.setWordWrap(True)
         self.data_label.setObjectName("PyflicCardSubtitle")
-        layout.addWidget(self.data_label)
-        self.dfm_tabs = QTabWidget()
-        self.dfm_tabs.setTabBar(_WestTabBar())
-        self.dfm_tabs.setTabPosition(QTabWidget.TabPosition.West)
-        layout.addWidget(self.dfm_tabs, 1)
-        row = QHBoxLayout()
-        self.add_dfm_button = ActionButton("Add DFM", Category.LOAD, icon_name="new")
-        self.add_dfm_button.clicked.connect(lambda _checked=False: self._add_dfm())
-        self.remove_dfm_button = ActionButton("Remove DFM", Category.QC, icon_name="clear")
-        self.remove_dfm_button.clicked.connect(lambda _checked=False: self._remove_dfm())
         self.add_found_button = ActionButton("Add the DFMs found in the data", Category.LOAD)
         self.add_found_button.clicked.connect(lambda _checked=False: self._add_found_dfms())
-        for button in (self.add_dfm_button, self.remove_dfm_button, self.add_found_button):
-            row.addWidget(button)
-        row.addStretch(1)
-        layout.addLayout(row)
+        top = QHBoxLayout()
+        top.addWidget(self.data_label, 1)
+        top.addWidget(self.add_found_button)
+        layout.addLayout(top)
+        ## A DFM's number is what its data files say: the list names each one,
+        ## and Add DFM adds the next, so no tab has a box to renumber it.
+        self.dfm_tabs = _DfmTabs()
+        self.add_dfm_button = ActionButton("Add DFM", Category.LOAD, icon_name="new")
+        self.add_dfm_button.setToolTip(
+            "Add the next DFM: the first the data holds that has no tab yet, "
+            "else the one after the highest listed.")
+        self.add_dfm_button.clicked.connect(lambda _checked=False: self._add_dfm())
+        self.remove_dfm_button = ActionButton("Remove DFM", Category.QC, icon_name="clear")
+        self.remove_dfm_button.setToolTip("Remove the DFM shown, and its chamber assignments.")
+        self.remove_dfm_button.clicked.connect(lambda _checked=False: self._remove_dfm())
+        for button in (self.add_dfm_button, self.remove_dfm_button):
+            self.dfm_tabs.add_button(button)
+        layout.addWidget(self.dfm_tabs, 1)
         return page
 
     # ---- the Experiment Type and the layout ----------------------------
@@ -920,7 +996,10 @@ class ExperimentEditor(QMainWindow):
 
     # ---- DFMs ----------------------------------------------------------
 
-    def _append_dfm(self, dfm_id: int) -> DFMWidget:
+    def _append_dfm(self, dfm_id: int, index: int | None = None) -> DFMWidget:
+        """A tab for DFM *dfm_id*, at *index* in the list (last when not
+        given).  Its number is fixed: the tab has no box to change it."""
+        index = len(self._dfm_widgets) if index is None else index
         widget = DFMWidget(dfm_id=dfm_id, chamber_size=_layout_chamber_size(self.chamber_layout()),
                            simple=True)
         widget.set_side_default(self._experiment_side())
@@ -928,8 +1007,8 @@ class ExperimentEditor(QMainWindow):
         widget.set_progressive_ratio(self.current_type().has_module("ratio"))
         widget._id_spin.valueChanged.connect(
             lambda value, w=widget: self._on_dfm_id_changed(w, value))
-        self._dfm_widgets.append(widget)
-        self.dfm_tabs.addTab(self._scrolled(widget), f"DFM {dfm_id}")
+        self._dfm_widgets.insert(index, widget)
+        self.dfm_tabs.insertTab(index, self._scrolled(widget), f"DFM {dfm_id}")
         return widget
 
     def _on_dfm_id_changed(self, widget: DFMWidget, value: int) -> None:
@@ -942,12 +1021,29 @@ class ExperimentEditor(QMainWindow):
             self.dfm_tabs.removeTab(self.dfm_tabs.count() - 1)
             self._dfm_widgets.pop().deleteLater()
 
-    def _add_dfm(self, dfm_id: int | None = None) -> DFMWidget:
+    def _next_dfm(self) -> int | None:
+        """The DFM *Add DFM* adds: the first the data holds that has no tab
+        yet, else the one after the highest listed (the lowest free number
+        past 99, a DFM's highest).  ``None`` when every number is taken."""
         used = {w._id_spin.value() for w in self._dfm_widgets}
+        missing = [i for i in self._found_dfms() if i not in used]
+        if missing:
+            return missing[0]
+        after = max(used, default=0) + 1
+        if after <= 99:
+            return after
+        return next((k for k in range(1, 100) if k not in used), None)
+
+    def _add_dfm(self, dfm_id: int | None = None) -> DFMWidget | None:
+        """Add DFM *dfm_id*, or the next one (:meth:`_next_dfm`), in number
+        order in the list, and show it."""
+        dfm_id = self._next_dfm() if dfm_id is None else dfm_id
         if dfm_id is None:
-            dfm_id = next(k for k in range(1, 200) if k not in used)
-        widget = self._append_dfm(dfm_id)
-        self.dfm_tabs.setCurrentIndex(self.dfm_tabs.count() - 1)
+            return None
+        index = next((i for i, w in enumerate(self._dfm_widgets)
+                      if w._id_spin.value() > dfm_id), len(self._dfm_widgets))
+        widget = self._append_dfm(dfm_id, index)
+        self.dfm_tabs.setCurrentIndex(index)
         self._refresh_data_label()
         return widget
 
@@ -1756,6 +1852,18 @@ class ExperimentEditor(QMainWindow):
                                               "FLIC config (*.yaml *.yml)")
         if path:
             self.open_path(path)
+
+    def _open_folder(self) -> None:
+        """Pick a recording's folder -- an MCU's output as it wrote it, or one
+        with its data in ``data/`` -- and open it: its ``flic_config.yaml``
+        when it has one, else a new config for it with one DFM tab per DFM
+        its data holds (:meth:`open_path`).  The dialog starts beside the
+        recording open now, where the next one usually is."""
+        here = self._where()
+        start = str(here.parent if here is not None else Path.cwd())
+        folder = QFileDialog.getExistingDirectory(self, "Open a recording's folder", start)
+        if folder:
+            self.open_path(folder)
 
     def _save(self) -> None:
         if self._current_path is None:

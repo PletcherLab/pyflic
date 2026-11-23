@@ -13,9 +13,15 @@ pyflic experiment <folder>            # the same
 In the Analysis Hub, **Experiment editor** in the [Tools panel](app-hub.md#tools-panel)
 opens it on the loaded member's config.
 
+Inside the editor, **File → Open folder…** (Ctrl+Shift+O) opens another recording's
+folder — the folder the MCU wrote, or one with its data in `data/` — and **File → Open…**
+(Ctrl+O) opens a `flic_config.yaml` directly. Neither asks before replacing what the form
+holds, so save first.
+
 Pointed at a folder with no `flic_config.yaml` yet, it opens one DFM tab for each DFM its
-data files name, and **Save** writes the config. **File → Open in the Config Editor**
-opens the same file in the full editor.
+data files name, whether they sit in `data/` or loose in the folder as the MCU wrote them,
+and **Save** writes the config into that folder. A folder that has one opens it.
+**File → Open in the Config Editor** opens the same file in the full editor.
 
 ## About
 
@@ -97,11 +103,18 @@ everything but the design.
 
 ## Chambers
 
-One tab per DFM, with the chamber table of the Config Editor: pick a level of each factor
-for each chamber, or leave a row blank to leave the chamber out. A Progressive Ratio type
-adds the paired chamber of each group. Above the tabs, the editor says which DFMs the data
-holds and which tabs have no data; **Add the DFMs found in the data** adds the missing
-ones.
+The DFMs are listed down the left; pick one to see its chamber table, the Config Editor's:
+pick a level of each factor for each chamber, or leave a row blank to leave the chamber
+out. A Progressive Ratio type adds the paired chamber of each group.
+
+A DFM's number is what its data files say it is, so there is no box to change it. Under
+the list, **Add DFM** adds the next DFM, in number order: the first the data holds that is
+not listed yet, else the one after the highest listed. **Remove DFM** removes the one
+shown, asking first when its chambers are assigned. To list a different number, remove
+the DFM and add the right one.
+
+Above the list, the editor says which DFMs the data holds and which listed DFMs have no
+data; **Add the DFMs found in the data** adds every missing one at once.
 
 On a two-well layout each DFM also has **PI Direction**, **left** or **right**: the side
 well A is on in that DFM's chambers, whose preference index is 1. It is fixed when the

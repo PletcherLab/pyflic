@@ -1194,10 +1194,12 @@ class DFMWidget(QWidget):
         *,
         simple: bool = False,
     ) -> None:
-        """*simple* shows only what the design is — the DFM's id and its
-        chamber assignments (and, for Progressive Ratio, its paired chambers)
-        — for the Experiment Editor.  The optogenetics and parameter
-        overrides it hides are still loaded and saved as the file has them."""
+        """*simple* shows only what the design is — the DFM's chamber
+        assignments (and, for Progressive Ratio, its paired chambers) — for
+        the Experiment Editor, whose tab list names each DFM and which fixes a
+        DFM's id when its tab is added.  The id box, the optogenetics and the
+        parameter overrides it hides are still loaded and saved as the file
+        has them."""
         super().__init__(parent)
         self._chamber_size = chamber_size
         self._factor_levels: dict[str, list[str]] = {}
@@ -1210,7 +1212,7 @@ class DFMWidget(QWidget):
         outer.setContentsMargins(8, 8, 8, 8)
 
         # -- DFM ID --------------------------------------------------------
-        id_card = Card("DFM Identity", Category.NEUTRAL)
+        self._id_card = id_card = Card("DFM Identity", Category.NEUTRAL)
         _add_help(id_card, "app-config-editor#dfm-identity",
                   "The DFM's id, and its own optogenetics setting")
         id_inner = QHBoxLayout()
@@ -1327,7 +1329,7 @@ class DFMWidget(QWidget):
         over_card.add_body(self._params_form)
         outer.addWidget(over_card)
         if simple:
-            for widget in (self._opto_label, self._opto_combo, over_card):
+            for widget in (id_card, over_card):
                 widget.setVisible(False)
 
         # -- PI Direction (the Experiment Editor) ----------------------------
