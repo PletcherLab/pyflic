@@ -1,0 +1,154 @@
+about:
+  run: R-20261116-christi-01
+  title: Jove Males Crowding PR Run 2
+  purpose: Testing whether crowding affect progressive ratio parameters
+  experimenter: christi
+  series: jove-pr-males
+  organism: Drosophila melanogaster
+  sex:
+  - male
+  age_at_start: 10 Days
+  protocol:
+    name: FLIC progressive ratio
+    version: 4.0.1
+  notes: Standard use
+  factors:
+    Genotype:
+      kind: genotype
+      levels:
+        W: This is the control genotype, backcrossed to Chr. The actual genotype is
+          NPFxW.
+        Chr: This is the activating genotype, NPF>Chr in which NPF neurons are activated
+          by red light to stimulate reward.
+    Density:
+      kind: treatment
+      levels:
+        20x: This treatment described the density of 20 adult flies per vial prior
+          to treatment.
+        40x: This treatment described the density of 40 adult flies per vial prior
+          to treatment.
+global:
+  experiment_type: ProgressiveRatio
+  well_names:
+    A: Sucrose
+    B: Yeast
+  experimental_design_factors:
+    Genotype:
+    - W
+    - Chr
+    Density:
+    - 20x
+    - 40x
+dfms:
+- id: 1
+  params:
+    pi_direction: left
+  paired_chambers:
+  - 1
+  - 3
+  - 5
+  chambers:
+    1: W, 20x
+    2: W, 20x
+    3: W, 40x
+    4: W, 40x
+    5: Chr, 20x
+    6: Chr, 20x
+- id: 2
+  params:
+    pi_direction: left
+  paired_chambers:
+  - 2
+  - 4
+  - 6
+  chambers:
+    1: Chr, 40x
+    2: Chr, 40x
+    3: W, 20x
+    4: W, 20x
+    5: W, 40x
+    6: W, 40x
+- id: 3
+  params:
+    pi_direction: right
+  paired_chambers:
+  - 1
+  - 3
+  - 5
+  chambers:
+    1: Chr, 20x
+    2: Chr, 20x
+    3: Chr, 40x
+    4: Chr, 40x
+    5: W, 20x
+    6: W, 20x
+- id: 4
+  params:
+    pi_direction: right
+  paired_chambers:
+  - 2
+  - 4
+  - 6
+  chambers:
+    1: W, 40x
+    2: W, 40x
+    3: Chr, 20x
+    4: Chr, 20x
+    5: Chr, 40x
+    6: Chr, 40x
+- id: 5
+  params:
+    pi_direction: left
+  paired_chambers:
+  - 1
+  - 3
+  - 5
+  chambers:
+    1: W, 20x
+    2: W, 20x
+    3: W, 40x
+    4: W, 40x
+    5: Chr, 20x
+    6: Chr, 20x
+- id: 6
+  params:
+    pi_direction: left
+  paired_chambers:
+  - 2
+  - 4
+  - 6
+  chambers:
+    1: Chr, 40x
+    2: Chr, 40x
+    3: W, 20x
+    4: W, 20x
+    5: W, 40x
+    6: W, 40x
+- id: 7
+  params:
+    pi_direction: right
+  paired_chambers:
+  - 1
+  - 3
+  - 5
+  chambers:
+    1: Chr, 20x
+    2: Chr, 20x
+    3: Chr, 40x
+    4: Chr, 40x
+    5: W, 20x
+    6: W, 20x
+- id: 8
+  params:
+    pi_direction: right
+  paired_chambers:
+  - 2
+  - 4
+  - 6
+  chambers:
+    1: W, 40x
+    2: W, 40x
+    3: Chr, 20x
+    4: Chr, 20x
+    5: Chr, 40x
+    6: Chr, 40x

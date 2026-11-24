@@ -164,7 +164,8 @@ level's mapping, `term:`, `label:` and `role:`. pyflic shows `run:`, keeps
 all four, and edits only a level's `definition:`; every writer keeps what it
 does not edit, and one that does not edit the section writes back the one on
 disk when it saves (ADR-0026). Edited in the **Experiment Editor**
-(`pyflic-experiment`, or the Hub's Tools panel), which edits the About, the
+(`pyflic-experiment`, the Hub's Tools panel, or **Edit…** on a Member in the
+Hub's *Member configs*), which edits the About, the
 design and the chamber map and nothing else, and never saves silently over a
 file that changed on disk.
 _Avoid_: metadata, info, notes (one of its fields), description.

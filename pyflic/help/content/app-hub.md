@@ -202,7 +202,7 @@ with nothing to conform to is not a member.
   folder and its `data/`, and scaffolds a `flic_config.yaml` from the design. It refuses a
   name that already has a config, and refuses one whose folder already exists — that is the
   next button's job. Then it offers the two ways to finish: **Edit config…** opens the
-  scaffold, **Copy config from…** replaces it with a config chosen from disk, *checked
+  scaffold in the Experiment Editor, **Copy config from…** replaces it with a config chosen from disk, *checked
   against the design before it is written*. A copy that would not conform is not made at
   all; the mismatches are listed and the scaffold stays. Either way the new member starts
   with what members share of the first member's `about:` (or of the config copied), and
@@ -211,7 +211,7 @@ with nothing to conform to is not a member.
 - **Initialize existing directory… (n)** — the folder is already in the Project but has no
   config. It lists the candidates with what was found in each. Loose files are **filed
   first** — the recording into `data/`, everything else into `extra_files/` — and only then
-  is the config scaffolded and the config editor opened, because a recording left at the
+  is the config scaffolded and the Experiment Editor opened, because a recording left at the
   root would make the freshly configured member look empty. An ambiguous or unreadable
   folder is refused rather than guessed at. The count is how many candidates there are.
 - **Member configs… (n missing)** — the bulk view: every folder with its config status, so

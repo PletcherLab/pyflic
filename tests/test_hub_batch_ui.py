@@ -255,6 +255,75 @@ def test_creating_a_config_files_the_loose_recording_first(app, hub):
         dialog.close()
 
 
+def _choose(dialog, name: str) -> None:
+    for i in range(dialog._list.count()):
+        if dialog._list.item(i).data(Qt.ItemDataRole.UserRole) == name:
+            dialog._list.setCurrentRow(i)
+            return
+    raise LookupError(name)
+
+
+def test_edit_opens_a_members_config_in_the_experiment_editor(app, hub):
+    """A Member's config holds its About, its Design Copy and its chamber
+    map, which the Experiment Editor edits; every analysis setting is the
+    Design's.  So Edit opens that editor, About tab and all, where two
+    Members that describe a level differently are put in agreement."""
+    row = _column(hub.batch_table, 0).index("Sept2026/ProjA")
+    hub._batch_row_activated(hub.batch_table.item(row, 0))
+    dialog = MemberConfigsDialog(hub, hub.project)
+    config = Path(hub.project.project_directory) / "rep1" / "flic_config.yaml"
+    try:
+        _choose(dialog, "rep1")
+        assert dialog._btn_edit.isEnabled() and dialog._btn_settings.isEnabled()
+        dialog._btn_edit.click()
+        editor = hub._experiment_editor
+        try:
+            assert editor._current_path == config
+            tabs = [editor.tabs.tabText(i) for i in range(editor.tabs.count())]
+            assert "About" in tabs
+        finally:
+            editor.close()
+        ## Every other setting a Member may state (a DFM's optogenetics,
+        ## its scripts:) is a click away, in the Config Editor.
+        dialog._btn_settings.click()
+        settings = hub._config_editor
+        try:
+            assert Path(settings._current_path) == config
+        finally:
+            settings.close()
+    finally:
+        dialog.close()
+
+
+def test_double_clicking_a_configured_member_opens_the_experiment_editor(app, hub):
+    row = _column(hub.batch_table, 0).index("Sept2026/ProjA")
+    hub._batch_row_activated(hub.batch_table.item(row, 0))
+    dialog = MemberConfigsDialog(hub, hub.project)
+    try:
+        _choose(dialog, "rep2")
+        dialog._on_double_click(dialog._list.currentItem())
+        editor = hub._experiment_editor
+        try:
+            assert editor._current_path.parent.name == "rep2"
+        finally:
+            editor.close()
+    finally:
+        dialog.close()
+
+
+def test_an_unconfigured_member_offers_create_not_edit(app, hub):
+    row = _column(hub.batch_table, 0).index("Sept2026/ProjA")
+    hub._batch_row_activated(hub.batch_table.item(row, 0))
+    dialog = MemberConfigsDialog(hub, hub.project)
+    try:
+        _choose(dialog, "rep4_nocfg")
+        assert dialog._btn_create.isEnabled()
+        assert not dialog._btn_edit.isEnabled()
+        assert not dialog._btn_settings.isEnabled()
+    finally:
+        dialog.close()
+
+
 # ---------------------------------------------------------------------------
 # The output log
 # ---------------------------------------------------------------------------

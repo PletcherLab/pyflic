@@ -226,7 +226,9 @@ def test_initialize_member_files_the_recording_before_configuring(
         QInputDialog, "getItem",
         staticmethod(lambda *a, **k: (a[3][0] if len(a) > 3 else "", True)))
     opened: list[Path] = []
-    monkeypatch.setattr(hub, "_open_config_editor_on", opened.append)
+    ## A member's config opens in the Experiment Editor (its About, design
+    ## and chamber map), where its chambers are assigned.
+    monkeypatch.setattr(hub, "_open_experiment_editor_on", opened.append)
     hub._initialize_member_folder()
 
     ## Filing first: a recording left at the root would make the freshly
@@ -337,7 +339,9 @@ def test_double_clicking_a_config_less_member_offers_to_make_one(
         QMessageBox, "question",
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes))
     opened: list[Path] = []
-    monkeypatch.setattr(hub, "_open_config_editor_on", opened.append)
+    ## A member's config opens in the Experiment Editor (its About, design
+    ## and chamber map), where its chambers are assigned.
+    monkeypatch.setattr(hub, "_open_experiment_editor_on", opened.append)
 
     blocked = {m.name: m for m in hub.project.blocked_members()}
     hub._offer_blocked_fix(blocked["rep2"])

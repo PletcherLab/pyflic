@@ -1972,13 +1972,13 @@ class AnalysisHubWindow(QMainWindow):
             answer = QMessageBox.question(
                 self, "Blocked member",
                 f"{detail}\n\nGive it a flic_config.yaml scaffolded from the "
-                "project design, and open it in the config editor?")
+                "project design, and open it in the Experiment Editor?")
             if answer != QMessageBox.StandardButton.Yes:
                 return
             if self._scaffold_member(member.name) is None:
                 return
             self._reload_project()
-            self._open_config_editor_on(
+            self._open_experiment_editor_on(
                 Path(self.project.member_dir(member.name))
                 / project_mod.CONFIG_FILENAME)
             return
@@ -2636,7 +2636,7 @@ class AnalysisHubWindow(QMainWindow):
             return
         ## Either they chose to edit, or the copy did not happen — and a
         ## member left on its scaffold is one nobody has assigned chambers in.
-        self._open_config_editor_on(directory / project_mod.CONFIG_FILENAME)
+        self._open_experiment_editor_on(directory / project_mod.CONFIG_FILENAME)
 
     def _copy_member_config(self, name: str, directory: Path) -> bool:
         """Replace *name*'s scaffold with a config chosen from elsewhere.
@@ -2801,7 +2801,7 @@ class AnalysisHubWindow(QMainWindow):
         self._reload_project()
         ## The point of this button is the editor: a scaffolded config still
         ## needs its chamber assignments before the member means anything.
-        self._open_config_editor_on(
+        self._open_experiment_editor_on(
             Path(item.directory) / project_mod.CONFIG_FILENAME)
 
     def _open_member_configs(self) -> None:
@@ -3167,12 +3167,23 @@ class AnalysisHubWindow(QMainWindow):
         ``flic_config.yaml``: its About, design and chamber map (ADR-0026).
         Beside the Config Editor, which has every analysis setting, and
         opened on the same file; with nothing loaded it opens empty."""
-        from .experiment_editor import ExperimentEditor
-
         directory = self._current_dir()
         ## A Member's own config, or its recording's (ADR-0031).
         config = layout_mod.config_path(directory) if directory else None
-        editor = ExperimentEditor(config if config and os.path.isfile(config) else None)
+        return self._open_experiment_editor_on(
+            config if config and os.path.isfile(config) else None)
+
+    def _open_experiment_editor_on(self, path):
+        """Open the Experiment Editor on *path*, a Member's or a recording's
+        ``flic_config.yaml``, and keep it alive beside any other.
+
+        Where the Hub opens a Member's config, this is the editor: a Member
+        holds its About, its Design Copy and its chamber map, which this
+        editor edits, and every analysis setting is the Design's.  The Config
+        Editor, with every setting, is a click away (*All settings…*)."""
+        from .experiment_editor import ExperimentEditor
+
+        editor = ExperimentEditor(str(path) if path is not None else None)
         self._experiment_editor = editor
         return self._show_editor(editor, "_experiment_editors")
 
@@ -3999,7 +4010,10 @@ class MemberConfigsDialog(QDialog):
     wants written twice differently.
 
     Scaffolding never overwrites: a folder that already has a config is listed
-    as such and offers Edit instead.
+    as such and offers Edit instead, in the Experiment Editor — a Member's
+    About, Design Copy and chamber map — and All settings, in the Config
+    Editor, for what else a Member may state (a DFM's optogenetics, its
+    ``scripts:``).
     """
 
     def __init__(self, hub, project) -> None:
@@ -4053,9 +4067,20 @@ class MemberConfigsDialog(QDialog):
                                      Category.LOAD, "new")
         self._btn_all.clicked.connect(self._create_all_missing)
         row.addWidget(self._btn_all)
-        self._btn_edit = ActionButton("Edit config…", Category.TOOLS, "config")
+        self._btn_edit = ActionButton("Edit…", Category.TOOLS, "info")
+        self._btn_edit.setToolTip(
+            "Its About, design and chamber map, in the Experiment Editor: "
+            "where two members that describe a level differently are made "
+            "to agree.")
         self._btn_edit.clicked.connect(self._edit_selected)
         row.addWidget(self._btn_edit)
+        self._btn_settings = ActionButton("All settings…", Category.TOOLS,
+                                          "config")
+        self._btn_settings.setToolTip(
+            "Every setting in its flic_config.yaml, in the Config Editor: a "
+            "DFM's optogenetics and other overrides, its scripts:.")
+        self._btn_settings.clicked.connect(self._edit_settings_selected)
+        row.addWidget(self._btn_settings)
         row.addStretch(1)
         outer.addLayout(row)
 
@@ -4099,6 +4124,7 @@ class MemberConfigsDialog(QDialog):
         chosen = self._selected()
         self._btn_create.setEnabled(bool(chosen) and not chosen[1])
         self._btn_edit.setEnabled(bool(chosen) and chosen[1])
+        self._btn_settings.setEnabled(bool(chosen) and chosen[1])
         missing = self._missing()
         self._btn_all.setEnabled(bool(missing))
         self._btn_all.setText(
@@ -4151,12 +4177,22 @@ class MemberConfigsDialog(QDialog):
             ## somebody has to finish by hand.
             self._hub.log.append_line(f"[configs]   {note}")
 
-    def _edit_selected(self) -> None:
+    def _selected_config(self) -> str | None:
+        """The chosen Member's config: its own, or its recording's (ADR-0031)."""
         chosen = self._selected()
-        if chosen is None:
-            return
-        path = layout_mod.config_path(self._project.member_dir(chosen[0]))
-        self._hub._open_config_editor_on(path)
+        if chosen is None or not chosen[1]:
+            return None
+        return layout_mod.config_path(self._project.member_dir(chosen[0]))
+
+    def _edit_selected(self) -> None:
+        path = self._selected_config()
+        if path is not None:
+            self._hub._open_experiment_editor_on(path)
+
+    def _edit_settings_selected(self) -> None:
+        path = self._selected_config()
+        if path is not None:
+            self._hub._open_config_editor_on(path)
 
 
 def main() -> None:

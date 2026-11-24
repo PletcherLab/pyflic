@@ -316,7 +316,7 @@ The same three cases, one level down — **Create member…** when it does not e
 same repair in place.
 
 Right after **Create member…** the Hub asks how to finish the config: **Edit config…**
-opens the scaffold, or **Copy config from…** replaces it with a config from a member that
+opens the scaffold in the Experiment Editor, where its chambers are assigned, or **Copy config from…** replaces it with a config from a member that
 already works — the common case for the second and later members of a run. A copy is
 **checked against the design before it is written**, using the same test every member
 passes at load. That ordering is the point: a non-conforming member makes the whole Project
@@ -364,9 +364,16 @@ tooltip.
 - **Create config** scaffolds the selected folder's config as described above, filing a
   loose recording first.
 - **Create n missing config(s)** does the same for every folder that has none.
-- **Edit config…** opens a configured folder's config in the Config Editor.
+- **Edit…** opens a configured folder's config in the **Experiment Editor**: its About, the
+  design (the Project's, shown and not edited) and the chamber map. A member's config holds
+  just these and its Design Copy; every analysis setting is the design's. This is where two
+  members that describe one level differently are made to agree: the Hub's note *members
+  describe Genotype 'W' differently* names each member's words, and each member's **About**
+  tab, under *What each level means*, is where to change them.
+- **All settings…** opens the same config in the **Config Editor**, for what else a member
+  may state: a DFM's optogenetics and other overrides, its `scripts:`.
 
-Double-clicking a row does whichever applies. Every note the scaffolding makes — a DFM
+Double-clicking a row does whichever applies: **Create config**, or **Edit…**. Every note the scaffolding makes — a DFM
 added with chambers unassigned, one kept and flagged — goes to the Hub's log, because each
 is something to finish by hand. The Batch Run's review window hands a member whose reason
 is `no config` to the same dialog.
